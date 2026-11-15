@@ -110,10 +110,16 @@ wrong or could be better before they do.
   it is never dropped. The same goes for columns and text: truncate with an ellipsis and a
   tooltip, and prefer giving the room back (narrower chrome, fewer fixed widths) over
   truncating. `ContainersPage` does this with `UseBreakpoint(ContainerRowView.WideLayoutMinWidth)`.
-- **Compare with the reference.** For a screen Docker Desktop also has, look at its
-  screenshot first (the list is in the spec, `docs/superpowers/specs/`, and the files are in
-  the `docker/docs` repository) and match its structure: hierarchy, alignment, what sits in
-  which column. Its name, logo and colours stay out.
+- **Compare with the reference.** For a screen Docker Desktop also has, look at Docker
+  Desktop first and match its structure: hierarchy, alignment, what sits in which column,
+  how each state is drawn, what is a button and what is in a menu. Its name, logo and
+  colours stay out. When Docker Desktop is installed and running on the machine (the pipe
+  `\\.\pipe\dockerDesktopLinuxEngine` exists), use the real thing: start the same throwaway
+  containers on its engine (`docker -H npipe:////./pipe/dockerDesktopLinuxEngine ...`, names
+  starting `berth-ref`), put it in the state you are designing for (running, exited with an
+  error, paused, a compose project), and read `winapp ui screenshot -a "Docker Desktop"` and
+  `winapp ui inspect -a "Docker Desktop"` side by side with Berth's. Otherwise use the
+  screenshots in the `docker/docs` repository listed in the spec.
 - **Propose, with a recommendation.** When you see a better layout, a missing affordance
   (keyboard shortcut, context menu, sorting, empty state), an inconsistency, or a rule below
   that the current screen breaks, say so in your report as a short list: what, why, and
