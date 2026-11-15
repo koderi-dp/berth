@@ -119,8 +119,15 @@ wrong or could be better before they do.
   that the current screen breaks, say so in your report as a short list: what, why, and
   what you recommend. Small and clearly right: do it and say you did. A change of behaviour
   or a matter of taste: propose it and wait.
-- **Read the design guidance before UI work**, not after:
-  - The `winui` plugin (enabled for this repository in `.claude/settings.json`): skills
+- **Use the design skills.** They are enabled for this repository in `.claude/settings.json`:
+  - `design` (Anthropic): run `design-critique` on a screenshot of every new or changed
+    screen and put its priority recommendations in your report; use `ux-copy` for every
+    label, empty state, error text and dialog; run `accessibility-review` before a screen is
+    called done.
+  - `frontend-design` (Anthropic): visual direction (hierarchy, typography, spacing) when a
+    screen is new or reshaped. It is written for the web; take its judgement, not its CSS.
+- **Read the platform guidance before UI work**, not after:
+  - The `winui` plugin (also enabled in `.claude/settings.json`): skills
     `winui-design` (control choice, window sizing, theming, the anti-pattern table),
     `winui-ui-testing` and `winui-code-review`. Its XAML advice does not apply (no XAML
     here); its design rules do.

@@ -1,13 +1,21 @@
 {
+  "enabledPlugins": {
+    "winui@winappcli": true,
+    "design@knowledge-work-plugins": true,
+    "frontend-design@claude-plugins-official": true
+  },
   "extraKnownMarketplaces": {
     "winappcli": {
       "source": {
         "source": "github",
         "repo": "microsoft/WinAppCli"
       }
+    },
+    "knowledge-work-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/knowledge-work-plugins"
+      }
     }
-  },
-  "enabledPlugins": {
-    "winui@winappcli": true
   }
 }
