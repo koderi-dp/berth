@@ -46,6 +46,8 @@ internal sealed class EngineConnection : IEngineApi
 
     public Task RemoveContainerAsync(string id, bool force, CancellationToken ct) => _client.RemoveContainerAsync(id, force, ct);
 
+    public Task<ContainerInspection> InspectContainerAsync(string id, CancellationToken ct) => _client.InspectContainerAsync(id, ct);
+
     public IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct) => _client.StreamEventsAsync(ct);
 
     public async ValueTask DisposeAsync()

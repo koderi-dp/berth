@@ -1,7 +1,11 @@
+using System.Buffers;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Berth.Engine.Models;
@@ -92,6 +96,27 @@ public sealed class EngineClient : IEngineApi
     public Task RemoveContainerAsync(string id, bool force, CancellationToken ct) =>
         ActAsync(HttpMethod.Delete, ContainerPath(id, force ? "?force=true" : ""), PlainTimeout, ct);
 
+    public async Task<ContainerInspection> InspectContainerAsync(string id, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, ContainerPath(id, "/json"), PlainTimeout, ct).ConfigureAwait(false);
+        var body = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+
+        WireInspect wire;
+        string raw;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            wire = document.Deserialize(EngineJson.Default.WireInspect) ?? throw new JsonException("The answer was empty.");
+            raw = Indented(document);
+        }
+        catch (JsonException ex)
+        {
+            throw Unreadable(response, ex);
+        }
+
+        return new ContainerInspection(ToDetails(wire), raw);
+    }
+
     /// <summary>
     /// Reads the engine's events as they happen, with no deadline. A line that is not an event is skipped. The enumeration ends when
     /// the engine closes the stream; a dropped connection throws <see cref="EngineException"/> with status 0.
@@ -128,6 +153,90 @@ public sealed class EngineClient : IEngineApi
         c.Status ?? "",
         c.Ports?.ConvertAll(p => new PortMapping(p.Ip, p.PrivatePort, p.PublicPort, p.Type ?? "")) ?? [],
         c.Labels ?? new Dictionary<string, string>());
+
+    private static ContainerDetails ToDetails(WireInspect c)
+    {
+        var name = c.Name ?? "";
+        var state = c.State;
+        var config = c.Config;
+        return new ContainerDetails(
+            c.Id ?? "",
+            name.StartsWith('/') ? name[1..] : name,
+            EngineTime.Parse(c.Created) ?? DateTimeOffset.MinValue,
+            c.Path ?? "",
+            c.Args ?? [],
+            new ContainerStateDetails(
+                state?.Status ?? "",
+                state?.Running ?? false,
+                state?.Paused ?? false,
+                state?.Restarting ?? false,
+                state?.ExitCode ?? 0,
+                state?.Error ?? "",
+                EngineTime.Parse(state?.StartedAt),
+                EngineTime.Parse(state?.FinishedAt),
+                state?.Health?.Status),
+            c.Image ?? "",
+            config?.Image ?? "",
+            config?.Env ?? [],
+            config?.Cmd ?? [],
+            config?.Entrypoint ?? [],
+            config?.WorkingDir ?? "",
+            config?.User ?? "",
+            config?.Tty ?? false,
+            config?.Labels ?? new Dictionary<string, string>(),
+            c.Mounts?.ConvertAll(m => new MountDetails(
+                m.Type ?? "", m.Source ?? "", m.Destination ?? "", m.Mode ?? "", m.ReadWrite, string.IsNullOrEmpty(m.Name) ? null : m.Name)) ?? [],
+            ToPorts(c.NetworkSettings?.Ports),
+            c.NetworkSettings?.Networks?.Select(n => new NetworkAttachment(
+                n.Key, n.Value?.IpAddress ?? "", n.Value?.Gateway ?? "", n.Value?.MacAddress ?? "")).ToList() ?? [],
+            c.HostConfig?.RestartPolicy?.Name ?? "",
+            c.Platform ?? "");
+    }
+
+    /// <summary>
+    /// Inspect's port map ("80/tcp" to host bindings) as the list's port mappings: one per binding, or one with no address and no
+    /// public port for a port that is exposed but not published. A key that is not "port/protocol" is skipped.
+    /// </summary>
+    private static List<PortMapping> ToPorts(Dictionary<string, List<WirePortBinding>?>? ports)
+    {
+        var mappings = new List<PortMapping>();
+        foreach (var (key, bindings) in ports ?? [])
+        {
+            var slash = key.IndexOf('/');
+            if (!int.TryParse(slash < 0 ? key : key[..slash], NumberStyles.None, CultureInfo.InvariantCulture, out var privatePort))
+            {
+                continue;
+            }
+
+            var type = slash < 0 ? "tcp" : key[(slash + 1)..];
+            if (bindings is not { Count: > 0 })
+            {
+                mappings.Add(new PortMapping(null, privatePort, null, type));
+                continue;
+            }
+
+            foreach (var binding in bindings)
+            {
+                int? publicPort = int.TryParse(binding.HostPort, NumberStyles.None, CultureInfo.InvariantCulture, out var port) ? port : null;
+                mappings.Add(new PortMapping(string.IsNullOrEmpty(binding.HostIp) ? null : binding.HostIp, privatePort, publicPort, type));
+            }
+        }
+
+        return mappings;
+    }
+
+    /// <summary>The document laid out two spaces per level with \n line ends, and characters such as &lt; and &amp; left as they are.</summary>
+    private static string Indented(JsonDocument document)
+    {
+        var options = new JsonWriterOptions { Indented = true, NewLine = "\n", Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, options))
+        {
+            document.WriteTo(writer);
+        }
+
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
 
     private static EngineEventMessage? ToEvent(ReadOnlyMemory<byte> line)
     {
@@ -242,9 +351,12 @@ public sealed class EngineClient : IEngineApi
         }
         catch (JsonException ex)
         {
-            throw new EngineException((int)response.StatusCode, $"The engine's answer could not be read: {ex.Message}");
+            throw Unreadable(response, ex);
         }
     }
+
+    private static EngineException Unreadable(HttpResponseMessage response, JsonException ex) =>
+        new((int)response.StatusCode, $"The engine's answer could not be read: {ex.Message}");
 
     /// <summary>The engine's own message from an error answer, or the status line when the body carries none.</summary>
     private static async Task<EngineException> ErrorAsync(HttpResponseMessage response, CancellationToken ct)

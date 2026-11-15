@@ -28,6 +28,9 @@ public interface IEngineApi : IAsyncDisposable
 
     Task RemoveContainerAsync(string id, bool force, CancellationToken ct);
 
+    /// <summary>Inspects one container. A container that does not exist throws the engine's 404.</summary>
+    Task<ContainerInspection> InspectContainerAsync(string id, CancellationToken ct);
+
     /// <summary>The engine's event stream, until cancelled.</summary>
     IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct);
 }

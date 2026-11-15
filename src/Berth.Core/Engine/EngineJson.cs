@@ -10,6 +10,7 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(WireInfo))]
 [JsonSerializable(typeof(List<WireContainer>))]
 [JsonSerializable(typeof(WireEvent))]
+[JsonSerializable(typeof(WireInspect))]
 [JsonSerializable(typeof(WireError))]
 internal sealed partial class EngineJson : JsonSerializerContext;
 
@@ -58,6 +59,70 @@ internal sealed record WireEvent(
     [property: JsonPropertyName("Action")] string? Action,
     [property: JsonPropertyName("Actor")] WireActor? Actor,
     [property: JsonPropertyName("timeNano")] long TimeNano);
+
+/// <summary>A container's inspect answer (<c>/containers/{id}/json</c>), the parts Berth maps.</summary>
+internal sealed record WireInspect(
+    [property: JsonPropertyName("Id")] string? Id,
+    [property: JsonPropertyName("Name")] string? Name,
+    [property: JsonPropertyName("Created")] string? Created,
+    [property: JsonPropertyName("Path")] string? Path,
+    [property: JsonPropertyName("Args")] List<string>? Args,
+    [property: JsonPropertyName("State")] WireState? State,
+    [property: JsonPropertyName("Image")] string? Image,
+    [property: JsonPropertyName("Platform")] string? Platform,
+    [property: JsonPropertyName("Config")] WireConfig? Config,
+    [property: JsonPropertyName("HostConfig")] WireHostConfig? HostConfig,
+    [property: JsonPropertyName("Mounts")] List<WireMount>? Mounts,
+    [property: JsonPropertyName("NetworkSettings")] WireNetworkSettings? NetworkSettings);
+
+internal sealed record WireState(
+    [property: JsonPropertyName("Status")] string? Status,
+    [property: JsonPropertyName("Running")] bool Running,
+    [property: JsonPropertyName("Paused")] bool Paused,
+    [property: JsonPropertyName("Restarting")] bool Restarting,
+    [property: JsonPropertyName("ExitCode")] int ExitCode,
+    [property: JsonPropertyName("Error")] string? Error,
+    [property: JsonPropertyName("StartedAt")] string? StartedAt,
+    [property: JsonPropertyName("FinishedAt")] string? FinishedAt,
+    [property: JsonPropertyName("Health")] WireHealth? Health);
+
+internal sealed record WireHealth([property: JsonPropertyName("Status")] string? Status);
+
+internal sealed record WireConfig(
+    [property: JsonPropertyName("Image")] string? Image,
+    [property: JsonPropertyName("Env")] List<string>? Env,
+    [property: JsonPropertyName("Cmd")] List<string>? Cmd,
+    [property: JsonPropertyName("Entrypoint")] List<string>? Entrypoint,
+    [property: JsonPropertyName("WorkingDir")] string? WorkingDir,
+    [property: JsonPropertyName("User")] string? User,
+    [property: JsonPropertyName("Tty")] bool Tty,
+    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels);
+
+internal sealed record WireHostConfig([property: JsonPropertyName("RestartPolicy")] WireRestartPolicy? RestartPolicy);
+
+internal sealed record WireRestartPolicy([property: JsonPropertyName("Name")] string? Name);
+
+internal sealed record WireMount(
+    [property: JsonPropertyName("Type")] string? Type,
+    [property: JsonPropertyName("Name")] string? Name,
+    [property: JsonPropertyName("Source")] string? Source,
+    [property: JsonPropertyName("Destination")] string? Destination,
+    [property: JsonPropertyName("Mode")] string? Mode,
+    [property: JsonPropertyName("RW")] bool ReadWrite);
+
+/// <summary><c>Ports</c> maps "80/tcp" to its host bindings, null or empty when the port is exposed but not published.</summary>
+internal sealed record WireNetworkSettings(
+    [property: JsonPropertyName("Ports")] Dictionary<string, List<WirePortBinding>?>? Ports,
+    [property: JsonPropertyName("Networks")] Dictionary<string, WireEndpoint?>? Networks);
+
+internal sealed record WirePortBinding(
+    [property: JsonPropertyName("HostIp")] string? HostIp,
+    [property: JsonPropertyName("HostPort")] string? HostPort);
+
+internal sealed record WireEndpoint(
+    [property: JsonPropertyName("IPAddress")] string? IpAddress,
+    [property: JsonPropertyName("Gateway")] string? Gateway,
+    [property: JsonPropertyName("MacAddress")] string? MacAddress);
 
 /// <summary>The body the engine sends with an error status.</summary>
 internal sealed record WireError([property: JsonPropertyName("message")] string? Message);

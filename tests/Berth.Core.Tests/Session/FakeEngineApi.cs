@@ -7,8 +7,8 @@ using Berth.Engine.Models;
 namespace Berth.Tests.Session;
 
 /// <summary>
-/// An engine stand-in for one connection. A test sets the version and container list, makes calls fail, holds calls
-/// until it releases them, and pushes messages into the event stream.
+/// An engine stand-in for one connection. A test sets the version, container list and inspect answers, makes calls fail, holds
+/// calls until it releases them, and pushes messages into the event stream.
 /// </summary>
 internal sealed class FakeEngineApi : IEngineApi
 {
@@ -17,6 +17,7 @@ internal sealed class FakeEngineApi : IEngineApi
 
     private readonly ConcurrentDictionary<string, Exception> _failures = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Gate> _gates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ContainerInspection> _inspections = new(StringComparer.Ordinal);
     private readonly Channel<EngineEventMessage> _events = Channel.CreateUnbounded<EngineEventMessage>();
     private readonly TaskCompletionSource _streamStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile IReadOnlyList<ContainerSummary> _containers = [Container("a"), Container("b")];
@@ -55,6 +56,24 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>Makes every later <paramref name="call"/> wait until the returned gate is released.</summary>
     public Gate Hold(string call) => _gates[call] = new Gate();
 
+    /// <summary>A minimal inspection of <paramref name="id"/> (named after it), running or stopped.</summary>
+    public static ContainerInspection Inspection(string id, bool running = true, bool tty = false) => new(
+        new ContainerDetails(
+            id, id, new DateTimeOffset(2026, 11, 15, 8, 0, 0, TimeSpan.Zero), "nginx", [],
+            new ContainerStateDetails(
+                running ? "running" : "exited", running, Paused: false, Restarting: false, ExitCode: 0, Error: "",
+                StartedAt: new DateTimeOffset(2026, 11, 15, 8, 0, 1, TimeSpan.Zero),
+                FinishedAt: running ? null : new DateTimeOffset(2026, 11, 15, 9, 0, 0, TimeSpan.Zero),
+                Health: null),
+            "sha256:1", "nginx:latest", [], ["nginx"], [], "/", "", tty, new Dictionary<string, string>(), [], [], [], "no", "linux"),
+        $$"""{"Id":"{{id}}"}""");
+
+    /// <summary>Makes later inspects of <c>inspection.Details.Id</c> answer with <paramref name="inspection"/>.</summary>
+    public void SetInspection(ContainerInspection inspection) => _inspections[inspection.Details.Id] = inspection;
+
+    /// <summary>Makes later inspects of <paramref name="id"/> answer with the engine's 404.</summary>
+    public void RemoveInspection(string id) => _inspections.TryRemove(id, out _);
+
     public void Push(EngineEventMessage message) => _events.Writer.TryWrite(message);
 
     /// <summary>Ends the event stream, normally or with <paramref name="error"/>.</summary>
@@ -90,6 +109,15 @@ internal sealed class FakeEngineApi : IEngineApi
 
     public Task RemoveContainerAsync(string id, bool force, CancellationToken ct) =>
         EnterAsync("Remove", $"Remove {id} force={force}", ct);
+
+    /// <summary>Answers with the inspection set for <paramref name="id"/>, or the engine's 404 when none is.</summary>
+    public async Task<ContainerInspection> InspectContainerAsync(string id, CancellationToken ct)
+    {
+        await EnterAsync("Inspect", $"Inspect {id}", ct);
+        return _inspections.TryGetValue(id, out var inspection)
+            ? inspection
+            : throw new EngineException(404, $"No such container: {id}");
+    }
 
     public async IAsyncEnumerable<EngineEventMessage> StreamEventsAsync([EnumeratorCancellation] CancellationToken ct)
     {
