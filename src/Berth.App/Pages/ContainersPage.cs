@@ -26,8 +26,8 @@ internal sealed class ContainersPage : EngineStateComponent
 
     private sealed record RowItem(ContainerRow Row, bool Indented) : ListItem(Row.Id);
 
-    /// <summary>What the delete confirmation is about. <paramref name="Name"/> is set when it is one container.</summary>
-    private sealed record DeleteRequest(ImmutableArray<string> Ids, string? Name, bool AnyRunning);
+    /// <summary>What the delete confirmation is about: the ids asked for and the text that names them.</summary>
+    private sealed record DeleteRequest(ImmutableArray<string> Ids, string Text);
 
     private static readonly ImmutableHashSet<string> NoIds = ImmutableHashSet<string>.Empty;
 
@@ -46,11 +46,8 @@ internal sealed class ContainersPage : EngineStateComponent
         var filter = UseMemo(() => new ContainerFilter(search, runningOnly), search, runningOnly);
         var groups = UseMemo(() => ComposeGrouping.Build(state.Containers, state.Pending, filter), state.Containers, state.Pending, filter);
         var items = UseMemo(() => Flatten(groups, collapsed), groups, collapsed);
-        // Checked rows can be hidden by the search; the bulk actions still act on them.
-        var allRows = UseMemo(
-            () => ComposeGrouping.Build(state.Containers, state.Pending, NoFilter).SelectMany(g => g.Rows).ToArray(),
-            state.Containers,
-            state.Pending);
+        // The rows the filter shows, collapsed projects included: only these count for the bulk actions.
+        var visibleRows = UseMemo(() => groups.SelectMany(g => g.Rows).ToArray(), groups);
 
         // A container that is gone cannot stay checked.
         UseEffect(() =>
@@ -63,18 +60,15 @@ internal sealed class ContainersPage : EngineStateComponent
             Send,
             (ids, value) => updateChecked(current => value ? current.Union(ids) : current.Except(ids)),
             project => updateCollapsed(current => current.Contains(project) ? current.Remove(project) : current.Add(project)),
-            rows => setDeleteRequest(new DeleteRequest(
-                [.. rows.Select(r => r.Id)],
-                rows.Count == 1 ? rows[0].Name : null,
-                rows.Any(r => r.State != RowState.Stopped))));
+            rows => setDeleteRequest(new DeleteRequest([.. rows.Select(r => r.Id)], BulkSelection.DeleteText(rows))));
 
-        var shownIds = groups.SelectMany(g => g.Rows).Select(r => r.Id).ToArray();
+        var shownIds = visibleRows.Select(r => r.Id).ToArray();
 
         return (FlexColumn(
                 Title("Containers").Flex(shrink: 0),
                 Toolbar(search, setSearch, runningOnly),
-                BulkBar(allRows, checkedIds, callbacks),
-                Table(state, groups, items, shownIds, checkedIds, callbacks),
+                BulkBar(visibleRows, checkedIds, callbacks),
+                Table(state, filter, groups, items, shownIds, checkedIds, callbacks),
                 DeleteDialog(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -131,21 +125,26 @@ internal sealed class ContainersPage : EngineStateComponent
             })
             .Flex(shrink: 0);
 
-    /// <summary>Shown while rows are checked: how many, and Start, Stop and Delete for them.</summary>
-    private static Element? BulkBar(ContainerRow[] allRows, ImmutableHashSet<string> checkedIds, ContainerListCallbacks callbacks)
+    /// <summary>
+    /// Shown while shown rows are checked: how many, and Start, Stop and Delete for them (rows with an action in progress are left
+    /// out; a button that would send nothing is disabled). Checked rows the filter hides are kept but not counted or acted on.
+    /// </summary>
+    private static Element? BulkBar(ContainerRow[] visibleRows, ImmutableHashSet<string> checkedIds, ContainerListCallbacks callbacks)
     {
-        ContainerRow[] rows = [.. allRows.Where(r => checkedIds.Contains(r.Id))];
-        if (rows.Length == 0)
+        var count = BulkSelection.SelectedCount(visibleRows, checkedIds);
+        if (count == 0)
             return null;
 
-        string[] stopped = [.. rows.Where(r => r.State == RowState.Stopped).Select(r => r.Id)];
-        string[] active = [.. rows.Where(r => r.State != RowState.Stopped).Select(r => r.Id)];
+        var start = BulkSelection.StartIds(visibleRows, checkedIds);
+        var stop = BulkSelection.StopIds(visibleRows, checkedIds);
+        var delete = BulkSelection.DeleteIds(visibleRows, checkedIds);
+        ContainerRow[] deleteRows = [.. visibleRows.Where(r => delete.Contains(r.Id))];
 
         return (FlexRow(
-                Body($"{rows.Length} selected"),
-                Button("Start", () => callbacks.Send(stopped, ContainerAction.Start)).IsEnabled(stopped.Length > 0),
-                Button("Stop", () => callbacks.Send(active, ContainerAction.Stop)).IsEnabled(active.Length > 0),
-                Button("Delete", () => callbacks.RequestDelete(rows)))
+                Body($"{count} selected"),
+                Button("Start", () => callbacks.Send(start, ContainerAction.Start)).IsEnabled(!start.IsEmpty),
+                Button("Stop", () => callbacks.Send(stop, ContainerAction.Stop)).IsEnabled(!stop.IsEmpty),
+                Button("Delete", () => callbacks.RequestDelete(deleteRows)).IsEnabled(deleteRows.Length > 0))
             with
             {
                 AlignItems = FlexAlign.Center,
@@ -156,6 +155,7 @@ internal sealed class ContainersPage : EngineStateComponent
 
     private static Element Table(
         EngineState state,
+        ContainerFilter filter,
         IReadOnlyList<ContainerGroup> groups,
         IReadOnlyList<ListItem> items,
         string[] shownIds,
@@ -164,8 +164,7 @@ internal sealed class ContainersPage : EngineStateComponent
     {
         if (groups.Count == 0)
         {
-            var message = state.Containers.IsEmpty ? "No containers on this engine." : "No containers match the search.";
-            return Body(message).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
+            return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
         }
 
         var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), value => callbacks.SetChecked(shownIds, value));
@@ -220,8 +219,7 @@ internal sealed class ContainersPage : EngineStateComponent
     /// <summary>The confirmation before a delete; it is always in the tree and opens while there is a request.</summary>
     private static Element DeleteDialog(DeleteRequest? request, Action onDone)
     {
-        var text = request is null ? "" : DeleteText(request);
-        return ContentDialog("Delete container?", Body(text).TextWrapping(), "Delete") with
+        return ContentDialog("Delete container?", Body(request?.Text ?? "").TextWrapping(), "Delete") with
         {
             IsOpen = request is not null,
             CloseButtonText = "Cancel",
@@ -229,19 +227,21 @@ internal sealed class ContainersPage : EngineStateComponent
             OnClosed = result =>
             {
                 if (result == ContentDialogResult.Primary && request is not null)
-                    Send(request.Ids, ContainerAction.Remove, force: request.AnyRunning);
+                    ConfirmDelete(request.Ids);
                 onDone();
             },
         };
     }
 
-    private static string DeleteText(DeleteRequest request)
+    /// <summary>
+    /// Removes the confirmed containers as they are now, read from the current session when the user confirms: rows that are gone
+    /// or became pending while the dialog was open are skipped, and running ones are stopped first (force).
+    /// </summary>
+    private static void ConfirmDelete(ImmutableArray<string> ids)
     {
-        var text = request.Name is { } name
-            ? $"{name} will be removed. Its data that is not in a volume is lost."
-            : $"{request.Ids.Length} containers will be removed. Their data that is not in a volume is lost.";
-        if (!request.AnyRunning)
-            return text;
-        return text + (request.Name is not null ? " It is running and will be stopped first." : " Those that are running will be stopped first.");
+        var state = AppServices.Current.Session.State;
+        var rows = ComposeGrouping.Build(state.Containers, state.Pending, NoFilter).SelectMany(g => g.Rows);
+        var removal = BulkSelection.Removal(rows, ids);
+        Send(removal.Ids, ContainerAction.Remove, removal.Force);
     }
 }
