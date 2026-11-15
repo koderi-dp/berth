@@ -42,7 +42,7 @@ internal static class ContainerRowView
         GridSize.Star(3),
         GridSize.Px(120), // ports: wide enough for "65535:65535"
         GridSize.Px(120),
-        GridSize.Px(124),
+        GridSize.Px(172), // four buttons
     ];
 
     private static readonly GridSize[] OneRow = [GridSize.Star()];
@@ -88,15 +88,12 @@ internal static class ContainerRowView
             ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(ids, ContainerAction.Start)).AutomationId("start-" + row.Name)
             : Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(ids, ContainerAction.Stop)).AutomationId("stop-" + row.Name);
 
-        // Pause and resume only apply to a running or a paused container; restart to any.
+        // Every action is a button on the row, none behind a menu. Restart applies to any container; pause only to a running one,
+        // and a paused one gets Resume in its place.
+        var restart = Widgets.IconButton(Glyphs.Restart, "Restart", () => callbacks.Send(ids, ContainerAction.Restart)).AutomationId("restart-" + row.Name);
         var pauseOrResume = row.State == RowState.Paused
-            ? MenuItem("Resume", () => callbacks.Send(ids, ContainerAction.Unpause), "Play")
-            : MenuItem("Pause", () => callbacks.Send(ids, ContainerAction.Pause), "Pause") with { IsEnabled = row.State == RowState.Running };
-        var more = Widgets.IconButton(Glyphs.More, "More actions", null)
-            .AutomationId("more-" + row.Name)
-            .WithFlyout(MenuItems(
-                MenuItem("Restart", () => callbacks.Send(ids, ContainerAction.Restart), "Refresh"),
-                pauseOrResume));
+            ? Widgets.IconButton(Glyphs.Resume, "Resume", () => callbacks.Send(ids, ContainerAction.Unpause)).AutomationId("resume-" + row.Name).IsEnabled(canAct)
+            : Widgets.IconButton(Glyphs.Pause, "Pause", () => callbacks.Send(ids, ContainerAction.Pause)).AutomationId("pause-" + row.Name).IsEnabled(canAct && row.State == RowState.Running);
 
         var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete((ContainerRow[])[row])).AutomationId("delete-" + row.Name);
 
@@ -128,7 +125,7 @@ internal static class ContainerRowView
             CellText(row.Status).Grid(column: 5),
             Ports(row.Ports).Grid(column: 6),
             CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 7),
-            Actions(startOrStop.IsEnabled(canAct), more.IsEnabled(canAct), delete.IsEnabled(canAct)).Grid(column: 8));
+            Actions(startOrStop.IsEnabled(canAct), restart.IsEnabled(canAct), pauseOrResume, delete.IsEnabled(canAct)).Grid(column: 8));
     }
 
     /// <summary>
