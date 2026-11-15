@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.ApplicationModel.DataTransfer;
 using static Microsoft.UI.Reactor.Factories;
+using MenuEntry = Microsoft.UI.Reactor.Core.MenuFlyoutItemBase;
 
 namespace Berth.Pages;
 
@@ -42,7 +43,7 @@ internal static class ContainerRowView
         GridSize.Star(3),
         GridSize.Px(120), // ports: wide enough for "65535:65535"
         GridSize.Px(120),
-        GridSize.Px(172), // four buttons
+        GridSize.Px(236), // four buttons, the menu, a divider and Delete
     ];
 
     /// <summary>The same columns for a narrow window: Restart and Pause move into a menu, so the actions need less room.</summary>
@@ -56,7 +57,7 @@ internal static class ContainerRowView
         GridSize.Star(3),
         GridSize.Px(120), // ports: wide enough for "65535:65535"
         GridSize.Px(120),
-        GridSize.Px(124), // two buttons and the menu
+        GridSize.Px(148), // one button, the menu, a divider and Delete
     ];
 
     /// <summary>The window is at least this wide (in effective pixels) when every action gets its own button.</summary>
@@ -102,37 +103,50 @@ internal static class ContainerRowView
         var stopped = row.State == RowState.Stopped;
         string[] ids = [row.Id];
 
+        // The row's main action, in the accent colour: Stop for a container that is active, Start for one that is not.
         var startOrStop = stopped
-            ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(ids, ContainerAction.Start)).AutomationId("start-" + row.Name)
-            : Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(ids, ContainerAction.Stop)).AutomationId("stop-" + row.Name);
+            ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(ids, ContainerAction.Start), color: Primary(canAct)).AutomationId("start-" + row.Name)
+            : Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(ids, ContainerAction.Stop), color: Primary(canAct)).AutomationId("stop-" + row.Name);
 
         // Restart applies to any container; pause only to a running one, and a paused one gets Resume in its place. In a wide
-        // window each is a button on the row; in a narrow one (compact) they sit in a "more" menu, so the other columns keep their room.
+        // window each is a button on the row; in a narrow one (compact) they go first in the "more" menu, so the other columns
+        // keep their room. The menu is on the row at every width: it also holds what never gets a button.
         var paused = row.State == RowState.Paused;
         var canPause = row.State == RowState.Running;
         void Restart() => callbacks.Send(ids, ContainerAction.Restart);
         void PauseOrResume() => callbacks.Send(ids, paused ? ContainerAction.Unpause : ContainerAction.Pause);
-        Element[] secondary = compact
-            ?
-            [
-                Widgets.IconButton(Glyphs.More, "More actions", null)
-                    .AutomationId("more-" + row.Name)
-                    .WithFlyout(MenuItems(
-                        MenuItem("Restart", Restart, "Refresh"),
-                        paused
-                            ? MenuItem("Resume", PauseOrResume, "Play")
-                            : MenuItem("Pause", PauseOrResume, "Pause") with { IsEnabled = canPause }))
-                    .IsEnabled(canAct),
-            ]
+
+        var browserUrl = row.Ports.FirstOrDefault(p => p.Url is not null)?.Url;
+        MenuEntry?[] menu =
+        [
+            compact ? MenuItem("Restart", Restart, "Refresh") : null,
+            compact && paused ? MenuItem("Resume", PauseOrResume, "Play") : null,
+            compact && !paused ? MenuItem("Pause", PauseOrResume, "Pause") with { IsEnabled = canPause } : null,
+            compact ? MenuSeparator() : null,
+            browserUrl is null ? null : MenuItem("Open in browser", () => OpenInBrowser(browserUrl), "Globe"),
+            MenuItem("Copy name", () => CopyToClipboard(row.Name), "Copy"),
+            MenuItem("Copy ID", () => CopyToClipboard(row.Id), "Copy"),
+        ];
+        var more = Widgets.IconButton(Glyphs.More, "More actions", null)
+            .AutomationId("more-" + row.Name)
+            .WithFlyout(MenuItems([.. menu.OfType<MenuEntry>()]));
+
+        Element?[] buttons = compact
+            ? [startOrStop.IsEnabled(canAct), more]
             :
             [
+                startOrStop.IsEnabled(canAct),
                 Widgets.IconButton(Glyphs.Restart, "Restart", Restart).AutomationId("restart-" + row.Name).IsEnabled(canAct),
                 paused
                     ? Widgets.IconButton(Glyphs.Resume, "Resume", PauseOrResume).AutomationId("resume-" + row.Name).IsEnabled(canAct)
                     : Widgets.IconButton(Glyphs.Pause, "Pause", PauseOrResume).AutomationId("pause-" + row.Name).IsEnabled(canAct && canPause),
+                more,
             ];
 
-        var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete((ContainerRow[])[row])).AutomationId("delete-" + row.Name);
+        var delete = DeleteButton(() => callbacks.RequestDelete((ContainerRow[])[row]), canAct).AutomationId("delete-" + row.Name);
+
+        // A container that ended badly stands out; one that just is not running steps back.
+        ThemeRef? statusColor = ContainerStatus.IsFailedExit(row.Status) ? Theme.SystemCritical : stopped ? Theme.SecondaryText : null;
 
         var name = (FlexColumn(
                 OneLine(Body(shownName)).ToolTip(row.Name),
@@ -140,8 +154,8 @@ internal static class ContainerRowView
                         Caption(row.ShortId).Foreground(Theme.SecondaryText),
                         Widgets.IconButton(Glyphs.Copy, "Copy ID", () => CopyToClipboard(row.Id), size: 12)
                             .Padding(4)
-                            .MinWidth(0)
-                            .MinHeight(0))
+                            .MinWidth(24)
+                            .MinHeight(24))
                     with
                     {
                         AlignItems = FlexAlign.Center,
@@ -157,13 +171,13 @@ internal static class ContainerRowView
             minHeight: RowHeight,
             compact,
             SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).IsEnabled(connected).Grid(column: 0),
-            StateMark(row.State, busy).Grid(column: 2),
+            StateMark(ContainerStatus.Shape(row.State), StateColor(row.State), row.State.ToString(), busy).Grid(column: 2),
             name.Grid(column: 3),
             CellText(row.Image).Grid(column: 4),
-            CellText(row.Status).Grid(column: 5),
+            CellText(row.Status, statusColor).Grid(column: 5),
             Ports(row.Ports).Grid(column: 6),
             CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 7),
-            Actions([startOrStop.IsEnabled(canAct), .. secondary, delete.IsEnabled(canAct)]).Grid(column: 8));
+            Actions([.. buttons, ActionDivider(), delete]).Grid(column: 8));
     }
 
     /// <summary>
@@ -191,23 +205,59 @@ internal static class ContainerRowView
 
         var name = OneLine(BodyStrong(project)).ToolTip(project).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0);
 
-        var start = stopped.Length > 0
-            ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(stopped, ContainerAction.Start)).AutomationId("start-" + project).IsEnabled(canAct)
-            : null;
-        var stop = running.Length > 0
-            ? Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(running, ContainerAction.Stop)).AutomationId("stop-" + project).IsEnabled(canAct)
-            : null;
-        var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete(rows)).AutomationId("delete-" + project).IsEnabled(canAct);
+        string[] all = [.. rows.Select(r => r.Id)];
+        void Start() => callbacks.Send(stopped, ContainerAction.Start);
+        void Stop() => callbacks.Send(running, ContainerAction.Stop);
+        void Restart() => callbacks.Send(all, ContainerAction.Restart);
+
+        // The main action is Stop while anything in the project is active, Start otherwise. The other one (a project can have
+        // both stopped and active containers) and Restart are buttons in a wide window and menu items in a narrow one.
+        var stopIsMain = running.Length > 0;
+        var main = stopIsMain
+            ? Widgets.IconButton(Glyphs.Stop, "Stop", Stop, color: Primary(canAct)).AutomationId("stop-" + project)
+            : Widgets.IconButton(Glyphs.Play, "Start", Start, color: Primary(canAct)).AutomationId("start-" + project);
+        var alsoStart = stopIsMain && stopped.Length > 0;
+
+        Element?[] buttons = compact
+            ?
+            [
+                main.IsEnabled(canAct),
+                Widgets.IconButton(Glyphs.More, "More actions", null)
+                    .AutomationId("more-" + project)
+                    .WithFlyout(MenuItems(
+                    [
+                        .. alsoStart ? (MenuEntry[])[MenuItem("Start", Start, "Play")] : [],
+                        MenuItem("Restart", Restart, "Refresh"),
+                    ]))
+                    .IsEnabled(canAct),
+            ]
+            :
+            [
+                alsoStart ? Widgets.IconButton(Glyphs.Play, "Start", Start).AutomationId("start-" + project).IsEnabled(canAct) : null,
+                main.IsEnabled(canAct),
+                Widgets.IconButton(Glyphs.Restart, "Restart", Restart).AutomationId("restart-" + project).IsEnabled(canAct),
+            ];
+        var delete = DeleteButton(() => callbacks.RequestDelete(rows), canAct).AutomationId("delete-" + project);
 
         return Cells(
             minHeight: RowHeight,
             compact,
-            SelectBox(checkedState, value => callbacks.SetChecked(rows.Select(r => r.Id), value), "Select " + project).IsEnabled(connected).Grid(column: 0),
+            SelectBox(checkedState, value => callbacks.SetChecked(all, value), "Select " + project).IsEnabled(connected).Grid(column: 0),
             chevron.Grid(column: 1),
-            StateMark(group.State, busy: false).Grid(column: 2),
+            StateMark(ContainerStatus.GroupShape(rows.Select(r => r.State).ToArray()), StateColor(group.State), group.State.ToString(), busy: false).Grid(column: 2),
             name.Grid(column: 3, columnSpan: 5),
-            Actions(start, stop, delete).Grid(column: 8));
+            Actions([.. buttons, ActionDivider(), delete]).Grid(column: 8));
     }
+
+    /// <summary>The accent colour for a row's main action while it can act; none while it cannot, so the disabled look shows.</summary>
+    private static ThemeRef? Primary(bool canAct) => canAct ? Theme.AccentText : null;
+
+    /// <summary>Delete is red and, with <see cref="ActionDivider"/> before it, stands apart from the actions that lose nothing.</summary>
+    private static ButtonElement DeleteButton(Action onClick, bool canAct) =>
+        Widgets.IconButton(Glyphs.Delete, "Delete", onClick, color: canAct ? Theme.SystemCritical : null).IsEnabled(canAct);
+
+    private static Element ActionDivider() =>
+        Border(Empty()).Background(Theme.DividerStroke).Size(1, 20).Margin(4, 0, 4, 0).Flex(shrink: 0);
 
     /// <summary>Running: the success colour; paused or restarting: caution; stopped: secondary text.</summary>
     private static ThemeRef StateColor(RowState state) => state switch
@@ -217,10 +267,11 @@ internal static class ContainerRowView
         _ => Theme.SecondaryText,
     };
 
-    private static Element StateMark(RowState state, bool busy) =>
+    /// <summary>The state as a shape in the state's colour (so it does not rest on colour alone), or a ring while an action runs.</summary>
+    private static Element StateMark(StateShape shape, ThemeRef color, string label, bool busy) =>
         busy
             ? ProgressRing().Size(16, 16).AutomationName("Working").HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center)
-            : Widgets.StatusDot(StateColor(state)).AutomationName(state.ToString()).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
+            : Widgets.StateMark(shape, color).AutomationName(label).ToolTip(label).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
 
     private static Element Cells(double minHeight, bool compact, params Element[] cells) =>
         Border(Grid(compact ? CompactColumns : WideColumns, OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0))
@@ -240,8 +291,8 @@ internal static class ContainerRowView
     private static TextBlockElement OneLine(TextBlockElement text) =>
         text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
 
-    private static Element CellText(string text) =>
-        OneLine(Body(text))
+    private static Element CellText(string text, ThemeRef? color = null) =>
+        (color is { } drawn ? OneLine(Body(text)).Foreground(drawn) : OneLine(Body(text)))
             .ToolTip(text)
             .VAlign(VerticalAlignment.Center)
             .Margin(0, 0, 12, 0);
@@ -276,6 +327,9 @@ internal static class ContainerRowView
         port.Url is { } url
             ? HyperlinkButton(port.Text, url).Padding(4, 2).ToolTip(url.ToString())
             : OneLine(Body(port.Text));
+
+    /// <summary>Opens a published port in the default browser. Fire and forget: nothing waits on the browser.</summary>
+    private static void OpenInBrowser(Uri url) => _ = Windows.System.Launcher.LaunchUriAsync(url);
 
     private static void CopyToClipboard(string text)
     {

@@ -32,14 +32,34 @@ internal static class Widgets
             .CornerRadius(4)
             .Size(8, 8);
 
-    /// <summary>A Segoe Fluent Icons glyph; it takes the colour of the control it sits in.</summary>
-    public static Element Glyph(string glyph, double size = 16) => Icon(FontIcon(glyph, IconFont, size));
+    /// <summary>
+    /// A container's or project's state as a 12 pixel shape in <paramref name="color"/>: a filled dot, a ring, or a ring whose left
+    /// half is filled. The shape alone tells the states apart, for anyone who cannot tell the colours apart.
+    /// </summary>
+    public static Element StateMark(Berth.Presentation.StateShape shape, ThemeRef color) => shape switch
+    {
+        Berth.Presentation.StateShape.Filled => Border(Empty()).Background(color).CornerRadius(6).Size(12, 12),
+        Berth.Presentation.StateShape.Half => Border(
+                Border(Empty()).Background(color).CornerRadius(4, 0, 0, 4).Width(4).HAlign(Microsoft.UI.Xaml.HorizontalAlignment.Left))
+            .BorderBrush(color).BorderThickness(2, 2, 2, 2).CornerRadius(6).Size(12, 12),
+        _ => Border(Empty()).BorderBrush(color).BorderThickness(2, 2, 2, 2).CornerRadius(6).Size(12, 12),
+    };
+
+    /// <summary>
+    /// A Segoe Fluent Icons glyph. Without a <paramref name="color"/> it takes the colour of the control it sits in (and so dims
+    /// when that is disabled); with one it is drawn in it.
+    /// </summary>
+    public static Element Glyph(string glyph, double size = 16, ThemeRef? color = null) =>
+        color is { } drawn
+            ? TextBlock(glyph).FontFamily(IconFont).FontSize(size).Foreground(drawn)
+            : Icon(FontIcon(glyph, IconFont, size));
 
     /// <summary>
     /// A borderless button that shows only <paramref name="glyph"/>; <paramref name="label"/> is its accessible name and its tooltip.
+    /// Pass a <paramref name="color"/> only while the button is enabled: a coloured glyph does not dim.
     /// </summary>
-    public static ButtonElement IconButton(string glyph, string label, Action? onClick, double size = 16) =>
-        Button(Glyph(glyph, size), onClick)
+    public static ButtonElement IconButton(string glyph, string label, Action? onClick, double size = 16, ThemeRef? color = null) =>
+        Button(Glyph(glyph, size, color), onClick)
             .SubtleButton()
             .AutomationName(label)
             .ToolTip(label);

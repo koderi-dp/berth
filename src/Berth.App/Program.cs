@@ -17,8 +17,8 @@ services.Session.Dispatch(new ConnectRequested());
 var window = new WindowSpec
 {
     Title = "Berth",
-    Width = 1200,
-    Height = 800,
+    Width = 1360, // wide enough for the containers table to show every action as a button
+    Height = 820,
     Backdrop = BackdropChoice.Of(BackdropKind.Mica),
 }.WithPersistence("main");
 
