@@ -67,11 +67,14 @@ internal static class ContainerRowView
             ColumnTitle("Created").Grid(column: 6));
 
     /// <summary>
-    /// One container. <paramref name="indented"/>: it belongs to a compose project and sits under the project's row. Its checkbox
+    /// One container. <paramref name="project"/> not null: it belongs to that compose project and sits under the project's row,
+    /// indented and named without the project in front (the tooltip keeps the whole name). Its checkbox
     /// and actions are disabled while not <paramref name="connected"/>; its actions also while one is in progress on it.
     /// </summary>
-    public static Element Row(ContainerRow row, bool indented, bool isChecked, bool connected, ContainerListCallbacks callbacks)
+    public static Element Row(ContainerRow row, string? project, bool isChecked, bool connected, ContainerListCallbacks callbacks)
     {
+        var indented = project is not null;
+        var shownName = project is null ? row.Name : ComposeGrouping.NameInProject(row.Name, project);
         var busy = row.Pending is not null;
         var canAct = BulkSelection.CanAct(row, connected);
         var stopped = row.State == RowState.Stopped;
@@ -94,7 +97,7 @@ internal static class ContainerRowView
         var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete((ContainerRow[])[row])).AutomationId("delete-" + row.Name);
 
         var name = (FlexColumn(
-                OneLine(Body(row.Name)).ToolTip(row.Name),
+                OneLine(Body(shownName)).ToolTip(row.Name),
                 (FlexRow(
                         Caption(row.ShortId).Foreground(Theme.SecondaryText),
                         Widgets.IconButton(Glyphs.Copy, "Copy ID", () => CopyToClipboard(row.Id), size: 12)

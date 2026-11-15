@@ -24,7 +24,7 @@ internal sealed class ContainersPage : EngineStateComponent
 
     private sealed record GroupItem(ContainerGroup Group, bool Collapsed) : ListItem("group:" + Group.Project);
 
-    private sealed record RowItem(ContainerRow Row, bool Indented) : ListItem(Row.Id);
+    private sealed record RowItem(ContainerRow Row, string? Project) : ListItem(Row.Id);
 
     /// <summary>What the delete confirmation is about: the ids asked for and the text that names them.</summary>
     private sealed record DeleteRequest(ImmutableArray<string> Ids, string Text);
@@ -100,14 +100,14 @@ internal sealed class ContainersPage : EngineStateComponent
         {
             if (group.Project is not { } project)
             {
-                items.Add(new RowItem(group.Rows[0], Indented: false));
+                items.Add(new RowItem(group.Rows[0], Project: null));
                 continue;
             }
 
             var isCollapsed = collapsed.Contains(project);
             items.Add(new GroupItem(group, isCollapsed));
             if (!isCollapsed)
-                items.AddRange(group.Rows.Select(row => new RowItem(row, Indented: true)));
+                items.AddRange(group.Rows.Select(row => new RowItem(row, project)));
         }
 
         return items;
@@ -184,7 +184,7 @@ internal sealed class ContainersPage : EngineStateComponent
         var list = ListView(items, item => item.Key, (item, _) => item switch
             {
                 GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, callbacks).WithKey(g.Key),
-                RowItem r => ContainerRowView.Row(r.Row, r.Indented, checkedIds.Contains(r.Row.Id), connected, callbacks).WithKey(r.Key),
+                RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, callbacks).WithKey(r.Key),
                 _ => throw new InvalidOperationException("A new list item needs its row here: " + item.GetType().Name),
             })
             .Set(view =>

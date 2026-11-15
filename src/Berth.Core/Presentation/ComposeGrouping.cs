@@ -66,6 +66,18 @@ public static class ComposeGrouping
         : rows.Any(r => r.State == RowState.Paused) ? RowState.Paused
         : RowState.Stopped;
 
+    /// <summary>
+    /// What a container is called under its compose project's row: its name without the project in front ("shop-web-1" under
+    /// "shop" is "web-1"), since the project is already on the row above. A name that does not start that way is left as it is.
+    /// </summary>
+    public static string NameInProject(string name, string project)
+    {
+        var hasPrefix = name.Length > project.Length + 1
+            && name.StartsWith(project, StringComparison.OrdinalIgnoreCase)
+            && name[project.Length] is '-' or '_';
+        return hasPrefix ? name[(project.Length + 1)..] : name;
+    }
+
     private static string? Project(ContainerSummary container) =>
         container.Labels.TryGetValue(ProjectLabel, out var project) && !string.IsNullOrWhiteSpace(project) ? project : null;
 

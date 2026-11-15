@@ -114,6 +114,17 @@ public sealed class ComposeGroupingTests
         Assert.Null(groups[1].Rows.Single().Pending);
     }
 
+    [Theory]
+    [InlineData("shop-web-1", "shop", "web-1")]
+    [InlineData("shop_web_1", "shop", "web_1")]
+    [InlineData("Shop-web-1", "shop", "web-1")]
+    [InlineData("custom-name", "shop", "custom-name")]
+    [InlineData("shop", "shop", "shop")]
+    [InlineData("shop-", "shop", "shop-")]
+    [InlineData("shopping-web-1", "shop", "shopping-web-1")]
+    public void Name_under_a_project_drops_the_project_prefix(string name, string project, string shown) =>
+        Assert.Equal(shown, ComposeGrouping.NameInProject(name, project));
+
     [Fact]
     public void Row_carries_image_status_ports_and_created_time()
     {
