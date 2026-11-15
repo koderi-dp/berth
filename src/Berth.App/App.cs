@@ -63,6 +63,7 @@ internal sealed class App : EngineStateComponent
                 IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
                 IsPaneToggleButtonVisible = false,
             })
+            .OpenPaneLength(220) // narrower than the 320 default: the list needs the width more than a short menu does
             .IsPaneOpen(isPaneOpen, setIsPaneOpen)
             .Flex(grow: 1, basis: 0);
 

@@ -194,7 +194,7 @@ internal sealed class ContainersPage : EngineStateComponent
             });
 
         return (FlexColumn(
-                Border(header).BorderBrush(Theme.DividerStroke).BorderThickness(0, 0, 0, 1).Flex(shrink: 0),
+                header.Flex(shrink: 0),
                 list.Flex(grow: 1, basis: 0))
             with
             {

@@ -28,16 +28,20 @@ internal sealed record ContainerListCallbacks(
 /// </summary>
 internal static class ContainerRowView
 {
-    /// <summary>Checkbox, state dot, name, image, status, ports, created, actions.</summary>
+    /// <summary>
+    /// Checkbox, chevron (compose project rows only), state dot, name, image, status, ports, created, actions. The dot has its own
+    /// column so a project's dot and its containers' dots sit under each other, right of the chevron.
+    /// </summary>
     private static readonly GridSize[] Columns =
     [
         GridSize.Px(40),
         GridSize.Px(28),
+        GridSize.Px(24),
+        GridSize.Star(4), // the name: wider than the others, a project's containers are indented in it
         GridSize.Star(3),
         GridSize.Star(3),
-        GridSize.Star(3),
-        GridSize.Star(2),
-        GridSize.Px(110),
+        GridSize.Px(120), // ports: wide enough for "65535:65535"
+        GridSize.Px(120),
         GridSize.Px(124),
     ];
 
@@ -60,11 +64,11 @@ internal static class ContainerRowView
         Cells(
             minHeight: 36,
             SelectBox(checkedState, onCheckAll, "Select all").IsEnabled(connected).Grid(column: 0),
-            ColumnTitle("Name").Grid(column: 2),
-            ColumnTitle("Image").Grid(column: 3),
-            ColumnTitle("Status").Grid(column: 4),
-            ColumnTitle("Ports").Grid(column: 5),
-            ColumnTitle("Created").Grid(column: 6));
+            ColumnTitle("Name").Grid(column: 3),
+            ColumnTitle("Image").Grid(column: 4),
+            ColumnTitle("Status").Grid(column: 5),
+            ColumnTitle("Ports").Grid(column: 6),
+            ColumnTitle("Created").Grid(column: 7));
 
     /// <summary>
     /// One container. <paramref name="project"/> not null: it belongs to that compose project and sits under the project's row,
@@ -118,13 +122,13 @@ internal static class ContainerRowView
         return Cells(
             minHeight: RowHeight,
             SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).IsEnabled(connected).Grid(column: 0),
-            StateMark(row.State, busy).Grid(column: 1),
-            name.Grid(column: 2),
-            CellText(row.Image).Grid(column: 3),
-            CellText(row.Status).Grid(column: 4),
-            Ports(row.Ports).Grid(column: 5),
-            CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 6),
-            Actions(startOrStop.IsEnabled(canAct), more.IsEnabled(canAct), delete.IsEnabled(canAct)).Grid(column: 7));
+            StateMark(row.State, busy).Grid(column: 2),
+            name.Grid(column: 3),
+            CellText(row.Image).Grid(column: 4),
+            CellText(row.Status).Grid(column: 5),
+            Ports(row.Ports).Grid(column: 6),
+            CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 7),
+            Actions(startOrStop.IsEnabled(canAct), more.IsEnabled(canAct), delete.IsEnabled(canAct)).Grid(column: 8));
     }
 
     /// <summary>
@@ -150,15 +154,7 @@ internal static class ContainerRowView
             .MinWidth(0)
             .MinHeight(0);
 
-        var name = (FlexRow(
-                Widgets.StatusDot(StateColor(group.State)),
-                OneLine(BodyStrong(project)).ToolTip(project))
-            with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 8,
-            })
-            .Margin(0, 0, 12, 0);
+        var name = OneLine(BodyStrong(project)).ToolTip(project).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0);
 
         var start = stopped.Length > 0
             ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(stopped, ContainerAction.Start)).AutomationId("start-" + project).IsEnabled(canAct)
@@ -172,8 +168,9 @@ internal static class ContainerRowView
             minHeight: RowHeight,
             SelectBox(checkedState, value => callbacks.SetChecked(rows.Select(r => r.Id), value), "Select " + project).IsEnabled(connected).Grid(column: 0),
             chevron.Grid(column: 1),
-            name.Grid(column: 2, columnSpan: 5),
-            Actions(start, stop, delete).Grid(column: 7));
+            StateMark(group.State, busy: false).Grid(column: 2),
+            name.Grid(column: 3, columnSpan: 5),
+            Actions(start, stop, delete).Grid(column: 8));
     }
 
     /// <summary>Running: the success colour; paused or restarting: caution; stopped: secondary text.</summary>
@@ -190,7 +187,9 @@ internal static class ContainerRowView
             : Widgets.StatusDot(StateColor(state)).AutomationName(state.ToString()).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
 
     private static Element Cells(double minHeight, params Element[] cells) =>
-        Grid(Columns, OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0);
+        Border(Grid(Columns, OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0))
+            .BorderBrush(Theme.DividerStroke)
+            .BorderThickness(0, 0, 0, 1);
 
     private static Element SelectBox(bool? checkedState, Action<bool> onChanged, string label) =>
         CheckBox(checkedState, onChanged)
