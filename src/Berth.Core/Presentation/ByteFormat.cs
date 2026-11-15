@@ -8,8 +8,9 @@ public static class ByteFormat
     private static readonly string[] Units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"];
 
     /// <summary>
-    /// A size in binary units ("512 B", "1.5 KB", "20 MB", "1.87 GB"): two decimals below 10, one below 100, none above, with
-    /// trailing zeros dropped; bytes are whole. A negative size reads "0 B".
+    /// A size in binary units ("512 B", "1.5 KB", "20 MB", "1.87 GB") with three significant digits at most: two decimals
+    /// below 10, one below 100, none above, trailing zeros dropped; bytes are whole. From 1000 of a unit the next unit is used
+    /// ("1000 B" reads "0.98 KB"). A negative size reads "0 B".
     /// </summary>
     public static string Bytes(long bytes) => Format(bytes);
 
@@ -29,7 +30,8 @@ public static class ByteFormat
 
         var unit = 0;
         var value = bytes;
-        while (value >= 1024 && unit < Units.Length - 1)
+        // Four digits would be needed from 1000 up, so 1000 to 1023 of a unit read as a fraction of the next ("0.98 KB").
+        while (value >= 1000 && unit < Units.Length - 1)
         {
             value /= 1024;
             unit++;
@@ -37,10 +39,10 @@ public static class ByteFormat
 
         var decimals = unit == 0 || value >= 100 ? 0 : value < 10 ? 2 : 1;
         var rounded = Math.Round(value, decimals, MidpointRounding.AwayFromZero);
-        if (rounded >= 1024 && unit < Units.Length - 1)
+        if (rounded >= 1000 && unit < Units.Length - 1)
         {
-            // 1023.6 KB rounds to 1024 KB, which reads as 1 MB.
-            rounded = Math.Round(rounded / 1024, 2, MidpointRounding.AwayFromZero);
+            // 999.6 KB rounds to 1000 KB, which reads as 0.98 MB.
+            rounded = Math.Round(value / 1024, 2, MidpointRounding.AwayFromZero);
             unit++;
         }
 

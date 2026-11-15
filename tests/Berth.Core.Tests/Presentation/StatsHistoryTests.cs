@@ -64,14 +64,19 @@ public sealed class StatsHistoryTests
         Assert.Equal(1000, history.NetworkSent[^1].Value);
     }
 
-    [Fact]
-    public void Rate_is_zero_when_two_samples_have_the_same_time()
+    [Theory]
+    [InlineData(5)]
+    [InlineData(4)]
+    public void Sample_not_later_than_the_latest_is_ignored(double seconds)
     {
-        var history = StatsHistory.Empty
-            .Add(Sample(0, received: 1000))
-            .Add(Sample(0, received: 9000));
+        var latest = Sample(5, cpu: 1, received: 1000);
+        var history = StatsHistory.Empty.Add(Sample(0, cpu: 0)).Add(latest);
 
-        Assert.Equal(0, history.NetworkReceived[^1].Value);
+        var after = history.Add(Sample(seconds, cpu: 9, received: 9000));
+
+        Assert.Same(history, after);
+        Assert.Same(latest, after.Latest);
+        Assert.Equal([T0, T0.AddSeconds(5)], after.Cpu.Select(p => p.Time));
     }
 
     [Fact]

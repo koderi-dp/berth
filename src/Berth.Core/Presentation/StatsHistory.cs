@@ -65,17 +65,23 @@ public sealed class StatsHistory
     public IReadOnlyList<StatsPoint> BlockWritten => _blockWritten;
 
     /// <summary>
-    /// Adds a sample. A rate is the change from the previous sample divided by the seconds between them; it is 0 for the first
-    /// sample, when a counter went down (the container restarted), and when the two samples have the same time.
+    /// Adds a sample. A sample whose time is not after <see cref="Latest"/>'s is ignored, so the charts' times only go forward.
+    /// A rate is the change from the previous sample divided by the seconds between them; it is 0 for the first sample and
+    /// when a counter went down (the container restarted).
     /// </summary>
     public StatsHistory Add(StatsSample sample)
     {
         var previous = Latest;
+        if (previous is not null && sample.Time <= previous.Time)
+        {
+            return this;
+        }
+
         var seconds = previous is null ? 0 : (sample.Time - previous.Time).TotalSeconds;
 
         double Rate(Func<StatsSample, long> counter)
         {
-            if (previous is null || seconds <= 0)
+            if (previous is null)
             {
                 return 0;
             }

@@ -6,10 +6,12 @@ namespace Berth.Tests.Presentation;
 
 public sealed class DockerRunCommandTests
 {
-    [Fact]
-    public void Container_with_nothing_optional_gives_name_and_image()
+    [Theory]
+    [InlineData(ShellKind.Posix)]
+    [InlineData(ShellKind.PowerShell)]
+    public void Container_with_nothing_optional_gives_name_and_image(ShellKind shell)
     {
-        Assert.Equal("docker run -d --name web nginx:alpine", DockerRunCommand.Build(Details()));
+        Assert.Equal("docker run -d --name web nginx:alpine", DockerRunCommand.Build(Details(), shell));
     }
 
     [Fact]
@@ -29,7 +31,7 @@ public sealed class DockerRunCommandTests
 
         Assert.Equal(
             "docker run -d --name web -p 5353:53/udp -p 8080:80 -p 127.0.0.1:9001:9000 nginx:alpine",
-            DockerRunCommand.Build(details));
+            DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
     [Fact]
@@ -46,7 +48,7 @@ public sealed class DockerRunCommandTests
 
         Assert.Equal(
             "docker run -d --name web -v /srv/data:/data -v cache:/cache:ro nginx:alpine",
-            DockerRunCommand.Build(details));
+            DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
     [Fact]
@@ -54,7 +56,7 @@ public sealed class DockerRunCommandTests
     {
         var details = Details() with { Mounts = [new MountDetails("tmpfs", "", "/run/cache", "", true, null)] };
 
-        Assert.Equal("docker run -d --name web --tmpfs /run/cache nginx:alpine", DockerRunCommand.Build(details));
+        Assert.Equal("docker run -d --name web --tmpfs /run/cache nginx:alpine", DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
     [Fact]
@@ -64,7 +66,7 @@ public sealed class DockerRunCommandTests
 
         Assert.Equal(
             "docker run -d --name web -e A=1 -e PATH=/usr/local/bin:/usr/bin nginx:alpine",
-            DockerRunCommand.Build(details));
+            DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
     [Theory]
@@ -75,7 +77,7 @@ public sealed class DockerRunCommandTests
     [InlineData("", "docker run -d --name web nginx:alpine")]
     public void Restart_policy_is_given_unless_it_is_no(string policy, string expected)
     {
-        Assert.Equal(expected, DockerRunCommand.Build(Details() with { RestartPolicy = policy }));
+        Assert.Equal(expected, DockerRunCommand.Build(Details() with { RestartPolicy = policy }, ShellKind.Posix));
     }
 
     [Fact]
@@ -83,7 +85,7 @@ public sealed class DockerRunCommandTests
     {
         var details = Details() with { WorkingDir = "/app", User = "1000:1000", Tty = true };
 
-        Assert.Equal("docker run -d --name web -w /app -u 1000:1000 -t nginx:alpine", DockerRunCommand.Build(details));
+        Assert.Equal("docker run -d --name web -w /app -u 1000:1000 -t nginx:alpine", DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
     [Fact]
@@ -91,23 +93,80 @@ public sealed class DockerRunCommandTests
     {
         var details = Details() with { Cmd = ["nginx", "-g", "daemon off;"] };
 
-        Assert.Equal("docker run -d --name web nginx:alpine nginx -g \"daemon off;\"", DockerRunCommand.Build(details));
+        Assert.Equal("docker run -d --name web nginx:alpine nginx -g 'daemon off;'", DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
-    [Fact]
-    public void Arguments_with_spaces_or_shell_characters_are_quoted_and_inner_quotes_escaped()
+    [Theory]
+    [InlineData(ShellKind.Posix, "$HOME/bin", "'$HOME/bin'")]
+    [InlineData(ShellKind.Posix, "`id`", "'`id`'")]
+    [InlineData(ShellKind.Posix, "$(id)", "'$(id)'")]
+    [InlineData(ShellKind.Posix, "hi!", "'hi!'")]
+    [InlineData(ShellKind.Posix, "say \"hi\"", "'say \"hi\"'")]
+    [InlineData(ShellKind.Posix, "it's", @"'it'\''s'")]
+    [InlineData(ShellKind.Posix, "it’s", "'it’s'")]
+    [InlineData(ShellKind.Posix, "a b", "'a b'")]
+    [InlineData(ShellKind.Posix, "a,b", "'a,b'")]
+    [InlineData(ShellKind.Posix, "one\ntwo", "'one\ntwo'")]
+    [InlineData(ShellKind.Posix, "", "''")]
+    [InlineData(ShellKind.Posix, @"C:\data\", @"'C:\data\'")]
+    [InlineData(ShellKind.Posix, "@file", "@file")]
+    [InlineData(ShellKind.Posix, "$2y$10$abc", "'$2y$10$abc'")]
+    [InlineData(ShellKind.PowerShell, "$HOME/bin", "'$HOME/bin'")]
+    [InlineData(ShellKind.PowerShell, "`id`", "'`id`'")]
+    [InlineData(ShellKind.PowerShell, "$(id)", "'$(id)'")]
+    [InlineData(ShellKind.PowerShell, "hi!", "'hi!'")]
+    [InlineData(ShellKind.PowerShell, "say \"hi\"", "'say \"hi\"'")]
+    [InlineData(ShellKind.PowerShell, "it's", "'it''s'")]
+    [InlineData(ShellKind.PowerShell, "it’s", "'it’’s'")]
+    [InlineData(ShellKind.PowerShell, "a b", "'a b'")]
+    [InlineData(ShellKind.PowerShell, "a,b", "'a,b'")]
+    [InlineData(ShellKind.PowerShell, "one\ntwo", "'one\ntwo'")]
+    [InlineData(ShellKind.PowerShell, "", "''")]
+    [InlineData(ShellKind.PowerShell, @"C:\data\", @"'C:\data\'")]
+    [InlineData(ShellKind.PowerShell, "@file", "'@file'")]
+    [InlineData(ShellKind.PowerShell, "a@b", "a@b")]
+    [InlineData(ShellKind.PowerShell, "$2y$10$abc", "'$2y$10$abc'")]
+    public void Argument_with_shell_characters_is_single_quoted_so_the_shell_passes_it_unchanged(
+        ShellKind shell,
+        string argument,
+        string expected)
+    {
+        var details = Details() with { Cmd = [argument] };
+
+        Assert.Equal($"docker run -d --name web nginx:alpine {expected}", DockerRunCommand.Build(details, shell));
+    }
+
+    [Theory]
+    [InlineData(ShellKind.Posix)]
+    [InlineData(ShellKind.PowerShell)]
+    public void Safe_characters_are_written_bare(ShellKind shell)
+    {
+        var details = Details() with { Env = ["PATH=/usr/local/bin:/usr/bin", "LEVEL=100%", "A_B-c.d+e@f=1"] };
+
+        Assert.Equal(
+            "docker run -d --name web -e PATH=/usr/local/bin:/usr/bin -e LEVEL=100% -e A_B-c.d+e@f=1 nginx:alpine",
+            DockerRunCommand.Build(details, shell));
+    }
+
+    [Theory]
+    [InlineData(ShellKind.Posix, @"'C:\My Data:/data'", @"'GREETING=it'\''s me'", "sh -c 'echo \"$HOME\" && sleep 1'")]
+    [InlineData(ShellKind.PowerShell, @"'C:\My Data:/data'", "'GREETING=it''s me'", "sh -c 'echo \"$HOME\" && sleep 1'")]
+    public void Option_values_mounts_and_commands_are_quoted_as_whole_arguments(
+        ShellKind shell,
+        string mount,
+        string env,
+        string command)
     {
         var details = Details() with
         {
-            Env = ["GREETING=hello world", "HOME_BIN=$HOME/bin", "EMPTY="],
+            Env = ["GREETING=it's me", "EMPTY="],
             Mounts = [new MountDetails("bind", @"C:\My Data", "/data", "", true, null)],
-            Cmd = ["sh", "-c", "echo \"hi\" && sleep 1", ""],
+            Cmd = ["sh", "-c", "echo \"$HOME\" && sleep 1"],
         };
 
         Assert.Equal(
-            "docker run -d --name web -v \"C:\\My Data:/data\" -e \"GREETING=hello world\" -e \"HOME_BIN=$HOME/bin\" "
-            + "-e EMPTY= nginx:alpine sh -c \"echo \\\"hi\\\" && sleep 1\" \"\"",
-            DockerRunCommand.Build(details));
+            $"docker run -d --name web -v {mount} -e {env} -e EMPTY= nginx:alpine {command}",
+            DockerRunCommand.Build(details, shell));
     }
 
     [Fact]
@@ -129,6 +188,6 @@ public sealed class DockerRunCommandTests
         Assert.Equal(
             "docker run -d --name api -p 3000:3000 -v /srv/api:/app -e NODE_ENV=production --restart always "
             + "-w /app -u node -t node:22 node server.js",
-            DockerRunCommand.Build(details));
+            DockerRunCommand.Build(details, ShellKind.Posix));
     }
 }

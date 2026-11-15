@@ -91,8 +91,13 @@ public static class InspectSections
         return rows;
     }
 
-    private static InspectRow Mount(MountDetails mount) =>
-        new(mount.Destination, $"{mount.Name ?? mount.Source} ({mount.Type}, {(mount.ReadWrite ? "read-write" : "read-only")})");
+    /// <summary>"source (type, access)"; a mount without a source, such as a tmpfs, reads "type, access".</summary>
+    private static InspectRow Mount(MountDetails mount)
+    {
+        var source = mount.Name ?? mount.Source;
+        var kind = $"{mount.Type}, {(mount.ReadWrite ? "read-write" : "read-only")}";
+        return new InspectRow(mount.Destination, source.Length > 0 ? $"{source} ({kind})" : kind);
+    }
 
     private static InspectRow EnvRow(string entry)
     {

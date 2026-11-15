@@ -199,6 +199,14 @@ public sealed class InspectSectionsTests
     }
 
     [Fact]
+    public void Tmpfs_mount_has_no_source_so_its_row_gives_only_type_and_access()
+    {
+        var details = Details() with { Mounts = [new MountDetails("tmpfs", "", "/run/cache", "", true, null)] };
+
+        Assert.Equal([new InspectRow("/run/cache", "tmpfs, read-write")], Section(details, "Mounts").Rows);
+    }
+
+    [Fact]
     public void Env_section_splits_each_entry_at_its_first_equals_sign()
     {
         var section = Section(Details() with { Env = ["PATH=/usr/bin", "OPTS=a=b", "EMPTY=", "BARE"] }, "Env");
