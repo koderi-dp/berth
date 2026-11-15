@@ -15,22 +15,27 @@ volumes and networks, exec terminal, engine control and tray, files) are not.
 Berth.slnx                  the solution: /src/ (Berth.App, Berth.Core), /tests/
 src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; pure logic, unit-tested (root namespace Berth)
   Connections/              ConnectionProfile, EngineAddress (tcp:// and npipe:// parsing), FirstRun, ConnectionDraft (editor logic)
-  Settings/                 AppSettings, SettingsStore (atomic save, damaged-file handling), SettingsJson, ConnectionEdits
+  Settings/                 AppSettings, SettingsStore (atomic save, damaged-file handling, first-run save), SettingsFile (the
+                            tolerant read shape and its checks), SettingsJson, ConnectionEdits
   Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list, actions, event stream;
                             EngineHttp, EngineJson (source-generated), ApiVersion, ConnectionTester, Models/
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all behaviour),
-                            EngineSession (runs the reducer and its effects), Backoff
+                            EngineSession (runs the reducer and its effects; reports failures to an optional error sink), Backoff
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, BulkSelection, AgeFormat, PortFormat
   Logging/, Storage/        FileLog, AtomicFile
 src/Berth.App/              UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
   Program.cs                entry point: log, services, first connect, window
-  AppServices.cs            settings and the session for the active connection; replaces the session on a switch
+  AppLog.cs                 berth.log: fixed wording and exception type names only (FileLog.Describe)
+  LocalData.cs              the folder for settings and the log (package LocalState, or %LOCALAPPDATA%\Berth unpackaged)
+  AppServices.cs            settings and the session for the active connection; replaces the session on a switch;
+                            sends session failures and a set-aside settings file to the log
   EngineConnection.cs       an EngineClient plus the transport it runs on, disposed together
   App.cs                    the window component: title bar, navigation, status bar
   Hooks/                    EngineStateHook.cs (EngineStateComponent, the base class for components that show the
                             engine state), SettingsHook.cs (settings as an external store)
-  Components/               ConnectionSwitcher, StatusBar, DisconnectedView, ErrorBar, Widgets
+  Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
+                            above a kept list), ErrorBar, Widgets
   Pages/                    ContainersPage, ContainerRowView, SettingsPage, ConnectionEditor
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
 tests/Berth.Core.Tests/     xunit tests for Core; Integration/ holds the tests that need a real engine
@@ -39,7 +44,8 @@ tests/Berth.Core.Tests/     xunit tests for Core; Integration/ holds the tests t
 Pure logic goes in Core and is unit-tested; the app project holds UI, interop and wiring only.
 Where the original plan put logic in the app, it now lives in Core: the connection editor's
 rules are `ConnectionDraft`, the settings page's list changes are `ConnectionEdits`, and the
-containers page's checked-row logic is `BulkSelection`. The engine state reaches components
+containers page's checked-row logic and whether a row, project or bulk button can act (not while
+disconnected, not on a row with an action in progress) is `BulkSelection`. The engine state reaches components
 through the `EngineStateComponent` base class, not a hook function (Reactor keeps a class
 component's hooks protected).
 
@@ -107,6 +113,7 @@ drive it: `winapp ui inspect -a Berth`, `winapp ui invoke|set-value|send-keys ..
 `winapp ui screenshot -a Berth -o shot.png`. Run `winapp --help` or
 `winapp <command> --help` before guessing at syntax. Useful selectors: row actions have
 AutomationIds `stop-<name>`, `start-<name>`, `more-<name>` (Restart, Pause, Resume) and
-`delete-<name>`; connections on the settings page have `edit-<name>` and `delete-<name>`;
+`delete-<name>`; the Retry button of the bar shown above a kept list while disconnected is
+`retry-connection`; connections on the settings page have `edit-<name>` and `delete-<name>`;
 dialogs confirm with `PrimaryButton`. The connection switcher is the `Connection` ComboBox;
 after expanding it, its items are in `winapp ui inspect -a Berth --type ListItem`.

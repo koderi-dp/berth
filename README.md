@@ -25,12 +25,24 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   containers are stopped as part of the delete.
 - **Live updates.** The list follows the engine's event stream, so a container started from
   the command line appears within a second without a refresh.
-- **Connection state.** The status bar shows whether the engine is reachable and its
-  container counts. When the connection drops, Berth shows it as disconnected, with the
-  error as the engine or the network reported it, and reconnects on its own (after 1 s,
-  doubling up to 30 s), or at once with Retry.
-- **Log.** A log of what Berth did (never secrets, environment values or container output),
-  reached from Settings, "Open log folder".
+- **Connection state.** The title bar shows whether Berth is connecting, connected (with
+  the engine version) or disconnected; the status bar shows the engine's container counts.
+  When the engine cannot be reached and no list has been loaded, the Containers page shows
+  why, as the engine or the network reported it, with a Retry button. When the connection
+  drops while a list is on screen, the list stays, a warning bar above it gives the same
+  reason (or "Connecting…" during an attempt) with Retry, and the list's checkboxes and
+  actions are disabled until the engine is back; search and "running only" still work.
+  Berth reconnects on its own (after 1 s, doubling up to 30 s), or at once with Retry.
+  Until a connection's first list arrives, the page shows a progress ring.
+- **Settings file.** `settings.json` may leave out optional fields (TLS, pipe name, port,
+  list options, active connection) and may hold fields Berth does not know. A file Berth
+  cannot use is kept as `settings.bad.json`, Berth starts with the first-run connection,
+  and a warning says so until it is closed. The first-run settings are saved at once.
+- **Log.** `berth.log` records start and exit, connection switches, a settings file set
+  aside, and what failed: connecting, loading the list, the event stream, a container
+  action, saving the settings, and unexpected errors. A failure is logged by its exception
+  type only, never its message, so the log holds no addresses, engine messages, secrets,
+  environment values or container data. Settings, "Open log folder" opens its folder.
 
 ## Not built yet
 
