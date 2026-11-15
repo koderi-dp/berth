@@ -1,0 +1,165 @@
+using System.Collections.Immutable;
+using Berth.Engine.Models;
+
+namespace Berth.Session;
+
+/// <summary>
+/// Turns (state, event) into (new state, effects). Pure: no I/O and no clock. An event that does not apply in the
+/// current state returns the same state instance and no effects.
+/// </summary>
+public static class SessionReducer
+{
+    public static readonly TimeSpan ReloadDebounce = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>Container event actions that change what the list shows.</summary>
+    private static readonly ImmutableHashSet<string> ReloadActions = ImmutableHashSet.Create(
+        StringComparer.Ordinal,
+        "create", "start", "die", "stop", "kill", "pause", "unpause", "restart", "rename", "destroy", "health_status");
+
+    private static readonly ImmutableArray<SessionEffect> None = [];
+
+    public static (EngineState State, ImmutableArray<SessionEffect> Effects) Reduce(EngineState state, SessionEvent e)
+    {
+        var connected = state.Status == ConnectionStatus.Connected;
+        var connecting = state.Status == ConnectionStatus.Connecting;
+
+        switch (e)
+        {
+            case ConnectRequested when state.Status == ConnectionStatus.Disconnected:
+                return (state with { Status = ConnectionStatus.Connecting, RetryAttempt = 0 }, [new ConnectEffect()]);
+
+            case ConnectRequested:
+                return (
+                    state with
+                    {
+                        Status = ConnectionStatus.Connecting,
+                        RetryAttempt = 0,
+                        LoadGeneration = state.LoadGeneration + 1,
+                    },
+                    [new StopStreamsEffect(), new ConnectEffect()]);
+
+            case RetryDue when state.Status == ConnectionStatus.Disconnected:
+                return (state with { Status = ConnectionStatus.Connecting }, [new ConnectEffect()]);
+
+            case ConnectSucceeded success when connecting:
+            {
+                var generation = state.LoadGeneration + 1;
+                return (
+                    state with
+                    {
+                        Status = ConnectionStatus.Connected,
+                        Version = success.Version,
+                        Info = success.Info,
+                        ConnectionError = null,
+                        RetryAttempt = 0,
+                        LoadGeneration = generation,
+                    },
+                    [new LoadContainersEffect(generation), new StartEventStreamEffect()]);
+            }
+
+            case ConnectFailed failure when connecting:
+                return (
+                    state with
+                    {
+                        Status = ConnectionStatus.Disconnected,
+                        ConnectionError = failure.Message,
+                        RetryAttempt = state.RetryAttempt + 1,
+                    },
+                    [new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
+
+            case ConnectionLost lost when connected:
+                return Lose(state, lost.Message);
+
+            case ContainersLoaded loaded when connected && loaded.Generation == state.LoadGeneration:
+            {
+                var ids = loaded.Containers.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+                var gone = state.Pending.Keys.Where(id => !ids.Contains(id));
+                return (
+                    state with { Containers = loaded.Containers, Info = loaded.Info, Pending = state.Pending.RemoveRange(gone) },
+                    None);
+            }
+
+            case LoadFailed failure when connected && failure.Generation == state.LoadGeneration:
+                return failure.EngineUnreachable
+                    ? Lose(state, failure.Message)
+                    : (state with { ActionError = failure.Message }, None);
+
+            case EngineEventReceived received when connected && CausesReload(received.Message):
+                return RequestReload(state);
+
+            case ReloadDue:
+            {
+                // Clear the flag even when not connected, or a reload due after a lost connection would block every later one.
+                var cleared = state.ReloadScheduled ? state with { ReloadScheduled = false } : state;
+                if (!connected)
+                    return (cleared, None);
+                var generation = state.LoadGeneration + 1;
+                return (cleared with { LoadGeneration = generation }, [new LoadContainersEffect(generation)]);
+            }
+
+            case ActionRequested request when connected:
+                return RequestActions(state, request);
+
+            case ActionSucceeded success when connected:
+                return RequestReload(state with { Pending = state.Pending.Remove(success.Id) });
+
+            case ActionFailed failure when connected:
+                return failure.EngineUnreachable
+                    ? Lose(state, failure.Message)
+                    : RequestReload(state with { Pending = state.Pending.Remove(failure.Id), ActionError = failure.Message });
+
+            case ActionErrorDismissed when state.ActionError is not null:
+                return (state with { ActionError = null }, None);
+
+            default:
+                return (state, None);
+        }
+    }
+
+    /// <summary>
+    /// The connection is gone: keep the last list on screen, forget pending actions, ignore any load still in flight,
+    /// and retry with back-off.
+    /// </summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) Lose(EngineState state, string message) => (
+        state with
+        {
+            Status = ConnectionStatus.Disconnected,
+            ConnectionError = message,
+            Pending = state.Pending.Clear(),
+            RetryAttempt = state.RetryAttempt + 1,
+            LoadGeneration = state.LoadGeneration + 1,
+        },
+        [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
+
+    /// <summary>Schedules a debounced reload unless one is already waiting.</summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) RequestReload(EngineState state) =>
+        state.ReloadScheduled
+            ? (state, None)
+            : (state with { ReloadScheduled = true }, [new ScheduleReloadEffect(ReloadDebounce)]);
+
+    private static (EngineState, ImmutableArray<SessionEffect>) RequestActions(EngineState state, ActionRequested request)
+    {
+        var pending = state.Pending.ToBuilder();
+        var effects = ImmutableArray.CreateBuilder<SessionEffect>();
+        foreach (var id in request.Ids)
+        {
+            if (pending.TryAdd(id, request.Action))
+                effects.Add(new RunActionEffect(id, request.Action, request.Force));
+        }
+
+        return effects.Count == 0 ? (state, None) : (state with { Pending = pending.ToImmutable() }, effects.ToImmutable());
+    }
+
+    /// <summary>
+    /// A container event whose action is in <see cref="ReloadActions"/>. The engine adds detail after a colon to some
+    /// actions ("health_status: healthy"), so only the part before it is compared.
+    /// </summary>
+    private static bool CausesReload(EngineEventMessage message)
+    {
+        if (message.Type != "container")
+            return false;
+        var colon = message.Action.IndexOf(':');
+        var action = colon < 0 ? message.Action : message.Action[..colon];
+        return ReloadActions.Contains(action);
+    }
+}
