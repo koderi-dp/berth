@@ -6,7 +6,7 @@ namespace Berth.Settings;
 
 /// <summary>
 /// Reads and writes <c>settings.json</c> in one folder. A missing file gives the first-run settings (<see cref="FirstRun"/>). A file that
-/// is not valid settings is set aside as <c>settings.bad.json</c> and the first-run settings are used. A file that cannot be read
+/// is not valid settings (including one with no connections) is set aside as <c>settings.bad.json</c> and the first-run settings are used. A file that cannot be read
 /// (locked, access denied) is left alone and the first-run settings are used.
 /// </summary>
 public sealed class SettingsStore
@@ -88,24 +88,34 @@ public sealed class SettingsStore
     /// <summary>The settings in <paramref name="bytes"/>, or null when they are not valid settings.</summary>
     private static AppSettings? Parse(byte[] bytes)
     {
+        // Many editors (and PowerShell 5's Set-Content -Encoding UTF8) start the file with a UTF-8 byte-order mark; the reader does not skip it.
+        ReadOnlySpan<byte> json = bytes;
+        if (json.StartsWith(Utf8Bom))
+        {
+            json = json[Utf8Bom.Length..];
+        }
+
         AppSettings? settings;
         try
         {
-            settings = JsonSerializer.Deserialize(bytes, SettingsJson.Default.AppSettings);
+            settings = JsonSerializer.Deserialize(json, SettingsJson.Default.AppSettings);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or ArgumentException)
         {
             return null;
         }
 
-        // The serializer checks the record's own fields; the items of the list are checked here.
-        return settings is null || settings.Connections.Any(connection => connection is null) ? null : settings;
+        // The serializer checks the record's own fields; the list is checked here. The settings page never deletes the last
+        // connection, so an empty list only comes from a damaged or hand-edited file.
+        return settings is null || settings.Connections.Count == 0 || settings.Connections.Any(connection => connection is null) ? null : settings;
     }
+
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
 
     private static AppSettings WithValidActiveConnection(AppSettings settings) =>
         settings.Connections.Any(connection => connection.Id == settings.ActiveConnectionId)
             ? settings
-            : settings with { ActiveConnectionId = settings.Connections.FirstOrDefault()?.Id };
+            : settings with { ActiveConnectionId = settings.Connections[0].Id };
 
     private void SetAsideBadFile()
     {

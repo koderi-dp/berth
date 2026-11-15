@@ -66,6 +66,7 @@ public sealed class SettingsStoreTests : IDisposable
     [InlineData("null")]
     [InlineData("""{ "connections": [ { "id": "x" } ], "activeConnectionId": "x", "containerList": { "runningOnly": false } }""")]
     [InlineData("""{ "connections": [ null ], "activeConnectionId": null, "containerList": { "runningOnly": false } }""")]
+    [InlineData("""{ "connections": [], "activeConnectionId": null, "containerList": { "runningOnly": false } }""")]
     public void Json_that_is_not_valid_settings_is_treated_as_corrupt(string json)
     {
         File.WriteAllText(SettingsFile, json);
@@ -74,6 +75,22 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal("Local engine", Assert.Single(settings.Connections).Name);
         Assert.True(File.Exists(Path.Combine(_directory, "settings.bad.json")));
+    }
+
+    [Fact]
+    public void File_starting_with_a_byte_order_mark_loads_its_connections()
+    {
+        const string json = """{ "connections": [ { "id": "one", "name": "Build host", "kind": "Tcp", "host": "build-host", "port": 2375, "pipeName": "", "tls": null } ], "activeConnectionId": "one", "containerList": { "runningOnly": true } }""";
+        File.WriteAllBytes(SettingsFile, [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes(json)]);
+
+        var settings = new SettingsStore(_directory, null).Load();
+
+        var connection = Assert.Single(settings.Connections);
+        Assert.Equal("Build host", connection.Name);
+        Assert.Equal("one", settings.ActiveConnectionId);
+        Assert.True(settings.ContainerList.RunningOnly);
+        Assert.True(File.Exists(SettingsFile));
+        Assert.False(File.Exists(Path.Combine(_directory, "settings.bad.json")));
     }
 
     [Fact]
