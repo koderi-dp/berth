@@ -50,15 +50,17 @@ internal sealed class AppServices
     /// the session is replaced by one for the new connection, which starts connecting. A save that fails is logged and the change is
     /// kept for this run.
     /// </summary>
-    public void UpdateSettings(Func<AppSettings, AppSettings> change)
+    /// <returns>False when the save failed (the change applies until Berth closes); true when it was saved or changed nothing.</returns>
+    public bool UpdateSettings(Func<AppSettings, AppSettings> change)
     {
         var old = Settings;
         var next = change(old);
         if (next.Connections.Count == 0)
             throw new ArgumentException("Settings need at least one connection.", nameof(change));
         if (next == old)
-            return;
+            return true;
 
+        var saved = true;
         try
         {
             _store.Save(next);
@@ -66,6 +68,7 @@ internal sealed class AppServices
         catch (Exception ex)
         {
             AppLog.Error("saving the settings failed", ex);
+            saved = false;
         }
 
         Volatile.Write(ref _settings, next);
@@ -74,6 +77,7 @@ internal sealed class AppServices
         var connection = ActiveConnection(next);
         if (connection != ActiveConnection(old))
             ReplaceSession(connection);
+        return saved;
     }
 
     /// <summary>Makes the connection <paramref name="id"/> the active one. An unknown id, or the one already active, changes nothing.</summary>

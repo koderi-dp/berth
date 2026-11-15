@@ -11,6 +11,7 @@ internal static class Glyphs
     public const string Stop = "";
     public const string More = "";
     public const string Delete = "";
+    public const string Edit = "";
     public const string Copy = "";
     public const string ChevronDown = "";
     public const string ChevronRight = "";
