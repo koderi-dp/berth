@@ -8,7 +8,7 @@ namespace Berth.Tests.Session;
 
 /// <summary>
 /// An engine stand-in for one connection. A test sets the version, container list and inspect answers, makes calls fail, holds
-/// calls until it releases them, and pushes messages into the event stream.
+/// calls until it releases them, and pushes messages into the event stream and lines into the log stream.
 /// </summary>
 internal sealed class FakeEngineApi : IEngineApi
 {
@@ -43,6 +43,9 @@ internal sealed class FakeEngineApi : IEngineApi
     public ConcurrentQueue<string> Cancelled { get; } = new();
 
     public Task StreamStarted => _streamStarted.Task;
+
+    /// <summary>The log stream: push lines, end it or fail it.</summary>
+    public ScriptedStream<LogLine> Logs { get; } = new();
 
     public bool IsDisposed => _disposed;
 
@@ -127,10 +130,46 @@ internal sealed class FakeEngineApi : IEngineApi
             yield return message;
     }
 
+    /// <summary>Opens after any hold or failure set for "Logs", then yields what the test pushes into <see cref="Logs"/>.</summary>
+    public async IAsyncEnumerable<LogLine> StreamLogsAsync(
+        string id, bool tty, LogRequest request, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var entry = $"Logs {id} tail={request.Tail} follow={request.Follow} tty={tty}";
+        await EnterAsync("Logs", entry, ct);
+        await foreach (var line in ReadAsync(Logs, entry, ct))
+            yield return line;
+    }
+
     public ValueTask DisposeAsync()
     {
         _disposed = true;
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>Reads the stream <paramref name="source"/> opens; a cancelled read is recorded in <see cref="Cancelled"/>.</summary>
+    private async IAsyncEnumerable<T> ReadAsync<T>(ScriptedStream<T> source, string entry, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var reader = source.Open();
+        var token = IgnoreCancellation ? CancellationToken.None : ct;
+        while (true)
+        {
+            bool more;
+            try
+            {
+                more = await reader.WaitToReadAsync(token);
+            }
+            catch (OperationCanceledException)
+            {
+                Cancelled.Enqueue(entry);
+                throw;
+            }
+
+            if (!more)
+                yield break;
+
+            while (reader.TryRead(out var item))
+                yield return item;
+        }
     }
 
     private async Task EnterAsync(string call, string entry, CancellationToken ct)
@@ -152,6 +191,98 @@ internal sealed class FakeEngineApi : IEngineApi
 
         if (_failures.TryGetValue(call, out var error))
             throw error;
+    }
+
+    /// <summary>
+    /// A stream the test feeds, such as the log stream. Each call that reads it opens a new stream; <see cref="Push"/> and
+    /// <see cref="End"/> act on the one opened last, or on the next one when it has ended or none has opened yet (so a test can
+    /// script a stream before it opens). Items pushed while a stream is open but no longer read are lost, as they would be.
+    /// </summary>
+    public sealed class ScriptedStream<T>
+    {
+        private readonly Lock _lock = new();
+        private readonly List<(int Count, TaskCompletionSource Done)> _waiters = [];
+        private Channel<T> _current = Channel.CreateUnbounded<T>();
+        private bool _taken;
+        private bool _ended;
+        private int _opened;
+
+        /// <summary>How many times the stream has been opened.</summary>
+        public int Opened
+        {
+            get
+            {
+                lock (_lock)
+                    return _opened;
+            }
+        }
+
+        /// <summary>Completes once the stream has been opened <paramref name="count"/> times in all.</summary>
+        public Task WhenOpened(int count = 1)
+        {
+            lock (_lock)
+            {
+                if (_opened >= count)
+                    return Task.CompletedTask;
+
+                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiters.Add((count, done));
+                return done.Task;
+            }
+        }
+
+        public void Push(T item)
+        {
+            lock (_lock)
+            {
+                StartNextIfEnded();
+                _current.Writer.TryWrite(item);
+            }
+        }
+
+        /// <summary>Ends the stream, normally or with <paramref name="error"/>, after the items already pushed.</summary>
+        public void End(Exception? error = null)
+        {
+            lock (_lock)
+            {
+                StartNextIfEnded();
+                _current.Writer.TryComplete(error);
+                _ended = true;
+            }
+        }
+
+        internal ChannelReader<T> Open()
+        {
+            ChannelReader<T> reader;
+            List<TaskCompletionSource> reached;
+            lock (_lock)
+            {
+                if (_taken)
+                    StartNext();
+
+                _taken = true;
+                _opened++;
+                reader = _current.Reader;
+                reached = _waiters.Where(w => w.Count <= _opened).Select(w => w.Done).ToList();
+                _waiters.RemoveAll(w => w.Count <= _opened);
+            }
+
+            reached.ForEach(done => done.TrySetResult());
+            return reader;
+        }
+
+        private void StartNextIfEnded()
+        {
+            if (_taken && _ended)
+                StartNext();
+        }
+
+        private void StartNext()
+        {
+            _current = Channel.CreateUnbounded<T>();
+            _taken = false;
+            _ended = false;
+        }
     }
 
     /// <summary>Holds a call until <see cref="Release"/>; <see cref="Entered"/> completes once the call is waiting.</summary>

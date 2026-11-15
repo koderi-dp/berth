@@ -31,6 +31,13 @@ public interface IEngineApi : IAsyncDisposable
     /// <summary>Inspects one container. A container that does not exist throws the engine's 404.</summary>
     Task<ContainerInspection> InspectContainerAsync(string id, CancellationToken ct);
 
+    /// <summary>
+    /// A container's log lines, stdout and stderr, read with no deadline. <paramref name="tty"/> is the container's
+    /// <see cref="ContainerDetails.Tty"/>: a TTY container's log is plain text rather than framed. With
+    /// <see cref="LogRequest.Follow"/> the enumeration goes on until the container stops or the caller cancels.
+    /// </summary>
+    IAsyncEnumerable<LogLine> StreamLogsAsync(string id, bool tty, LogRequest request, CancellationToken ct);
+
     /// <summary>The engine's event stream, until cancelled.</summary>
     IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct);
 }

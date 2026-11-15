@@ -118,6 +118,27 @@ public sealed class EngineClient : IEngineApi
     }
 
     /// <summary>
+    /// Reads a container's log, stdout and stderr with timestamps, with no deadline. The enumeration ends when the engine closes
+    /// the stream; a dropped connection throws <see cref="EngineException"/> with status 0.
+    /// </summary>
+    public async IAsyncEnumerable<LogLine> StreamLogsAsync(
+        string id, bool tty, LogRequest request, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var tail = request.Tail < 0 ? "all" : request.Tail.ToString(CultureInfo.InvariantCulture);
+        var follow = request.Follow ? "true" : "false";
+        var path = ContainerPath(id, $"/logs?stdout=true&stderr=true&timestamps=true&tail={tail}&follow={follow}");
+
+        using var response = await OpenStreamAsync(path, ct).ConfigureAwait(false);
+        var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var lines = LogLines.ReadAsync(stream, tty, ct).GetAsyncEnumerator();
+
+        while (await NextAsync(lines, ct).ConfigureAwait(false))
+        {
+            yield return lines.Current;
+        }
+    }
+
+    /// <summary>
     /// Reads the engine's events as they happen, with no deadline. A line that is not an event is skipped. The enumeration ends when
     /// the engine closes the stream; a dropped connection throws <see cref="EngineException"/> with status 0.
     /// </summary>
@@ -127,7 +148,7 @@ public sealed class EngineClient : IEngineApi
         var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var lines = JsonLines.ReadAsync(stream, ct).GetAsyncEnumerator();
 
-        while (await NextLineAsync(lines, ct).ConfigureAwait(false))
+        while (await NextAsync(lines, ct).ConfigureAwait(false))
         {
             if (ToEvent(lines.Current) is { } message)
             {
@@ -286,12 +307,12 @@ public sealed class EngineClient : IEngineApi
         }
     }
 
-    /// <summary>Moves to the next line of an open stream; a transport failure mid-read throws <see cref="EngineException"/> with status 0.</summary>
-    private static async Task<bool> NextLineAsync(IAsyncEnumerator<ReadOnlyMemory<byte>> lines, CancellationToken ct)
+    /// <summary>Moves to the next item of an open stream; a transport failure mid-read throws <see cref="EngineException"/> with status 0.</summary>
+    private static async Task<bool> NextAsync<T>(IAsyncEnumerator<T> items, CancellationToken ct)
     {
         try
         {
-            return await lines.MoveNextAsync().ConfigureAwait(false);
+            return await items.MoveNextAsync().ConfigureAwait(false);
         }
         catch (Exception ex) when (IsUnreachable(ex))
         {
