@@ -1,4 +1,5 @@
 using Microsoft.UI.Reactor;
+using Microsoft.UI.Text;
 using Microsoft.UI.Reactor.Core;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -27,6 +28,20 @@ internal static class Glyphs
 internal static class Widgets
 {
     private const string IconFont = "Segoe Fluent Icons";
+
+    /// <summary>
+    /// Text that keeps the theme's primary text colour when the theme changes while Berth runs. A TextBlock without a Foreground
+    /// inherits one that WinUI does not update when an ancestor's theme returns to the system's (it stays the colour of the theme
+    /// before); a ThemeRef Foreground follows. Reactor applies that Foreground as a style of its own, which replaces the WinUI text
+    /// style of <c>Title</c>, <c>Subtitle</c> and <c>BodyStrong</c>, so these set the style's size and weight themselves.
+    /// </summary>
+    public static TextBlockElement PageTitle(string text) => Title(text).Foreground(Theme.PrimaryText).FontSize(28).FontWeight(FontWeights.SemiBold);
+
+    /// <inheritdoc cref="PageTitle"/>
+    public static TextBlockElement SectionTitle(string text) => Subtitle(text).Foreground(Theme.PrimaryText).FontSize(20).FontWeight(FontWeights.SemiBold);
+
+    /// <inheritdoc cref="PageTitle"/>
+    public static TextBlockElement StrongText(string text) => BodyStrong(text).Foreground(Theme.PrimaryText).FontSize(14).FontWeight(FontWeights.SemiBold);
 
     /// <summary>A round state dot in a theme colour (the <c>Theme.System*</c> signal tokens).</summary>
     public static Element StatusDot(ThemeRef color) =>

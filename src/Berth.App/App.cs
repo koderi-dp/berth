@@ -32,7 +32,7 @@ internal sealed class App : EngineStateComponent
         var titleBar = (TitleBar("") with
             {
                 Content = (FlexRow(
-                        Caption("Berth"),
+                        Caption("Berth").Foreground(Theme.PrimaryText),
                         ConnectionSwitcher.Render(settings, id => AppServices.Current.SwitchConnection(id)),
                         StatusLabel(state))
                     with

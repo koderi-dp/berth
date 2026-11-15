@@ -43,7 +43,7 @@ internal sealed class SettingsPage : Component
                 () => setEditor(null)));
 
         var content = (FlexColumn(
-                Title("Settings").HeadingLevel(AutomationHeadingLevel.Level1),
+                Widgets.PageTitle("Settings").HeadingLevel(AutomationHeadingLevel.Level1),
                 saveFailed
                     ? (InfoBar(message: SaveFailed) with { IsOpen = true }).Error().IsClosable().Closed(() => setSaveFailed(false))
                     : null,
@@ -66,7 +66,7 @@ internal sealed class SettingsPage : Component
     }
 
     private static Element Section(string title, params Element?[] children) =>
-        (FlexColumn([Subtitle(title).HeadingLevel(AutomationHeadingLevel.Level2), .. children]) with
+        (FlexColumn([Widgets.SectionTitle(title).HeadingLevel(AutomationHeadingLevel.Level2), .. children]) with
         {
             RowGap = 12,
         });
@@ -88,7 +88,7 @@ internal sealed class SettingsPage : Component
         var address = EngineAddress.Format(profile);
 
         var text = (FlexColumn(
-                OneLine(BodyStrong(profile.Name)).ToolTip(profile.Name),
+                OneLine(Widgets.StrongText(profile.Name)).ToolTip(profile.Name),
                 OneLine(Caption(address)).Foreground(Theme.SecondaryText).ToolTip(address))
             with
             {

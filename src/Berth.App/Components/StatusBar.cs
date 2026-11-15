@@ -25,7 +25,7 @@ internal static class StatusBar
 
         var row = (FlexRow(
                 Widgets.StatusDot(color),
-                Caption(text),
+                Caption(text).Foreground(Theme.PrimaryText),
                 counts)
             with
             {

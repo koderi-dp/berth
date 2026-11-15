@@ -110,7 +110,7 @@ internal sealed class ContainersPage : EngineStateComponent
         ];
 
         var page = (FlexColumn(
-                Title("Containers").Flex(shrink: 0),
+                Widgets.PageTitle("Containers").Flex(shrink: 0),
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused),
                 BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
@@ -215,7 +215,7 @@ internal sealed class ContainersPage : EngineStateComponent
         var stop = BulkSelection.StopIds(visibleRows, checkedIds, connected);
 
         return (FlexRow(
-                Body($"{count} selected"),
+                Body($"{count} selected").Foreground(Theme.PrimaryText),
                 Button("Start", () => callbacks.Send(start, ContainerAction.Start)).IsEnabled(!start.IsEmpty),
                 Button("Stop", () => callbacks.Send(stop, ContainerAction.Stop)).IsEnabled(!stop.IsEmpty),
                 Button("Delete", () => callbacks.RequestDelete(deleteRows)).ToolTip("Delete the selected containers (Delete)").IsEnabled(deleteRows.Length > 0))

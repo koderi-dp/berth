@@ -19,7 +19,7 @@ internal static class DisconnectedView
 
         return (FlexColumn(
                 connecting ? ProgressRing().Size(32, 32) : null,
-                Subtitle(connecting ? "Connecting to the engine" : "Not connected to the engine"),
+                Widgets.SectionTitle(connecting ? "Connecting to the engine" : "Not connected to the engine"),
                 state.ConnectionError is { } error
                     ? Body(error).IsTextSelectionEnabled().TextWrapping().TextAlignment(TextAlignment.Center).Foreground(Theme.SecondaryText)
                     : null,
