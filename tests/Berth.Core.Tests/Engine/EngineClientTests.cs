@@ -284,6 +284,16 @@ public sealed class EngineClientTests
     }
 
     [Fact]
+    public async Task A_transport_failure_after_the_caller_cancels_throws_OperationCanceledException()
+    {
+        using var cancel = new CancellationTokenSource();
+        var refused = new HttpRequestException("wrapped", new SocketException((int)SocketError.ConnectionReset));
+        await using var client = new EngineClient(new ThrowingHandler(refused, beforeThrow: cancel.Cancel));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.ConnectAsync(cancel.Token));
+    }
+
+    [Fact]
     public async Task Test_connection_to_a_closed_port_is_not_ok()
     {
         int port;
@@ -323,9 +333,13 @@ public sealed class EngineClientTests
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
     };
 
-    private sealed class ThrowingHandler(Exception error) : HttpMessageHandler
+    /// <summary>Fails every request with <paramref name="error"/>, first running <paramref name="beforeThrow"/> when given.</summary>
+    private sealed class ThrowingHandler(Exception error, Action? beforeThrow = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromException<HttpResponseMessage>(error);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            beforeThrow?.Invoke();
+            return Task.FromException<HttpResponseMessage>(error);
+        }
     }
 }

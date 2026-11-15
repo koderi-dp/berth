@@ -161,15 +161,9 @@ public sealed class EngineClient : IEngineApi
         {
             response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (IsUnreachable(ex))
         {
-            ct.ThrowIfCancellationRequested();
-            throw new EngineException(0, TransportMessage(ex));
-        }
-        catch (Exception ex) when (IsTransportFailure(ex))
-        {
-            ct.ThrowIfCancellationRequested();
-            throw new EngineException(0, ex.Message);
+            throw Unreachable(ex, ct);
         }
 
         if (response.IsSuccessStatusCode)
@@ -190,15 +184,9 @@ public sealed class EngineClient : IEngineApi
         {
             return await lines.MoveNextAsync().ConfigureAwait(false);
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (IsUnreachable(ex))
         {
-            ct.ThrowIfCancellationRequested();
-            throw new EngineException(0, TransportMessage(ex));
-        }
-        catch (Exception ex) when (IsTransportFailure(ex))
-        {
-            ct.ThrowIfCancellationRequested();
-            throw new EngineException(0, ex.Message);
+            throw Unreachable(ex, ct);
         }
     }
 
@@ -228,13 +216,9 @@ public sealed class EngineClient : IEngineApi
         {
             throw new EngineException(0, $"The engine did not answer within {timeout.TotalSeconds:0} seconds.");
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex) when (IsUnreachable(ex))
         {
-            throw new EngineException(0, TransportMessage(ex));
-        }
-        catch (Exception ex) when (IsTransportFailure(ex))
-        {
-            throw new EngineException(0, ex.Message);
+            throw Unreachable(ex, ct);
         }
 
         if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotModified)
@@ -279,6 +263,19 @@ public sealed class EngineClient : IEngineApi
         }
 
         return new EngineException(status, string.IsNullOrWhiteSpace(message) ? $"{status} {response.ReasonPhrase}" : message);
+    }
+
+    /// <summary>Whether <paramref name="ex"/> means the engine could not be reached or the connection failed.</summary>
+    private static bool IsUnreachable(Exception ex) => ex is HttpRequestException || IsTransportFailure(ex);
+
+    /// <summary>
+    /// The <see cref="EngineException"/> with status 0 for a failure that <see cref="IsUnreachable"/> accepts. If the caller has
+    /// cancelled, it throws <see cref="OperationCanceledException"/> instead, so cancellation never comes out as an engine failure.
+    /// </summary>
+    private static EngineException Unreachable(Exception ex, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        return new EngineException(0, ex is HttpRequestException http ? TransportMessage(http) : ex.Message);
     }
 
     /// <summary>The message of the transport failure behind <paramref name="ex"/>, or of its innermost cause when none is one.</summary>
