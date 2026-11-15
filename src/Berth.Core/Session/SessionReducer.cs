@@ -29,12 +29,15 @@ public static class SessionReducer
                 return (state with { Status = ConnectionStatus.Connecting, RetryAttempt = 0 }, [new ConnectEffect()]);
 
             case ConnectRequested:
+                // Starting over drops in-flight work: action results and the reload timer may never arrive.
                 return (
                     state with
                     {
                         Status = ConnectionStatus.Connecting,
+                        Pending = state.Pending.Clear(),
                         RetryAttempt = 0,
                         LoadGeneration = state.LoadGeneration + 1,
+                        ReloadScheduled = false,
                     },
                     [new StopStreamsEffect(), new ConnectEffect()]);
 
@@ -89,7 +92,7 @@ public static class SessionReducer
 
             case ReloadDue:
             {
-                // Clear the flag even when not connected, or a reload due after a lost connection would block every later one.
+                // A reload may be due from before a disconnect; while not connected it only clears the flag.
                 var cleared = state.ReloadScheduled ? state with { ReloadScheduled = false } : state;
                 if (!connected)
                     return (cleared, None);
@@ -117,8 +120,8 @@ public static class SessionReducer
     }
 
     /// <summary>
-    /// The connection is gone: keep the last list on screen, forget pending actions, ignore any load still in flight,
-    /// and retry with back-off.
+    /// The connection is gone: keep the last list on screen, forget pending actions and any scheduled reload (its timer
+    /// may be cancelled), ignore any load still in flight, and retry with back-off.
     /// </summary>
     private static (EngineState, ImmutableArray<SessionEffect>) Lose(EngineState state, string message) => (
         state with
@@ -128,6 +131,7 @@ public static class SessionReducer
             Pending = state.Pending.Clear(),
             RetryAttempt = state.RetryAttempt + 1,
             LoadGeneration = state.LoadGeneration + 1,
+            ReloadScheduled = false,
         },
         [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
 

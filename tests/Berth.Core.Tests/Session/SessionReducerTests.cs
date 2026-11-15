@@ -438,4 +438,85 @@ public sealed class SessionReducerTests
         Assert.Equal(ConnectionStatus.Connecting, connecting.Status);
         Assert.Equal([new ConnectEffect()], connectEffects);
     }
+
+    [Fact]
+    public void Connect_requested_while_connecting_starts_over()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+
+        var (state, effects) = Reduce(connecting with { RetryAttempt = 2 }, new ConnectRequested());
+
+        Assert.Equal(ConnectionStatus.Connecting, state.Status);
+        Assert.Equal(0, state.RetryAttempt);
+        Assert.Equal(connecting.LoadGeneration + 1, state.LoadGeneration);
+        Assert.Equal([new StopStreamsEffect(), new ConnectEffect()], effects);
+    }
+
+    [Fact]
+    public void A_manual_reconnect_does_not_leave_an_action_pending_forever()
+    {
+        var (pending, _) = Reduce(Connected(), new ActionRequested(["a"], ContainerAction.Stop));
+        var (restarting, _) = Reduce(pending, new ConnectRequested());
+        var (afterResult, resultEffects) = Reduce(restarting, new ActionSucceeded("a"));
+        var (reconnected, _) = Reduce(afterResult, new ConnectSucceeded(Version, Info));
+
+        var (state, effects) = Reduce(reconnected, new ContainersLoaded(reconnected.LoadGeneration, [Container("a"), Container("b")], Info));
+
+        Assert.Empty(restarting.Pending);
+        Assert.Empty(resultEffects);
+        Assert.Empty(state.Pending);
+        Assert.Equal(["a", "b"], state.Containers.Select(c => c.Id));
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void Reconnecting_after_a_lost_connection_with_a_reload_scheduled_still_reloads_on_the_next_event()
+    {
+        var (scheduled, _) = Reduce(Connected(), new EngineEventReceived(Event("container", "start")));
+        var (lost, _) = Reduce(scheduled, new ConnectionLost("unexpected EOF"));
+        var (retrying, _) = Reduce(lost, new RetryDue());
+        var (reconnected, _) = Reduce(retrying, new ConnectSucceeded(Version, Info));
+
+        var (state, effects) = Reduce(reconnected, new EngineEventReceived(Event("container", "die")));
+
+        Assert.False(lost.ReloadScheduled);
+        Assert.True(state.ReloadScheduled);
+        Assert.Equal([new ScheduleReloadEffect(SessionReducer.ReloadDebounce)], effects);
+    }
+
+    [Fact]
+    public void Starting_over_with_a_reload_scheduled_still_reloads_on_the_next_event()
+    {
+        var (scheduled, _) = Reduce(Connected(), new EngineEventReceived(Event("container", "start")));
+        var (restarting, _) = Reduce(scheduled, new ConnectRequested());
+        var (reconnected, _) = Reduce(restarting, new ConnectSucceeded(Version, Info));
+
+        var (state, effects) = Reduce(reconnected, new EngineEventReceived(Event("container", "die")));
+
+        Assert.False(restarting.ReloadScheduled);
+        Assert.True(state.ReloadScheduled);
+        Assert.Equal([new ScheduleReloadEffect(SessionReducer.ReloadDebounce)], effects);
+    }
+
+    [Fact]
+    public void Reload_due_while_disconnected_clears_the_flag_and_emits_nothing()
+    {
+        var disconnected = EngineState.Initial with { ReloadScheduled = true };
+
+        var (state, effects) = Reduce(disconnected, new ReloadDue());
+
+        Assert.Equal(disconnected with { ReloadScheduled = false }, state);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void Connection_lost_while_connecting_is_ignored()
+    {
+        var (connecting, _) = Reduce(Connected(), new ConnectRequested());
+
+        var (state, effects) = Reduce(connecting, new ConnectionLost("stream closed"));
+
+        Assert.Same(connecting, state);
+        Assert.Empty(effects);
+    }
 }
