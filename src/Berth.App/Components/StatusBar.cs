@@ -1,3 +1,4 @@
+using Berth.Presentation;
 using Berth.Session;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
@@ -13,7 +14,7 @@ internal static class StatusBar
     {
         var connected = state.Status == ConnectionStatus.Connected;
         var counts = connected && state.Info is { } info
-            ? Caption($"{info.ContainersRunning} running · {info.ContainersStopped} stopped").Foreground(Theme.SecondaryText)
+            ? Caption(EngineCounts.Text(info)).Foreground(Theme.SecondaryText)
             : null;
         var (color, text) = state.Status switch
         {
