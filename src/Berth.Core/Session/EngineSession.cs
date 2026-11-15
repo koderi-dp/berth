@@ -36,6 +36,9 @@ public sealed class EngineSession : IAsyncDisposable
 
     // Touched only by the loop, and by DisposeAsync once the loop has ended.
     private Connection? _connection;
+
+    // The current connection once connected, else null. Written by the loop, read by OpenDetail.
+    private Connection? _connected;
     private ITimer? _retryTimer;
     private object? _retryKey;
     private ITimer? _reloadTimer;
@@ -72,6 +75,18 @@ public sealed class EngineSession : IAsyncDisposable
 
     /// <summary>Raised on the loop when an event from an older connection or timer is dropped. For tests.</summary>
     internal event Action<SessionEvent>? StaleEventDropped;
+
+    /// <summary>
+    /// A detail page's session for <paramref name="containerId"/> on the current connection, not opened yet (call
+    /// <see cref="ContainerDetailSession.Open"/>), or null while not connected. It shares this session's engine client and
+    /// clock, reports to the same error sink, and is cut off (its calls stopped, <see cref="DetailState.ConnectionLost"/> set)
+    /// when that connection is retired, before the client is disposed. The caller disposes it. Safe from any thread.
+    /// </summary>
+    public ContainerDetailSession? OpenDetail(string containerId)
+    {
+        ArgumentNullException.ThrowIfNull(containerId);
+        return Volatile.Read(ref _connected)?.Attach(api => new ContainerDetailSession(api, containerId, _time, _onError));
+    }
 
     /// <summary>Queues <paramref name="e"/> for the loop. Safe from any thread; never throws; ignored after disposal.</summary>
     public void Dispatch(SessionEvent e) => Post(e, source: null);
@@ -137,6 +152,7 @@ public sealed class EngineSession : IAsyncDisposable
         }
         finally
         {
+            Volatile.Write(ref _connected, next.Status == ConnectionStatus.Connected ? _connection : null);
             if (changed)
                 Raise(StateChanged, next);
         }
@@ -339,11 +355,17 @@ public sealed class EngineSession : IAsyncDisposable
 
     private readonly record struct Envelope(SessionEvent Event, object? Source);
 
-    /// <summary>One connection attempt and everything started on it: the engine client, its calls and its stream.</summary>
+    /// <summary>
+    /// One connection attempt and everything started on it: the engine client, its calls, its stream and the detail sessions
+    /// opened on it.
+    /// </summary>
     private sealed class Connection
     {
         private readonly CancellationTokenSource _stop = new();
         private readonly List<Task> _calls = [];
+        private readonly Lock _detailsLock = new();
+        private readonly HashSet<ContainerDetailSession> _details = [];
+        private bool _retired;
 
         /// <summary>Set by the connect call before it reports success, so every later call can use it.</summary>
         public IEngineApi? Api { get; set; }
@@ -356,14 +378,47 @@ public sealed class EngineSession : IAsyncDisposable
             _calls.Add(Task.Run(() => call(token)));
         }
 
-        /// <summary>Cancels every call, waits for them to finish, then disposes the engine client.</summary>
+        /// <summary>
+        /// Creates a detail session on this connection's engine client and tracks it until the page disposes it, or returns
+        /// null when the client is not set or the connection is retired. Safe from any thread.
+        /// </summary>
+        public ContainerDetailSession? Attach(Func<IEngineApi, ContainerDetailSession> create)
+        {
+            lock (_detailsLock)
+            {
+                if (_retired || Api is not { } api)
+                    return null;
+
+                var detail = create(api);
+                _details.Add(detail);
+                detail.ReleaseOnDispose(() =>
+                {
+                    lock (_detailsLock)
+                        _details.Remove(detail);
+                });
+                return detail;
+            }
+        }
+
+        /// <summary>
+        /// Cancels every call and cuts off the detail sessions, waits for all of them to finish, then disposes the engine
+        /// client.
+        /// </summary>
         public async Task RetireAsync()
         {
+            ContainerDetailSession[] details;
+            lock (_detailsLock)
+            {
+                _retired = true;
+                details = [.. _details];
+                _details.Clear();
+            }
+
             var calls = _calls.ToArray();
             try
             {
                 _stop.Cancel();
-                await Task.WhenAll(calls).ConfigureAwait(false);
+                await Task.WhenAll(calls.Concat(details.Select(d => d.CutOffAsync()))).ConfigureAwait(false);
             }
             catch (Exception)
             {

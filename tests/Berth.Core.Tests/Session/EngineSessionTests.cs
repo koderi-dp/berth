@@ -406,6 +406,69 @@ public sealed class EngineSessionTests
         Assert.Empty(h.Errors);
     }
 
+    [Fact]
+    public async Task No_detail_session_opens_while_not_connected()
+    {
+        var api = new FakeEngineApi();
+        var connect = api.Hold("Connect");
+        await using var h = Harness.With(api);
+
+        Assert.Null(h.Session.OpenDetail("a"));
+
+        h.Session.Dispatch(new ConnectRequested());
+        await connect.Entered.WaitAsync(Patience);
+        Assert.Null(h.Session.OpenDetail("a"));
+    }
+
+    [Fact]
+    public async Task A_detail_session_runs_on_the_connection_and_is_cut_off_when_the_connection_is_replaced()
+    {
+        var first = new FakeEngineApi();
+        first.SetInspection(FakeEngineApi.Inspection("a"));
+        await using var h = Harness.With(first);
+        await h.ConnectAsync();
+
+        await using var detail = h.Session.OpenDetail("a");
+        Assert.NotNull(detail);
+        detail.Open();
+        await first.Logs.WhenOpened().WaitAsync(Patience);
+        await first.Stats.WhenOpened().WaitAsync(Patience);
+        Assert.Contains("Inspect a", first.Calls);
+
+        h.Session.Dispatch(new ConnectRequested());
+        var state = await ContainerDetailSessionTests.WaitFor(detail, s => s.ConnectionLost);
+        await h.WaitFor(s => s.Status == ConnectionStatus.Connected && h.Created.Count == 2);
+
+        // The old client is disposed only once the detail page's streams on it have stopped.
+        Assert.True(first.IsDisposed);
+        Assert.Contains("Logs a tail=1000 follow=True tty=False", first.Cancelled);
+        Assert.Contains("Stats a", first.Cancelled);
+        Assert.Equal(StreamStatus.Ended, state.LogStatus);
+        Assert.Equal(StreamStatus.Ended, state.StatsStatus);
+        Assert.Empty(h.Errors);
+    }
+
+    [Fact]
+    public async Task A_detail_session_closed_by_the_page_is_not_cut_off_again()
+    {
+        var api = new FakeEngineApi();
+        api.SetInspection(FakeEngineApi.Inspection("a"));
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+
+        var detail = h.Session.OpenDetail("a");
+        Assert.NotNull(detail);
+        detail.Open();
+        await api.Logs.WhenOpened().WaitAsync(Patience);
+        await detail.DisposeAsync();
+
+        h.Session.Dispatch(new ConnectRequested());
+        await h.WaitFor(s => s.Status == ConnectionStatus.Connected && h.Created.Count == 2);
+
+        Assert.False(detail.State.ConnectionLost);
+        Assert.Empty(h.Errors);
+    }
+
     /// <summary>A fake clock whose first timer cannot be created, so starting the effect that needs it throws.</summary>
     private sealed class BrokenTimerTimeProvider : FakeTimeProvider
     {
