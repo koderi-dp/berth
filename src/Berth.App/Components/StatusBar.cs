@@ -15,10 +15,16 @@ internal static class StatusBar
         var counts = connected && state.Info is { } info
             ? Caption($"{info.ContainersRunning} running · {info.ContainersStopped} stopped").Foreground(Theme.SecondaryText)
             : null;
+        var (color, text) = state.Status switch
+        {
+            ConnectionStatus.Connected => (Theme.SystemSuccess, "Engine running"),
+            ConnectionStatus.Connecting => (Theme.SystemCaution, "Connecting…"),
+            _ => (Theme.SystemCritical, "Engine not reachable"),
+        };
 
         var row = (FlexRow(
-                Widgets.StatusDot(connected ? Theme.SystemSuccess : Theme.SystemCritical),
-                Caption(connected ? "Engine running" : "Engine not reachable"),
+                Widgets.StatusDot(color),
+                Caption(text),
                 counts)
             with
             {

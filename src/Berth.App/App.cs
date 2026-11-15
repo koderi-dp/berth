@@ -2,7 +2,6 @@
 using Berth.Hooks;
 using Berth.Pages;
 using Berth.Session;
-using Berth.Settings;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Layout;
@@ -18,25 +17,18 @@ internal sealed class App : EngineStateComponent
 {
     private const string ContainersTag = "containers";
 
-    private static readonly Func<Action, Action> SubscribeSettings = onChange =>
-    {
-        var services = AppServices.Current;
-        services.SettingsChanged += onChange;
-        return () => services.SettingsChanged -= onChange;
-    };
-
-    private static readonly Func<AppSettings> SettingsSnapshot = () => AppServices.Current.Settings;
-
     public override Element Render()
     {
         var state = UseEngineState();
-        var settings = UseExternalStore(SubscribeSettings, SettingsSnapshot);
+        var settings = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot);
         var nav = UseNavigation(AppRoute.Containers);
         var (isPaneOpen, setIsPaneOpen) = UseState(true);
 
-        var titleBar = (TitleBar("Berth") with
+        // The app name is the first item of the content row: WinUI's TitleBar collapses its own title text once it has content.
+        var titleBar = (TitleBar("") with
             {
                 Content = (FlexRow(
+                        Caption("Berth"),
                         ConnectionSwitcher.Render(settings, id => AppServices.Current.SwitchConnection(id)),
                         StatusLabel(state))
                     with
