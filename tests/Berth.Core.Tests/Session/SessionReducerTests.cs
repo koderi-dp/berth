@@ -519,4 +519,62 @@ public sealed class SessionReducerTests
         Assert.Same(connecting, state);
         Assert.Empty(effects);
     }
+
+    [Fact]
+    public void The_list_is_not_loaded_at_first_nor_right_after_a_connect()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+
+        Assert.False(EngineState.Initial.ListLoaded);
+        Assert.False(connected.ListLoaded);
+    }
+
+    [Fact]
+    public void The_first_list_of_a_connection_marks_it_loaded()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+
+        var (empty, _) = Reduce(connected, new ContainersLoaded(connected.LoadGeneration, [], Info));
+
+        Assert.True(empty.ListLoaded);
+        Assert.True(Connected().ListLoaded);
+    }
+
+    [Fact]
+    public void A_list_from_an_older_load_does_not_mark_it_loaded()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+
+        var (state, _) = Reduce(connected, new ContainersLoaded(connected.LoadGeneration - 1, [Container("a")], Info));
+
+        Assert.False(state.ListLoaded);
+    }
+
+    [Fact]
+    public void Starting_over_clears_the_loaded_mark_until_the_next_list()
+    {
+        var (connecting, _) = Reduce(Connected(), new ConnectRequested());
+        Assert.False(connecting.ListLoaded);
+
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+        Assert.False(connected.ListLoaded);
+
+        var (loaded, _) = Reduce(connected, new ContainersLoaded(connected.LoadGeneration, [Container("a")], Info));
+        Assert.True(loaded.ListLoaded);
+    }
+
+    [Fact]
+    public void Reconnecting_after_a_lost_connection_clears_the_loaded_mark_until_the_next_list()
+    {
+        var (lost, _) = Reduce(Connected(), new ConnectionLost("stream closed"));
+        var (retrying, _) = Reduce(lost, new RetryDue());
+
+        var (connected, _) = Reduce(retrying, new ConnectSucceeded(Version, Info));
+
+        Assert.False(connected.ListLoaded);
+        Assert.Equal(["a", "b"], connected.Containers.Select(c => c.Id));
+    }
 }

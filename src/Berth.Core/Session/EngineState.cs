@@ -16,6 +16,10 @@ public enum ContainerAction { Start, Stop, Restart, Pause, Unpause, Remove }
 /// <param name="RetryAttempt">Retries scheduled since the last successful connect; picks the next back-off delay.</param>
 /// <param name="LoadGeneration">The generation of the latest container load; results from older loads are ignored.</param>
 /// <param name="ReloadScheduled">A debounced reload is waiting for its <see cref="ReloadDue"/>.</param>
+/// <param name="ListLoaded">
+/// The first list of the current connection has arrived. Cleared on every connect; until it is set, an empty
+/// <see cref="Containers"/> means "not loaded yet", not "no containers".
+/// </param>
 public sealed record EngineState(
     ConnectionStatus Status,
     EngineVersion? Version,
@@ -26,7 +30,8 @@ public sealed record EngineState(
     string? ActionError,
     int RetryAttempt,
     int LoadGeneration,
-    bool ReloadScheduled)
+    bool ReloadScheduled,
+    bool ListLoaded)
 {
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
@@ -38,5 +43,6 @@ public sealed record EngineState(
         ActionError: null,
         RetryAttempt: 0,
         LoadGeneration: 0,
-        ReloadScheduled: false);
+        ReloadScheduled: false,
+        ListLoaded: false);
 }

@@ -26,7 +26,7 @@ public static class SessionReducer
         switch (e)
         {
             case ConnectRequested when state.Status == ConnectionStatus.Disconnected:
-                return (state with { Status = ConnectionStatus.Connecting, RetryAttempt = 0 }, [new ConnectEffect()]);
+                return (state with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false }, [new ConnectEffect()]);
 
             case ConnectRequested:
                 // Starting over drops in-flight work: action results and the reload timer may never arrive.
@@ -38,6 +38,7 @@ public static class SessionReducer
                         RetryAttempt = 0,
                         LoadGeneration = state.LoadGeneration + 1,
                         ReloadScheduled = false,
+                        ListLoaded = false,
                     },
                     [new StopStreamsEffect(), new ConnectEffect()]);
 
@@ -56,6 +57,7 @@ public static class SessionReducer
                         ConnectionError = null,
                         RetryAttempt = 0,
                         LoadGeneration = generation,
+                        ListLoaded = false,
                     },
                     [new LoadContainersEffect(generation), new StartEventStreamEffect()]);
             }
@@ -78,7 +80,7 @@ public static class SessionReducer
                 var ids = loaded.Containers.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
                 var gone = state.Pending.Keys.Where(id => !ids.Contains(id));
                 return (
-                    state with { Containers = loaded.Containers, Info = loaded.Info, Pending = state.Pending.RemoveRange(gone) },
+                    state with { Containers = loaded.Containers, Info = loaded.Info, Pending = state.Pending.RemoveRange(gone), ListLoaded = true },
                     None);
             }
 

@@ -162,6 +162,14 @@ internal sealed class ContainersPage : EngineStateComponent
         ImmutableHashSet<string> checkedIds,
         ContainerListCallbacks callbacks)
     {
+        if (groups.Count == 0 && !state.ListLoaded)
+        {
+            // The connection's first list has not arrived: an empty list here does not yet mean there are no containers.
+            return (FlexColumn(ProgressRing().Size(32, 32).AutomationName("Loading containers")) with { AlignItems = FlexAlign.Center })
+                .Margin(0, 24, 0, 0)
+                .Flex(grow: 1, basis: 0);
+        }
+
         if (groups.Count == 0)
         {
             return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
