@@ -12,6 +12,7 @@ internal static class Glyphs
     public const string Restart = ""; // Refresh
     public const string Pause = "";
     public const string Resume = ""; // the outline Play: Start is the solid one
+    public const string More = "";
     public const string Delete = "";
     public const string Edit = "";
     public const string Copy = "";

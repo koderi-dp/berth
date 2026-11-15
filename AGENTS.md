@@ -112,7 +112,7 @@ The WinApp CLI (`winget install Microsoft.winappcli --source winget`) can inspec
 drive it: `winapp ui inspect -a Berth`, `winapp ui invoke|set-value|send-keys ... -a Berth`,
 `winapp ui screenshot -a Berth -o shot.png`. Run `winapp --help` or
 `winapp <command> --help` before guessing at syntax. Useful selectors: row actions have
-AutomationIds `stop-<name>`, `start-<name>`, `restart-<name>`, `pause-<name>` or `resume-<name>` and
+AutomationIds `stop-<name>`, `start-<name>`, `restart-<name>`, `pause-<name>` or `resume-<name>` (in a window narrower than 1300 these sit in the `more-<name>` menu) and
 `delete-<name>`; the Retry button of the bar shown above a kept list while disconnected is
 `retry-connection`; connections on the settings page have `edit-<name>` and `delete-<name>`;
 dialogs confirm with `PrimaryButton`. The connection switcher is the `Connection` ComboBox;

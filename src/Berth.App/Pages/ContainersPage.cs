@@ -36,6 +36,8 @@ internal sealed class ContainersPage : EngineStateComponent
     public override Element Render()
     {
         var state = UseEngineState();
+        // A narrow window has no room for a button per action: Restart and Pause then go into a menu on each row.
+        var compact = !UseBreakpoint(ContainerRowView.WideLayoutMinWidth);
         var settings = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot);
         var (search, setSearch) = UseState("");
         var (checkedIds, updateChecked) = UseReducer(NoIds);
@@ -70,7 +72,7 @@ internal sealed class ContainersPage : EngineStateComponent
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 Toolbar(search, setSearch, runningOnly),
                 BulkBar(visibleRows, checkedIds, connected, callbacks),
-                Table(state, filter, groups, items, shownIds, checkedIds, connected, callbacks),
+                Table(state, filter, groups, items, shownIds, checkedIds, connected, compact, callbacks),
                 DeleteDialog(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -164,6 +166,7 @@ internal sealed class ContainersPage : EngineStateComponent
         string[] shownIds,
         ImmutableHashSet<string> checkedIds,
         bool connected,
+        bool compact,
         ContainerListCallbacks callbacks)
     {
         if (groups.Count == 0 && !state.ListLoaded)
@@ -179,12 +182,12 @@ internal sealed class ContainersPage : EngineStateComponent
             return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
         }
 
-        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, value => callbacks.SetChecked(shownIds, value));
+        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value));
 
         var list = ListView(items, item => item.Key, (item, _) => item switch
             {
-                GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, callbacks).WithKey(g.Key),
-                RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, callbacks).WithKey(r.Key),
+                GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, compact, callbacks).WithKey(g.Key),
+                RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, compact, callbacks).WithKey(r.Key),
                 _ => throw new InvalidOperationException("A new list item needs its row here: " + item.GetType().Name),
             })
             .Set(view =>

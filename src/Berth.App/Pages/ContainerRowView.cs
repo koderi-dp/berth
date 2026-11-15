@@ -24,7 +24,7 @@ internal sealed record ContainerListCallbacks(
 
 /// <summary>
 /// The rows of the containers table: the header row, a container row and a compose project row. All of them lay out their cells in
-/// the same <see cref="Columns"/>, so the columns line up.
+/// the same <see cref="WideColumns"/> or <see cref="CompactColumns"/>, so the columns line up.
 /// </summary>
 internal static class ContainerRowView
 {
@@ -32,7 +32,7 @@ internal static class ContainerRowView
     /// Checkbox, chevron (compose project rows only), state dot, name, image, status, ports, created, actions. The dot has its own
     /// column so a project's dot and its containers' dots sit under each other, right of the chevron.
     /// </summary>
-    private static readonly GridSize[] Columns =
+    private static readonly GridSize[] WideColumns =
     [
         GridSize.Px(40),
         GridSize.Px(28),
@@ -44,6 +44,23 @@ internal static class ContainerRowView
         GridSize.Px(120),
         GridSize.Px(172), // four buttons
     ];
+
+    /// <summary>The same columns for a narrow window: Restart and Pause move into a menu, so the actions need less room.</summary>
+    private static readonly GridSize[] CompactColumns =
+    [
+        GridSize.Px(40),
+        GridSize.Px(28),
+        GridSize.Px(24),
+        GridSize.Star(4), // the name: wider than the others, a project's containers are indented in it
+        GridSize.Star(3),
+        GridSize.Star(3),
+        GridSize.Px(120), // ports: wide enough for "65535:65535"
+        GridSize.Px(120),
+        GridSize.Px(124), // two buttons and the menu
+    ];
+
+    /// <summary>The window is at least this wide (in effective pixels) when every action gets its own button.</summary>
+    public const double WideLayoutMinWidth = 1300;
 
     private static readonly GridSize[] OneRow = [GridSize.Star()];
 
@@ -60,9 +77,10 @@ internal static class ContainerRowView
     /// The column titles, with a checkbox that checks or clears every row shown (<paramref name="checkedState"/> null: some are).
     /// Like every checkbox and action of the table, it is disabled while not <paramref name="connected"/>.
     /// </summary>
-    public static Element Header(bool? checkedState, bool connected, Action<bool> onCheckAll) =>
+    public static Element Header(bool? checkedState, bool connected, bool compact, Action<bool> onCheckAll) =>
         Cells(
             minHeight: 36,
+            compact,
             SelectBox(checkedState, onCheckAll, "Select all").IsEnabled(connected).Grid(column: 0),
             ColumnTitle("Name").Grid(column: 3),
             ColumnTitle("Image").Grid(column: 4),
@@ -75,7 +93,7 @@ internal static class ContainerRowView
     /// indented and named without the project in front (the tooltip keeps the whole name). Its checkbox
     /// and actions are disabled while not <paramref name="connected"/>; its actions also while one is in progress on it.
     /// </summary>
-    public static Element Row(ContainerRow row, string? project, bool isChecked, bool connected, ContainerListCallbacks callbacks)
+    public static Element Row(ContainerRow row, string? project, bool isChecked, bool connected, bool compact, ContainerListCallbacks callbacks)
     {
         var indented = project is not null;
         var shownName = project is null ? row.Name : ComposeGrouping.NameInProject(row.Name, project);
@@ -88,12 +106,31 @@ internal static class ContainerRowView
             ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(ids, ContainerAction.Start)).AutomationId("start-" + row.Name)
             : Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(ids, ContainerAction.Stop)).AutomationId("stop-" + row.Name);
 
-        // Every action is a button on the row, none behind a menu. Restart applies to any container; pause only to a running one,
-        // and a paused one gets Resume in its place.
-        var restart = Widgets.IconButton(Glyphs.Restart, "Restart", () => callbacks.Send(ids, ContainerAction.Restart)).AutomationId("restart-" + row.Name);
-        var pauseOrResume = row.State == RowState.Paused
-            ? Widgets.IconButton(Glyphs.Resume, "Resume", () => callbacks.Send(ids, ContainerAction.Unpause)).AutomationId("resume-" + row.Name).IsEnabled(canAct)
-            : Widgets.IconButton(Glyphs.Pause, "Pause", () => callbacks.Send(ids, ContainerAction.Pause)).AutomationId("pause-" + row.Name).IsEnabled(canAct && row.State == RowState.Running);
+        // Restart applies to any container; pause only to a running one, and a paused one gets Resume in its place. In a wide
+        // window each is a button on the row; in a narrow one (compact) they sit in a "more" menu, so the other columns keep their room.
+        var paused = row.State == RowState.Paused;
+        var canPause = row.State == RowState.Running;
+        void Restart() => callbacks.Send(ids, ContainerAction.Restart);
+        void PauseOrResume() => callbacks.Send(ids, paused ? ContainerAction.Unpause : ContainerAction.Pause);
+        Element[] secondary = compact
+            ?
+            [
+                Widgets.IconButton(Glyphs.More, "More actions", null)
+                    .AutomationId("more-" + row.Name)
+                    .WithFlyout(MenuItems(
+                        MenuItem("Restart", Restart, "Refresh"),
+                        paused
+                            ? MenuItem("Resume", PauseOrResume, "Play")
+                            : MenuItem("Pause", PauseOrResume, "Pause") with { IsEnabled = canPause }))
+                    .IsEnabled(canAct),
+            ]
+            :
+            [
+                Widgets.IconButton(Glyphs.Restart, "Restart", Restart).AutomationId("restart-" + row.Name).IsEnabled(canAct),
+                paused
+                    ? Widgets.IconButton(Glyphs.Resume, "Resume", PauseOrResume).AutomationId("resume-" + row.Name).IsEnabled(canAct)
+                    : Widgets.IconButton(Glyphs.Pause, "Pause", PauseOrResume).AutomationId("pause-" + row.Name).IsEnabled(canAct && canPause),
+            ];
 
         var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete((ContainerRow[])[row])).AutomationId("delete-" + row.Name);
 
@@ -118,6 +155,7 @@ internal static class ContainerRowView
 
         return Cells(
             minHeight: RowHeight,
+            compact,
             SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).IsEnabled(connected).Grid(column: 0),
             StateMark(row.State, busy).Grid(column: 2),
             name.Grid(column: 3),
@@ -125,7 +163,7 @@ internal static class ContainerRowView
             CellText(row.Status).Grid(column: 5),
             Ports(row.Ports).Grid(column: 6),
             CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 7),
-            Actions(startOrStop.IsEnabled(canAct), restart.IsEnabled(canAct), pauseOrResume, delete.IsEnabled(canAct)).Grid(column: 8));
+            Actions([startOrStop.IsEnabled(canAct), .. secondary, delete.IsEnabled(canAct)]).Grid(column: 8));
     }
 
     /// <summary>
@@ -133,7 +171,7 @@ internal static class ContainerRowView
     /// the stopped ones, Stop the others, Delete all of them. Its checkbox and actions are disabled while not
     /// <paramref name="connected"/>; its actions also while one is in progress on any of its rows.
     /// </summary>
-    public static Element Group(ContainerGroup group, bool collapsed, bool? checkedState, bool connected, ContainerListCallbacks callbacks)
+    public static Element Group(ContainerGroup group, bool collapsed, bool? checkedState, bool connected, bool compact, ContainerListCallbacks callbacks)
     {
         var project = group.Project ?? throw new ArgumentException("A group row needs a compose project.", nameof(group));
         var rows = group.Rows;
@@ -163,6 +201,7 @@ internal static class ContainerRowView
 
         return Cells(
             minHeight: RowHeight,
+            compact,
             SelectBox(checkedState, value => callbacks.SetChecked(rows.Select(r => r.Id), value), "Select " + project).IsEnabled(connected).Grid(column: 0),
             chevron.Grid(column: 1),
             StateMark(group.State, busy: false).Grid(column: 2),
@@ -183,8 +222,8 @@ internal static class ContainerRowView
             ? ProgressRing().Size(16, 16).AutomationName("Working").HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center)
             : Widgets.StatusDot(StateColor(state)).AutomationName(state.ToString()).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
 
-    private static Element Cells(double minHeight, params Element[] cells) =>
-        Border(Grid(Columns, OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0))
+    private static Element Cells(double minHeight, bool compact, params Element[] cells) =>
+        Border(Grid(compact ? CompactColumns : WideColumns, OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0))
             .BorderBrush(Theme.DividerStroke)
             .BorderThickness(0, 0, 0, 1);
 
