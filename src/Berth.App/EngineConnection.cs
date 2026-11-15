@@ -51,6 +51,8 @@ internal sealed class EngineConnection : IEngineApi
     public IAsyncEnumerable<LogLine> StreamLogsAsync(string id, bool tty, LogRequest request, CancellationToken ct) =>
         _client.StreamLogsAsync(id, tty, request, ct);
 
+    public IAsyncEnumerable<StatsSample> StreamStatsAsync(string id, CancellationToken ct) => _client.StreamStatsAsync(id, ct);
+
     public IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct) => _client.StreamEventsAsync(ct);
 
     public async ValueTask DisposeAsync()

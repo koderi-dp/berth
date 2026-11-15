@@ -38,6 +38,12 @@ public interface IEngineApi : IAsyncDisposable
     /// </summary>
     IAsyncEnumerable<LogLine> StreamLogsAsync(string id, bool tty, LogRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// A running container's resource use, read with no deadline: one sample about every second while it runs. The enumeration
+    /// ends when the container stops.
+    /// </summary>
+    IAsyncEnumerable<StatsSample> StreamStatsAsync(string id, CancellationToken ct);
+
     /// <summary>The engine's event stream, until cancelled.</summary>
     IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct);
 }

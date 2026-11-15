@@ -11,6 +11,7 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(List<WireContainer>))]
 [JsonSerializable(typeof(WireEvent))]
 [JsonSerializable(typeof(WireInspect))]
+[JsonSerializable(typeof(WireStats))]
 [JsonSerializable(typeof(WireError))]
 internal sealed partial class EngineJson : JsonSerializerContext;
 
@@ -123,6 +124,44 @@ internal sealed record WireEndpoint(
     [property: JsonPropertyName("IPAddress")] string? IpAddress,
     [property: JsonPropertyName("Gateway")] string? Gateway,
     [property: JsonPropertyName("MacAddress")] string? MacAddress);
+
+/// <summary>One line of the stats stream (<c>/containers/{id}/stats</c>). The engine's counters are unsigned 64-bit numbers.</summary>
+internal sealed record WireStats(
+    [property: JsonPropertyName("read")] string? Read,
+    [property: JsonPropertyName("cpu_stats")] WireCpuStats? CpuStats,
+    [property: JsonPropertyName("precpu_stats")] WireCpuStats? PreCpuStats,
+    [property: JsonPropertyName("memory_stats")] WireMemoryStats? MemoryStats,
+    [property: JsonPropertyName("networks")] Dictionary<string, WireNetworkStats?>? Networks,
+    [property: JsonPropertyName("blkio_stats")] WireBlockIoStats? BlockIoStats,
+    [property: JsonPropertyName("pids_stats")] WirePidsStats? PidsStats);
+
+internal sealed record WireCpuStats(
+    [property: JsonPropertyName("cpu_usage")] WireCpuUsage? CpuUsage,
+    [property: JsonPropertyName("system_cpu_usage")] ulong? SystemCpuUsage,
+    [property: JsonPropertyName("online_cpus")] uint? OnlineCpus);
+
+internal sealed record WireCpuUsage(
+    [property: JsonPropertyName("total_usage")] ulong? TotalUsage,
+    [property: JsonPropertyName("percpu_usage")] List<ulong>? PerCpuUsage);
+
+/// <summary><c>stats</c> holds the cgroup's memory figures: <c>inactive_file</c> on cgroup v2, <c>total_inactive_file</c> on v1.</summary>
+internal sealed record WireMemoryStats(
+    [property: JsonPropertyName("usage")] ulong? Usage,
+    [property: JsonPropertyName("limit")] ulong? Limit,
+    [property: JsonPropertyName("stats")] Dictionary<string, ulong>? Stats);
+
+internal sealed record WireNetworkStats(
+    [property: JsonPropertyName("rx_bytes")] ulong? ReceivedBytes,
+    [property: JsonPropertyName("tx_bytes")] ulong? SentBytes);
+
+internal sealed record WireBlockIoStats(
+    [property: JsonPropertyName("io_service_bytes_recursive")] List<WireBlockIoEntry?>? ServiceBytes);
+
+internal sealed record WireBlockIoEntry(
+    [property: JsonPropertyName("op")] string? Op,
+    [property: JsonPropertyName("value")] ulong? Value);
+
+internal sealed record WirePidsStats([property: JsonPropertyName("current")] ulong? Current);
 
 /// <summary>The body the engine sends with an error status.</summary>
 internal sealed record WireError([property: JsonPropertyName("message")] string? Message);

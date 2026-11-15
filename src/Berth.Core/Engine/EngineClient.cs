@@ -139,6 +139,26 @@ public sealed class EngineClient : IEngineApi
     }
 
     /// <summary>
+    /// Reads a container's stats as the engine sends them, one line per sample, with no deadline. A line that is not a sample is
+    /// skipped. The enumeration ends when the engine closes the stream, as it does when the container stops; a dropped connection
+    /// throws <see cref="EngineException"/> with status 0.
+    /// </summary>
+    public async IAsyncEnumerable<StatsSample> StreamStatsAsync(string id, [EnumeratorCancellation] CancellationToken ct)
+    {
+        using var response = await OpenStreamAsync(ContainerPath(id, "/stats?stream=true"), ct).ConfigureAwait(false);
+        var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var lines = JsonLines.ReadAsync(stream, ct).GetAsyncEnumerator();
+
+        while (await NextAsync(lines, ct).ConfigureAwait(false))
+        {
+            if (ToStats(lines.Current) is { } sample)
+            {
+                yield return sample;
+            }
+        }
+    }
+
+    /// <summary>
     /// Reads the engine's events as they happen, with no deadline. A line that is not an event is skipped. The enumeration ends when
     /// the engine closes the stream; a dropped connection throws <see cref="EngineException"/> with status 0.
     /// </summary>
@@ -257,6 +277,21 @@ public sealed class EngineClient : IEngineApi
         }
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
+    }
+
+    private static StatsSample? ToStats(ReadOnlyMemory<byte> line)
+    {
+        WireStats? wire;
+        try
+        {
+            wire = JsonSerializer.Deserialize(line.Span, EngineJson.Default.WireStats);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return wire is null ? null : StatsMath.ToSample(wire);
     }
 
     private static EngineEventMessage? ToEvent(ReadOnlyMemory<byte> line)

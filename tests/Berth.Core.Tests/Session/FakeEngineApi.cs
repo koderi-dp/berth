@@ -8,7 +8,8 @@ namespace Berth.Tests.Session;
 
 /// <summary>
 /// An engine stand-in for one connection. A test sets the version, container list and inspect answers, makes calls fail, holds
-/// calls until it releases them, and pushes messages into the event stream and lines into the log stream.
+/// calls until it releases them, and pushes messages into the event stream, lines into the log stream and samples into the stats
+/// stream.
 /// </summary>
 internal sealed class FakeEngineApi : IEngineApi
 {
@@ -46,6 +47,9 @@ internal sealed class FakeEngineApi : IEngineApi
 
     /// <summary>The log stream: push lines, end it or fail it.</summary>
     public ScriptedStream<LogLine> Logs { get; } = new();
+
+    /// <summary>The stats stream: push samples, end it (the container stopped) or fail it.</summary>
+    public ScriptedStream<StatsSample> Stats { get; } = new();
 
     public bool IsDisposed => _disposed;
 
@@ -138,6 +142,15 @@ internal sealed class FakeEngineApi : IEngineApi
         await EnterAsync("Logs", entry, ct);
         await foreach (var line in ReadAsync(Logs, entry, ct))
             yield return line;
+    }
+
+    /// <summary>Opens after any hold or failure set for "Stats", then yields what the test pushes into <see cref="Stats"/>.</summary>
+    public async IAsyncEnumerable<StatsSample> StreamStatsAsync(string id, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var entry = $"Stats {id}";
+        await EnterAsync("Stats", entry, ct);
+        await foreach (var sample in ReadAsync(Stats, entry, ct))
+            yield return sample;
     }
 
     public ValueTask DisposeAsync()
