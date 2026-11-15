@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "winappcli": {
+      "source": {
+        "source": "github",
+        "repo": "microsoft/WinAppCli"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "winui@winappcli": true
+  }
+}

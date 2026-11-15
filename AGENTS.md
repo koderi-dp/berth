@@ -94,6 +94,51 @@ removes it in `finally`. Afterwards `docker ps -a` shows no `berth-it-` containe
 - The log never records secrets, environment values or container log contents.
 - Engine API: use the lower of the engine's `ApiVersion` and `1.56`. Refuse engines below `1.44`.
 
+## Design: propose, do not wait to be asked
+
+The owner should not have to spot layout and usability problems themselves. When you build
+or change a screen, you own how it looks and behaves at every size, and you raise what is
+wrong or could be better before they do.
+
+- **Look at what you built.** After any UI change, run the app and take screenshots
+  (`winapp ui screenshot -a Berth -o shot.png`) and read them: at a narrow window (about
+  1200 wide) and a wide one (1600 or more), in dark and in light. A screen nobody looked at
+  is not done. If the desktop session is disconnected the screenshots are black: say so and
+  ask for it to be connected; do not report the look as checked.
+- **Use the room there is, and degrade when there is none.** An action that fits on the
+  row is a button on the row; when the window is too narrow it moves into an overflow menu,
+  it is never dropped. The same goes for columns and text: truncate with an ellipsis and a
+  tooltip, and prefer giving the room back (narrower chrome, fewer fixed widths) over
+  truncating. `ContainersPage` does this with `UseBreakpoint(ContainerRowView.WideLayoutMinWidth)`.
+- **Compare with the reference.** For a screen Docker Desktop also has, look at its
+  screenshot first (the list is in the spec, `docs/superpowers/specs/`, and the files are in
+  the `docker/docs` repository) and match its structure: hierarchy, alignment, what sits in
+  which column. Its name, logo and colours stay out.
+- **Propose, with a recommendation.** When you see a better layout, a missing affordance
+  (keyboard shortcut, context menu, sorting, empty state), an inconsistency, or a rule below
+  that the current screen breaks, say so in your report as a short list: what, why, and
+  what you recommend. Small and clearly right: do it and say you did. A change of behaviour
+  or a matter of taste: propose it and wait.
+- **Read the design guidance before UI work**, not after:
+  - The `winui` plugin (enabled for this repository in `.claude/settings.json`): skills
+    `winui-design` (control choice, window sizing, theming, the anti-pattern table),
+    `winui-ui-testing` and `winui-code-review`. Its XAML advice does not apply (no XAML
+    here); its design rules do.
+  - Reactor's own: `agentkit\skills\design.md` and `agentkit\skills\design-docs\`
+    (`layout-and-scaling.md`, `typography-and-colors.md`, `theme-aware-resources.md`,
+    `control-styles.md`, `code-review-checklist.md`) under the package folder named in the
+    next section.
+- **Rules that have already bitten here:**
+  - Sizes, paddings and margins are multiples of 4.
+  - Text that can be long sits in a `GridSize.Star()` column with `TextTrimming` and a
+    tooltip; trimming never happens inside `FlexRow`, `HStack` or an `Auto` column.
+  - An icon must not be mistakable for another control (the outline Stop glyph looked like
+    an empty checkbox next to the row checkboxes).
+  - A child row's markers line up under its parent's (one column for the chevron, one for
+    the state dot), and a child's name drops what the parent row already says.
+  - Destructive actions confirm, name what will be lost, and default to Cancel.
+  - Light and dark working does not mean High Contrast works; that has not been checked yet.
+
 ## Reactor
 
 Docs ship in the NuGet package:
