@@ -17,12 +17,16 @@ internal sealed class App : EngineStateComponent
 {
     private const string ContainersTag = "containers";
 
+    private const string SettingsSetAsideText =
+        "The settings file could not be read. It was kept as settings.bad.json and Berth started with defaults.";
+
     public override Element Render()
     {
         var state = UseEngineState();
         var settings = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot);
         var nav = UseNavigation(AppRoute.Containers);
         var (isPaneOpen, setIsPaneOpen) = UseState(true);
+        var (settingsSetAside, setSettingsSetAside) = UseState(AppServices.Current.SettingsWereSetAside);
 
         // The app name is the first item of the content row: WinUI's TitleBar collapses its own title text once it has content.
         var titleBar = (TitleBar("") with
@@ -44,6 +48,7 @@ internal sealed class App : EngineStateComponent
             .Flex(shrink: 0);
 
         var content = FlexColumn(
+            SetAsideBar(settingsSetAside, () => setSettingsSetAside(false)),
             ErrorBar.Render(state.ActionError, () => AppServices.Current.Session.Dispatch(new ActionErrorDismissed())),
             NavigationHost(nav, route => RouteToPage(route, state)).Flex(grow: 1, basis: 0));
 
@@ -62,6 +67,17 @@ internal sealed class App : EngineStateComponent
 
         return FlexColumn(titleBar, navView, StatusBar.Render(state));
     }
+
+    /// <summary>Shown from the start until closed when the settings file was damaged and set aside.</summary>
+    private static Element? SetAsideBar(bool show, Action onClose) =>
+        show
+            ? (InfoBar(message: SettingsSetAsideText) with { IsOpen = true })
+                .Warning()
+                .IsClosable()
+                .Closed(onClose)
+                .Margin(24, 16, 24, 0)
+                .Flex(shrink: 0)
+            : null;
 
     /// <summary>The connection status; while disconnected, its tooltip gives the reason (the page may still show the last list).</summary>
     private static Element StatusLabel(EngineState state)

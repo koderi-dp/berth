@@ -20,7 +20,13 @@ internal sealed class AppServices
     private AppServices(SettingsStore store)
     {
         _store = store;
-        _settings = store.Load();
+        var load = store.Load();
+        _settings = load.Settings;
+        SettingsWereSetAside = load.SetAside;
+        if (load.SetAside)
+            AppLog.Write("settings file was damaged and set aside");
+        if (load.SaveError is { } saveError)
+            AppLog.Error("saving the first-run settings failed", saveError);
         _session = CreateSession(ActiveConnection(_settings));
     }
 
@@ -37,6 +43,9 @@ internal sealed class AppServices
     }
 
     public AppSettings Settings => Volatile.Read(ref _settings);
+
+    /// <summary>The settings file was damaged at start: it was kept as <c>settings.bad.json</c> and Berth started with defaults.</summary>
+    public bool SettingsWereSetAside { get; }
 
     public event Action? SettingsChanged;
 

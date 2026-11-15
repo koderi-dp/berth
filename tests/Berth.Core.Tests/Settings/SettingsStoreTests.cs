@@ -16,7 +16,7 @@ public sealed class SettingsStoreTests : IDisposable
     [Fact]
     public void Missing_file_loads_first_run_defaults()
     {
-        var settings = new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load();
+        var settings = new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load().Settings;
 
         var connection = Assert.Single(settings.Connections);
         Assert.Equal("Docker (tcp://127.0.0.1:2375)", connection.Name);
@@ -37,7 +37,7 @@ public sealed class SettingsStoreTests : IDisposable
             new ContainerListOptions(RunningOnly: true));
 
         store.Save(saved);
-        var loaded = new SettingsStore(_directory, null).Load();
+        var loaded = new SettingsStore(_directory, null).Load().Settings;
 
         Assert.Equal(saved.Connections, loaded.Connections);
         Assert.Equal("two", loaded.ActiveConnectionId);
@@ -54,12 +54,12 @@ public sealed class SettingsStoreTests : IDisposable
     {
         File.WriteAllText(SettingsFile, "{ this is not json");
 
-        var settings = new SettingsStore(_directory, null).Load();
+        var settings = new SettingsStore(_directory, null).Load().Settings;
 
         var connection = Assert.Single(settings.Connections);
         Assert.Equal("Local engine", connection.Name);
-        Assert.False(File.Exists(SettingsFile));
         Assert.Equal("{ this is not json", File.ReadAllText(Path.Combine(_directory, "settings.bad.json")));
+        Assert.Equal(connection.Id, new SettingsStore(_directory, null).Load().Settings.ActiveConnectionId);
     }
 
     [Theory]
@@ -67,14 +67,164 @@ public sealed class SettingsStoreTests : IDisposable
     [InlineData("""{ "connections": [ { "id": "x" } ], "activeConnectionId": "x", "containerList": { "runningOnly": false } }""")]
     [InlineData("""{ "connections": [ null ], "activeConnectionId": null, "containerList": { "runningOnly": false } }""")]
     [InlineData("""{ "connections": [], "activeConnectionId": null, "containerList": { "runningOnly": false } }""")]
+    // Each connection below is complete except for the one thing that makes it unusable.
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": 7, "host": "h", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "Ssh", "host": "h", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "host": "h", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "Tcp", "host": "", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "Tcp", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "Tcp", "host": "h", "port": 70000 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "Tcp", "host": "h", "port": 0 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": " ", "name": "X", "kind": "Tcp", "host": "h", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "name": "X", "kind": "Tcp", "host": "h", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "", "kind": "Tcp", "host": "h", "port": 2375 } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "NamedPipe", "host": ".", "pipeName": " " } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "NamedPipe", "host": "." } ] }""")]
+    [InlineData("""{ "connections": [ { "id": "x", "name": "X", "kind": "Tcp", "host": "h", "port": 2376, "tls": { "certPath": "c.pem" } } ] }""")]
+    [InlineData("""{ "activeConnectionId": "x" }""")]
     public void Json_that_is_not_valid_settings_is_treated_as_corrupt(string json)
     {
         File.WriteAllText(SettingsFile, json);
 
-        var settings = new SettingsStore(_directory, null).Load();
+        var result = new SettingsStore(_directory, null).Load();
 
-        Assert.Equal("Local engine", Assert.Single(settings.Connections).Name);
-        Assert.True(File.Exists(Path.Combine(_directory, "settings.bad.json")));
+        Assert.Equal("Local engine", Assert.Single(result.Settings.Connections).Name);
+        Assert.True(result.SetAside);
+        Assert.Equal(json, File.ReadAllText(Path.Combine(_directory, "settings.bad.json")));
+    }
+
+    [Fact]
+    public void Two_connections_with_the_same_id_are_treated_as_corrupt()
+    {
+        File.WriteAllText(SettingsFile, """
+            { "connections": [
+                { "id": "x", "name": "One", "kind": "Tcp", "host": "a", "port": 2375 },
+                { "id": "x", "name": "Two", "kind": "Tcp", "host": "b", "port": 2375 } ] }
+            """);
+
+        var result = new SettingsStore(_directory, null).Load();
+
+        Assert.True(result.SetAside);
+        Assert.Equal("Local engine", Assert.Single(result.Settings.Connections).Name);
+    }
+
+    [Fact]
+    public void A_minimal_hand_written_connection_loads()
+    {
+        File.WriteAllText(SettingsFile, """{ "connections": [ { "id": "one", "name": "Build host", "kind": "Tcp", "host": "build-host", "port": 2375 } ] }""");
+
+        var result = new SettingsStore(_directory, null).Load();
+
+        Assert.False(result.SetAside);
+        Assert.Equal(new ConnectionProfile("one", "Build host", TransportKind.Tcp, "build-host", 2375, "", null), Assert.Single(result.Settings.Connections));
+        Assert.Equal("one", result.Settings.ActiveConnectionId);
+        Assert.False(result.Settings.ContainerList.RunningOnly);
+        Assert.False(File.Exists(Path.Combine(_directory, "settings.bad.json")));
+    }
+
+    [Fact]
+    public void A_file_without_container_list_options_loads_with_the_defaults()
+    {
+        File.WriteAllText(SettingsFile, """
+            { "connections": [ { "id": "one", "name": "Local", "kind": "NamedPipe", "host": ".", "port": 0, "pipeName": "docker_engine", "tls": null } ],
+              "activeConnectionId": "one" }
+            """);
+
+        var result = new SettingsStore(_directory, null).Load();
+
+        Assert.False(result.SetAside);
+        Assert.Equal("docker_engine", Assert.Single(result.Settings.Connections).PipeName);
+        Assert.Equal(new ContainerListOptions(RunningOnly: false), result.Settings.ContainerList);
+    }
+
+    [Fact]
+    public void A_missing_port_is_the_default_for_the_kind()
+    {
+        File.WriteAllText(SettingsFile, """
+            { "connections": [
+                { "id": "plain", "name": "Plain", "kind": "Tcp", "host": "a" },
+                { "id": "tls", "name": "TLS", "kind": "Tcp", "host": "b", "tls": { "caPath": "ca.pem" } },
+                { "id": "pipe", "name": "Pipe", "kind": "NamedPipe", "pipeName": "docker_engine" } ] }
+            """);
+
+        var connections = new SettingsStore(_directory, null).Load().Settings.Connections;
+
+        Assert.Equal(2375, connections[0].Port);
+        Assert.Equal(2376, connections[1].Port);
+        Assert.Equal(new TlsOptions("ca.pem", null, null), connections[1].Tls);
+        Assert.Equal(0, connections[2].Port);
+        Assert.Equal(".", connections[2].Host);
+    }
+
+    [Fact]
+    public void Unknown_properties_are_ignored()
+    {
+        File.WriteAllText(SettingsFile, """
+            { "connections": [ { "id": "one", "name": "Local", "kind": "Tcp", "host": "h", "port": 2375, "sshUser": "me" } ],
+              "theme": "dark", "containerList": { "runningOnly": true, "columns": [ "name" ] } }
+            """);
+
+        var result = new SettingsStore(_directory, null).Load();
+
+        Assert.False(result.SetAside);
+        Assert.Equal("one", Assert.Single(result.Settings.Connections).Id);
+        Assert.True(result.Settings.ContainerList.RunningOnly);
+    }
+
+    [Fact]
+    public void First_run_defaults_are_saved_so_the_connection_id_stays_the_same()
+    {
+        var first = new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load();
+        var second = new SettingsStore(_directory, null).Load();
+
+        Assert.True(File.Exists(SettingsFile));
+        Assert.False(first.SetAside);
+        Assert.False(second.SetAside);
+        Assert.Equal(first.Settings.Connections, second.Settings.Connections);
+        Assert.Equal(first.Settings.ActiveConnectionId, second.Settings.ActiveConnectionId);
+    }
+
+    [Fact]
+    public void A_first_run_save_that_fails_is_reported_and_the_defaults_are_still_used()
+    {
+        // A file where the folder should be: the folder cannot be created, so the save fails.
+        var blocked = Path.Combine(_directory, "blocked");
+        File.WriteAllText(blocked, "");
+
+        var result = new SettingsStore(Path.Combine(blocked, "settings"), "tcp://127.0.0.1:2375").Load();
+
+        Assert.NotNull(result.SaveError);
+        Assert.False(result.SetAside);
+        Assert.Equal("tcp://127.0.0.1:2375", EngineAddress.Format(Assert.Single(result.Settings.Connections)));
+    }
+
+    [Fact]
+    public void A_valid_file_is_not_set_aside()
+    {
+        var store = new SettingsStore(_directory, null);
+        store.Save(new AppSettings([new ConnectionProfile("one", "Local", TransportKind.Tcp, "h", 2375, "", null)], "one", new ContainerListOptions(false)));
+
+        var result = store.Load();
+
+        Assert.False(result.SetAside);
+        Assert.Null(result.SaveError);
+    }
+
+    [Fact]
+    public void A_file_that_cannot_be_read_is_left_alone_and_not_overwritten()
+    {
+        const string json = """{ "connections": [ { "id": "one", "name": "Local", "kind": "Tcp", "host": "h", "port": 2375 } ] }""";
+        File.WriteAllText(SettingsFile, json);
+
+        SettingsLoad result;
+        using (new FileStream(SettingsFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            result = new SettingsStore(_directory, null).Load();
+        }
+
+        Assert.False(result.SetAside);
+        Assert.Equal("Local engine", Assert.Single(result.Settings.Connections).Name);
+        Assert.Equal(json, File.ReadAllText(SettingsFile));
     }
 
     [Fact]
@@ -83,7 +233,7 @@ public sealed class SettingsStoreTests : IDisposable
         const string json = """{ "connections": [ { "id": "one", "name": "Build host", "kind": "Tcp", "host": "build-host", "port": 2375, "pipeName": "", "tls": null } ], "activeConnectionId": "one", "containerList": { "runningOnly": true } }""";
         File.WriteAllBytes(SettingsFile, [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes(json)]);
 
-        var settings = new SettingsStore(_directory, null).Load();
+        var settings = new SettingsStore(_directory, null).Load().Settings;
 
         var connection = Assert.Single(settings.Connections);
         Assert.Equal("Build host", connection.Name);
@@ -105,7 +255,7 @@ public sealed class SettingsStoreTests : IDisposable
             "gone",
             new ContainerListOptions(RunningOnly: false)));
 
-        var settings = store.Load();
+        var settings = store.Load().Settings;
 
         Assert.Equal("first", settings.ActiveConnectionId);
     }
@@ -115,8 +265,8 @@ public sealed class SettingsStoreTests : IDisposable
     {
         var store = new SettingsStore(_directory, null);
 
-        store.Save(store.Load());
-        store.Save(store.Load());
+        store.Save(store.Load().Settings);
+        store.Save(store.Load().Settings);
 
         var file = Assert.Single(Directory.GetFiles(_directory));
         Assert.Equal("settings.json", Path.GetFileName(file));

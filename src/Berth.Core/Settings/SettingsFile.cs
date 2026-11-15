@@ -1,0 +1,108 @@
+using Berth.Connections;
+
+namespace Berth.Settings;
+
+/// <summary>
+/// <c>settings.json</c> as it is read: every field optional, so a file written by an older or newer Berth, or by hand, still
+/// reads. <see cref="ToSettings"/> fills in what may be left out and rejects what Berth cannot use. Writing uses
+/// <see cref="AppSettings"/> itself, which gives the same JSON.
+/// </summary>
+internal sealed class SettingsFile
+{
+    public List<ConnectionEntry?>? Connections { get; set; }
+
+    public string? ActiveConnectionId { get; set; }
+
+    public ContainerListEntry? ContainerList { get; set; }
+
+    /// <summary>
+    /// The settings, or null when they cannot be used: no connection, or a connection without a non-blank id and name, a known
+    /// kind, a non-blank host and a port in 1..65535 (TCP) or a non-blank pipe name (named pipe), and a CA file when it has TLS;
+    /// or two with the same id.
+    /// Left out: <c>tls</c> is none, <c>pipeName</c> is "", <c>port</c> is the kind's default, <c>host</c> of a named pipe is
+    /// this machine, <c>containerList</c> is the defaults, <c>activeConnectionId</c> is the first connection.
+    /// </summary>
+    public AppSettings? ToSettings()
+    {
+        if (Connections is not { Count: > 0 })
+            return null;
+
+        var connections = new List<ConnectionProfile>(Connections.Count);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in Connections)
+        {
+            if (entry?.ToProfile() is not { } profile || !ids.Add(profile.Id))
+                return null;
+            connections.Add(profile);
+        }
+
+        var active = connections.Any(c => c.Id == ActiveConnectionId) ? ActiveConnectionId : connections[0].Id;
+        return new AppSettings(connections, active, new ContainerListOptions(ContainerList?.RunningOnly ?? false));
+    }
+
+    internal sealed class ConnectionEntry
+    {
+        public string? Id { get; set; }
+
+        public string? Name { get; set; }
+
+        public TransportKind? Kind { get; set; }
+
+        public string? Host { get; set; }
+
+        public int? Port { get; set; }
+
+        public string? PipeName { get; set; }
+
+        public TlsEntry? Tls { get; set; }
+
+        /// <summary>The profile this entry describes, or null when it is not usable (see <see cref="SettingsFile.ToSettings"/>).</summary>
+        public ConnectionProfile? ToProfile()
+        {
+            if (string.IsNullOrWhiteSpace(Id) || string.IsNullOrWhiteSpace(Name))
+                return null;
+
+            TlsOptions? tls = null;
+            if (Tls is not null)
+            {
+                if (string.IsNullOrWhiteSpace(Tls.CaPath))
+                    return null;
+                tls = new TlsOptions(Tls.CaPath, Tls.CertPath, Tls.KeyPath);
+            }
+
+            switch (Kind)
+            {
+                case TransportKind.Tcp:
+                {
+                    var port = Port ?? (tls is null ? EngineAddress.DefaultPort : EngineAddress.DefaultTlsPort);
+                    if (string.IsNullOrWhiteSpace(Host) || port is < 1 or > 65535)
+                        return null;
+                    return new ConnectionProfile(Id, Name, TransportKind.Tcp, Host, port, PipeName ?? "", tls);
+                }
+
+                case TransportKind.NamedPipe:
+                    if (string.IsNullOrWhiteSpace(PipeName))
+                        return null;
+                    return new ConnectionProfile(Id, Name, TransportKind.NamedPipe, string.IsNullOrWhiteSpace(Host) ? "." : Host, Port ?? 0, PipeName, tls);
+
+                default:
+                    // Missing, or a number that names no kind (the enum converter accepts numbers).
+                    return null;
+            }
+        }
+    }
+
+    internal sealed class TlsEntry
+    {
+        public string? CaPath { get; set; }
+
+        public string? CertPath { get; set; }
+
+        public string? KeyPath { get; set; }
+    }
+
+    internal sealed class ContainerListEntry
+    {
+        public bool? RunningOnly { get; set; }
+    }
+}
