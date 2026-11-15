@@ -1,9 +1,9 @@
 {
   "profiles": {
-    "Berth.App (Package)": {
+    "Berth (Package)": {
       "commandName": "MsixPackage"
     },
-    "Berth.App (Unpackaged)": {
+    "Berth (Unpackaged)": {
       "commandName": "Project"
     }
   }
