@@ -99,51 +99,28 @@ internal static class ContainerRowView
         var indented = project is not null;
         var shownName = project is null ? row.Name : ComposeGrouping.NameInProject(row.Name, project);
         var busy = row.Pending is not null;
-        var canAct = BulkSelection.CanAct(row, connected);
         var stopped = row.State == RowState.Stopped;
         string[] ids = [row.Id];
 
-        // The row's main action, in the accent colour: Stop for a container that is active, Start for one that is not.
-        var startOrStop = stopped
-            ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(ids, ContainerAction.Start), color: Primary(canAct)).AutomationId("start-" + row.Name)
-            : Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(ids, ContainerAction.Stop), color: Primary(canAct)).AutomationId("stop-" + row.Name);
-
-        // Restart applies to any container; pause only to a running one, and a paused one gets Resume in its place. In a wide
-        // window each is a button on the row; in a narrow one (compact) they go first in the "more" menu, so the other columns
-        // keep their room. The menu is on the row at every width: it also holds what never gets a button.
-        var paused = row.State == RowState.Paused;
-        var canPause = row.State == RowState.Running;
-        void Restart() => callbacks.Send(ids, ContainerAction.Restart);
-        void PauseOrResume() => callbacks.Send(ids, paused ? ContainerAction.Unpause : ContainerAction.Pause);
-
-        var browserUrl = row.Ports.FirstOrDefault(p => p.Url is not null)?.Url;
-        MenuEntry?[] menu =
-        [
-            compact ? MenuItem("Restart", Restart, "Refresh") : null,
-            compact && paused ? MenuItem("Resume", PauseOrResume, "Play") : null,
-            compact && !paused ? MenuItem("Pause", PauseOrResume, "Pause") with { IsEnabled = canPause } : null,
-            compact ? MenuSeparator() : null,
-            browserUrl is null ? null : MenuItem("Open in browser", () => OpenInBrowser(browserUrl), "Globe"),
-            MenuItem("Copy name", () => CopyToClipboard(row.Name), "Copy"),
-            MenuItem("Copy ID", () => CopyToClipboard(row.Id), "Copy"),
-        ];
-        var more = Widgets.IconButton(Glyphs.More, "More actions", null)
-            .AutomationId("more-" + row.Name)
-            .WithFlyout(MenuItems([.. menu.OfType<MenuEntry>()]));
-
-        Element?[] buttons = compact
-            ? [startOrStop.IsEnabled(canAct), more]
-            :
-            [
-                startOrStop.IsEnabled(canAct),
-                Widgets.IconButton(Glyphs.Restart, "Restart", Restart).AutomationId("restart-" + row.Name).IsEnabled(canAct),
-                paused
-                    ? Widgets.IconButton(Glyphs.Resume, "Resume", PauseOrResume).AutomationId("resume-" + row.Name).IsEnabled(canAct)
-                    : Widgets.IconButton(Glyphs.Pause, "Pause", PauseOrResume).AutomationId("pause-" + row.Name).IsEnabled(canAct && canPause),
-                more,
-            ];
-
-        var delete = DeleteButton(() => callbacks.RequestDelete((ContainerRow[])[row]), canAct).AutomationId("delete-" + row.Name);
+        var actions = RowActions.ForContainer(row, connected);
+        void Run(RowAction action)
+        {
+            switch (action.Kind)
+            {
+                case RowActionKind.OpenInBrowser when actions.BrowserUrl is { } url:
+                    OpenInBrowser(url);
+                    break;
+                case RowActionKind.CopyName:
+                    CopyToClipboard(row.Name);
+                    break;
+                case RowActionKind.CopyId:
+                    CopyToClipboard(row.Id);
+                    break;
+                default:
+                    RunEngineAction(action, (ContainerRow[])[row], callbacks);
+                    break;
+            }
+        }
 
         // A container that ended badly stands out; one that just is not running steps back.
         ThemeRef? statusColor = ContainerStatus.IsFailedExit(row.Status) ? Theme.SystemCritical : stopped ? Theme.SecondaryText : null;
@@ -177,7 +154,8 @@ internal static class ContainerRowView
             CellText(row.Status, statusColor).Grid(column: 5),
             Ports(row.Ports).Grid(column: 6),
             CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 7),
-            Actions([.. buttons, ActionDivider(), delete]).Grid(column: 8));
+            ActionButtons(actions, compact, row.Name, Run).Grid(column: 8))
+            .WithContextFlyout(ContextMenu(actions, Run));
     }
 
     /// <summary>
@@ -189,9 +167,7 @@ internal static class ContainerRowView
     {
         var project = group.Project ?? throw new ArgumentException("A group row needs a compose project.", nameof(group));
         var rows = group.Rows;
-        var canAct = BulkSelection.CanAct(rows, connected);
-        string[] stopped = [.. rows.Where(r => r.State == RowState.Stopped).Select(r => r.Id)];
-        string[] running = [.. rows.Where(r => r.State != RowState.Stopped).Select(r => r.Id)];
+        string[] all = [.. rows.Select(r => r.Id)];
 
         var chevron = Widgets.IconButton(
                 collapsed ? Glyphs.ChevronRight : Glyphs.ChevronDown,
@@ -205,39 +181,8 @@ internal static class ContainerRowView
 
         var name = OneLine(BodyStrong(project)).ToolTip(project).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0);
 
-        string[] all = [.. rows.Select(r => r.Id)];
-        void Start() => callbacks.Send(stopped, ContainerAction.Start);
-        void Stop() => callbacks.Send(running, ContainerAction.Stop);
-        void Restart() => callbacks.Send(all, ContainerAction.Restart);
-
-        // The main action is Stop while anything in the project is active, Start otherwise. The other one (a project can have
-        // both stopped and active containers) and Restart are buttons in a wide window and menu items in a narrow one.
-        var stopIsMain = running.Length > 0;
-        var main = stopIsMain
-            ? Widgets.IconButton(Glyphs.Stop, "Stop", Stop, color: Primary(canAct)).AutomationId("stop-" + project)
-            : Widgets.IconButton(Glyphs.Play, "Start", Start, color: Primary(canAct)).AutomationId("start-" + project);
-        var alsoStart = stopIsMain && stopped.Length > 0;
-
-        Element?[] buttons = compact
-            ?
-            [
-                main.IsEnabled(canAct),
-                Widgets.IconButton(Glyphs.More, "More actions", null)
-                    .AutomationId("more-" + project)
-                    .WithFlyout(MenuItems(
-                    [
-                        .. alsoStart ? (MenuEntry[])[MenuItem("Start", Start, "Play")] : [],
-                        MenuItem("Restart", Restart, "Refresh"),
-                    ]))
-                    .IsEnabled(canAct),
-            ]
-            :
-            [
-                alsoStart ? Widgets.IconButton(Glyphs.Play, "Start", Start).AutomationId("start-" + project).IsEnabled(canAct) : null,
-                main.IsEnabled(canAct),
-                Widgets.IconButton(Glyphs.Restart, "Restart", Restart).AutomationId("restart-" + project).IsEnabled(canAct),
-            ];
-        var delete = DeleteButton(() => callbacks.RequestDelete(rows), canAct).AutomationId("delete-" + project);
+        var actions = RowActions.ForProject(rows, connected);
+        void Run(RowAction action) => RunEngineAction(action, rows, callbacks);
 
         return Cells(
             minHeight: RowHeight,
@@ -246,16 +191,78 @@ internal static class ContainerRowView
             chevron.Grid(column: 1),
             StateMark(ContainerStatus.GroupShape(rows.Select(r => r.State).ToArray()), StateColor(group.State), group.State.ToString(), busy: false).Grid(column: 2),
             name.Grid(column: 3, columnSpan: 5),
-            Actions([.. buttons, ActionDivider(), delete]).Grid(column: 8));
+            ActionButtons(actions, compact, project, Run).Grid(column: 8))
+            .WithContextFlyout(ContextMenu(actions, Run));
     }
+
+    /// <summary>Sends an engine action for its containers, or asks to delete <paramref name="rows"/> (the page confirms first).</summary>
+    private static void RunEngineAction(RowAction action, IReadOnlyList<ContainerRow> rows, ContainerListCallbacks callbacks)
+    {
+        if (action.Kind == RowActionKind.Delete)
+            callbacks.RequestDelete(rows);
+        else if (action.EngineAction is { } engineAction)
+            callbacks.Send(action.Ids, engineAction);
+    }
+
+    /// <summary>
+    /// The row's buttons: the actions that are buttons at this width (the main one in the accent colour), the "more" menu with the
+    /// rest when there is any, a divider and Delete. AutomationIds are the action and the row's name: <c>stop-web-1</c>, <c>more-web-1</c>.
+    /// </summary>
+    private static Element ActionButtons(RowActions actions, bool compact, string name, Action<RowAction> run)
+    {
+        var buttons = actions.Buttons(compact)
+            .Select(a => Widgets.IconButton(Glyph(a.Kind), a.Label, () => run(a), color: a.IsMain ? Primary(a.IsEnabled) : null)
+                .AutomationId(AutomationPrefix(a.Kind) + name)
+                .IsEnabled(a.IsEnabled));
+
+        var menu = actions.MoreMenu(compact);
+        var more = menu.Count == 0
+            ? null
+            : Widgets.IconButton(Glyphs.More, "More actions", null)
+                .AutomationId("more-" + name)
+                .WithFlyout(MenuItems(MenuEntries(menu, run)))
+                .IsEnabled(menu.Any(s => s.Any(a => a.IsEnabled)));
+
+        var delete = actions.Delete;
+        var deleteButton = Widgets.IconButton(Glyphs.Delete, delete.Label, () => run(delete), color: delete.IsEnabled ? Theme.SystemCritical : null)
+            .AutomationId("delete-" + name)
+            .IsEnabled(delete.IsEnabled);
+
+        return Actions([.. buttons, more, ActionDivider(), deleteButton]);
+    }
+
+    /// <summary>The right-click menu: every action of the row in order, its sections apart.</summary>
+    private static Element ContextMenu(RowActions actions, Action<RowAction> run) =>
+        MenuItems(MenuEntries(actions.Sections, run));
+
+    private static MenuEntry[] MenuEntries(IReadOnlyList<IReadOnlyList<RowAction>> sections, Action<RowAction> run) =>
+    [
+        .. sections.SelectMany((section, i) => (MenuEntry[])
+        [
+            .. i > 0 ? (MenuEntry[])[MenuSeparator()] : [],
+            .. section.Select(a => MenuItem(a.Label, () => run(a)) with { IconElement = Widgets.MenuGlyph(Glyph(a.Kind)), IsEnabled = a.IsEnabled }),
+        ]),
+    ];
+
+    /// <summary>The glyph of an action, the same on its button and in the menus (the solid Stop: the outline one looks like a checkbox).</summary>
+    private static string Glyph(RowActionKind kind) => kind switch
+    {
+        RowActionKind.Start => Glyphs.Play,
+        RowActionKind.Stop => Glyphs.Stop,
+        RowActionKind.Restart => Glyphs.Restart,
+        RowActionKind.Pause => Glyphs.Pause,
+        RowActionKind.Resume => Glyphs.Resume,
+        RowActionKind.Delete => Glyphs.Delete,
+        RowActionKind.OpenInBrowser => Glyphs.Globe,
+        _ => Glyphs.Copy,
+    };
+
+    private static string AutomationPrefix(RowActionKind kind) => kind.ToString().ToLowerInvariant() + "-";
 
     /// <summary>The accent colour for a row's main action while it can act; none while it cannot, so the disabled look shows.</summary>
     private static ThemeRef? Primary(bool canAct) => canAct ? Theme.AccentText : null;
 
-    /// <summary>Delete is red and, with <see cref="ActionDivider"/> before it, stands apart from the actions that lose nothing.</summary>
-    private static ButtonElement DeleteButton(Action onClick, bool canAct) =>
-        Widgets.IconButton(Glyphs.Delete, "Delete", onClick, color: canAct ? Theme.SystemCritical : null).IsEnabled(canAct);
-
+    /// <summary>Sets Delete, in red, apart from the actions that lose nothing.</summary>
     private static Element ActionDivider() =>
         Border(Empty()).Background(Theme.DividerStroke).Size(1, 20).Margin(4, 0, 4, 0).Flex(shrink: 0);
 

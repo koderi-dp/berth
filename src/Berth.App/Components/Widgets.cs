@@ -16,6 +16,7 @@ internal static class Glyphs
     public const string Delete = "";
     public const string Edit = "";
     public const string Copy = "";
+    public const string Globe = "";
     public const string ChevronDown = "";
     public const string ChevronRight = "";
 }
@@ -53,6 +54,9 @@ internal static class Widgets
         color is { } drawn
             ? TextBlock(glyph).FontFamily(IconFont).FontSize(size).Foreground(drawn)
             : Icon(FontIcon(glyph, IconFont, size));
+
+    /// <summary>A Segoe Fluent Icons glyph as a menu item's icon, so a menu shows the same icon as the button for the action.</summary>
+    public static IconData MenuGlyph(string glyph) => FontIcon(glyph, IconFont);
 
     /// <summary>
     /// A borderless button that shows only <paramref name="glyph"/>; <paramref name="label"/> is its accessible name and its tooltip.
