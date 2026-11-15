@@ -229,6 +229,20 @@ public sealed class EngineLogsTests
         Assert.Equal("The connection was reset.", error.Message);
     }
 
+    [Fact]
+    public async Task A_tty_log_read_as_framed_is_an_EngineException()
+    {
+        var body = new ChunkStream().Write($"{Ts} plain text from a TTY container\n");
+        var (client, _) = await ConnectedAsync(Path, body);
+        await using var _client = client;
+
+        var error = await Assert.ThrowsAsync<EngineException>(
+            () => ReadAllAsync(client.StreamLogsAsync("abc", tty: false, Follow100, CancellationToken.None))).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("The log stream is not in the expected format.", error.Message);
+        body.End();
+    }
+
     private static async Task<List<LogLine>> ReadAllAsync(IAsyncEnumerable<LogLine> lines)
     {
         var all = new List<LogLine>();

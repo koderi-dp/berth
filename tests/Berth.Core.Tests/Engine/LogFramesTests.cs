@@ -71,6 +71,30 @@ public sealed class LogFramesTests
         Assert.Equal([(LogStream.Stdout, "stdin"), (LogStream.Stdout, "seven"), (LogStream.Stderr, "err")], frames);
     }
 
+    [Fact]
+    public async Task A_frame_longer_than_16_MiB_ends_with_an_EngineException()
+    {
+        // A TTY log read as framed: "2026-11-" is a header announcing a 758 MB frame. Nothing is buffered waiting for it.
+        var body = new ChunkStream().Write("2026-11-15T21:36:22.237994543Z hello\n");
+
+        var error = await Assert.ThrowsAsync<EngineException>(() => ReadAllAsync(body)).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("The log stream is not in the expected format.", error.Message);
+        body.End();
+    }
+
+    [Fact]
+    public async Task A_frame_of_exactly_16_MiB_is_read()
+    {
+        var payload = new byte[16 * 1024 * 1024];
+        payload.AsSpan().Fill((byte)'x');
+        var body = new ChunkStream().Write(Frame(1, payload)).End();
+
+        var frames = await ReadAllAsync(body);
+
+        Assert.Equal(payload.Length, Assert.Single(frames).Item2.Length);
+    }
+
     private static async Task<List<(LogStream, string)>> ReadAllAsync(Stream body)
     {
         var all = new List<(LogStream, string)>();

@@ -133,7 +133,10 @@ public sealed class StatsMathTests
     [Fact]
     public void Memory_subtracts_total_inactive_file_on_cgroup_v1()
     {
-        var sample = ToSample("""{ "memory_stats": { "usage": 50000, "stats": { "cache": 9000, "total_inactive_file": 7000 }, "limit": 90000 } }""");
+        // v1 also carries this cgroup's own inactive_file; the hierarchical total_inactive_file is the one to subtract.
+        var sample = ToSample("""
+            { "memory_stats": { "usage": 50000, "stats": { "cache": 9000, "inactive_file": 1000, "total_inactive_file": 7000 }, "limit": 90000 } }
+            """);
 
         Assert.Equal(43000, sample.MemoryBytes);
     }

@@ -15,10 +15,15 @@ public static class LogFrames
 {
     private const int HeaderLength = 8;
 
+    /// <summary>The longest frame accepted, far above anything the engine sends; a longer one means the stream is not framed.</summary>
+    public const int MaxFrameLength = 16 * 1024 * 1024;
+
     /// <summary>
     /// Yields each frame's stream and payload from a stream that delivers arbitrary chunks. Stream id 2 is stderr; any other id
     /// counts as stdout. A frame with no payload is skipped. When the stream ends inside a frame, that frame is dropped and the
-    /// enumeration ends. The stream stays owned by the caller.
+    /// enumeration ends. A header announcing more than <see cref="MaxFrameLength"/> bytes (for example a TTY container's plain log
+    /// read as framed) throws <see cref="EngineException"/> at once rather than waiting for that many bytes. The stream stays owned
+    /// by the caller.
     /// </summary>
     public static async IAsyncEnumerable<(LogStream Stream, ReadOnlyMemory<byte> Payload)> ReadAsync(
         Stream stream, [EnumeratorCancellation] CancellationToken ct)
@@ -66,6 +71,12 @@ public static class LogFrames
         Span<byte> header = stackalloc byte[HeaderLength];
         buffer.Slice(0, HeaderLength).CopyTo(header);
         var length = BinaryPrimitives.ReadUInt32BigEndian(header[4..]);
+        if (length > MaxFrameLength)
+        {
+            // The engine did answer (200); its stream just cannot be read as frames.
+            throw new EngineException(200, "The log stream is not in the expected format.");
+        }
+
         if (buffer.Length - HeaderLength < length)
         {
             return false;

@@ -43,7 +43,10 @@ internal static class StatsMath
         return (double)(cpu - previousCpu) / (system - previousSystem) * cpus * 100;
     }
 
-    /// <summary>Usage less inactive file pages (cgroup v2 <c>inactive_file</c>, else v1 <c>total_inactive_file</c>), never below 0.</summary>
+    /// <summary>
+    /// Usage less inactive file pages, never below 0: v1's hierarchical <c>total_inactive_file</c> when present (v1 also carries
+    /// a per-cgroup <c>inactive_file</c>), else v2's <c>inactive_file</c>.
+    /// </summary>
     private static ulong MemoryUsed(WireMemoryStats? memory)
     {
         var usage = memory?.Usage ?? 0;
@@ -53,8 +56,8 @@ internal static class StatsMath
             return usage;
         }
 
-        var inactive = figures.TryGetValue("inactive_file", out var v2) ? v2
-            : figures.TryGetValue("total_inactive_file", out var v1) ? v1
+        var inactive = figures.TryGetValue("total_inactive_file", out var v1) ? v1
+            : figures.TryGetValue("inactive_file", out var v2) ? v2
             : 0;
         return usage > inactive ? usage - inactive : 0;
     }

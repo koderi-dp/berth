@@ -140,8 +140,9 @@ public sealed class EngineClient : IEngineApi
 
     /// <summary>
     /// Reads a container's stats as the engine sends them, one line per sample, with no deadline. A line that is not a sample is
-    /// skipped. The enumeration ends when the engine closes the stream, as it does when the container stops; a dropped connection
-    /// throws <see cref="EngineException"/> with status 0.
+    /// skipped. The enumeration ends at the first line with no read time, which is what the engine keeps sending (on an open
+    /// connection) once the container has stopped, or when the engine closes the stream; a dropped connection throws
+    /// <see cref="EngineException"/> with status 0.
     /// </summary>
     public async IAsyncEnumerable<StatsSample> StreamStatsAsync(string id, [EnumeratorCancellation] CancellationToken ct)
     {
@@ -151,10 +152,17 @@ public sealed class EngineClient : IEngineApi
 
         while (await NextAsync(lines, ct).ConfigureAwait(false))
         {
-            if (ToStats(lines.Current) is { } sample)
+            if (ToStats(lines.Current) is not { } sample)
             {
-                yield return sample;
+                continue;
             }
+
+            if (sample.Time == DateTimeOffset.MinValue)
+            {
+                yield break;
+            }
+
+            yield return sample;
         }
     }
 
