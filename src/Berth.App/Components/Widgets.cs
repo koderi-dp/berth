@@ -18,6 +18,8 @@ internal static class Glyphs
     public const string Copy = "";
     public const string Globe = "";
     public const string ChevronDown = "";
+    public const string ArrowUp = "";
+    public const string ArrowDown = "";
     public const string ChevronRight = "";
 }
 

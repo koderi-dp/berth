@@ -1,4 +1,5 @@
 using Berth.Connections;
+using Berth.Presentation;
 
 namespace Berth.Settings;
 
@@ -20,7 +21,7 @@ internal sealed class SettingsFile
     /// kind, a non-blank host and a port in 1..65535 (TCP) or a non-blank pipe name (named pipe), and a CA file when it has TLS;
     /// or two with the same id.
     /// Left out: <c>tls</c> is none, <c>pipeName</c> is "", <c>port</c> is the kind's default, <c>host</c> of a named pipe is
-    /// this machine, <c>containerList</c> is the defaults, <c>activeConnectionId</c> is the first connection.
+    /// this machine, <c>containerList</c> and each of its fields is the default (an unknown sort column too), <c>activeConnectionId</c> is the first connection.
     /// </summary>
     public AppSettings? ToSettings()
     {
@@ -37,7 +38,9 @@ internal sealed class SettingsFile
         }
 
         var active = connections.Any(c => c.Id == ActiveConnectionId) ? ActiveConnectionId : connections[0].Id;
-        return new AppSettings(connections, active, new ContainerListOptions(ContainerList?.RunningOnly ?? false));
+        return new AppSettings(connections, active, new ContainerListOptions(
+            ContainerList?.RunningOnly ?? false,
+            ContainerSort.Read(ContainerList?.Sort?.Column, ContainerList?.Sort?.Descending)));
     }
 
     internal sealed class ConnectionEntry
@@ -104,5 +107,15 @@ internal sealed class SettingsFile
     internal sealed class ContainerListEntry
     {
         public bool? RunningOnly { get; set; }
+
+        public SortEntry? Sort { get; set; }
+    }
+
+    /// <summary>The column is read as text, so a name this Berth does not know falls back to the default instead of failing the file.</summary>
+    internal sealed class SortEntry
+    {
+        public string? Column { get; set; }
+
+        public bool? Descending { get; set; }
     }
 }

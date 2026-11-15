@@ -1,4 +1,5 @@
 using Berth.Connections;
+using Berth.Presentation;
 using Berth.Settings;
 
 namespace Berth.Tests.Settings;
@@ -10,7 +11,7 @@ public sealed class ConnectionEditsTests
     private static readonly ConnectionProfile Three = new("three", "Three", TransportKind.NamedPipe, ".", 0, "docker_engine", null);
 
     private static AppSettings With(string active, params ConnectionProfile[] connections) =>
-        new(connections, active, new ContainerListOptions(RunningOnly: true));
+        new(connections, active, new ContainerListOptions(RunningOnly: true, ContainerSort.Default));
 
     [Fact]
     public void Add_appends_the_connection_and_keeps_the_active_one()

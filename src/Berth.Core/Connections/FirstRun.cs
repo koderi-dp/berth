@@ -12,7 +12,7 @@ public static class FirstRun
     public static AppSettings Create(string? dockerHost)
     {
         var connection = FromDockerHost(dockerHost) ?? DefaultPipe();
-        return new AppSettings([connection], connection.Id, new ContainerListOptions(RunningOnly: false));
+        return new AppSettings([connection], connection.Id, ContainerListOptions.Default);
     }
 
     private static ConnectionProfile? FromDockerHost(string? dockerHost)

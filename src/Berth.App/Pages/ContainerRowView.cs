@@ -76,18 +76,19 @@ internal static class ContainerRowView
 
     /// <summary>
     /// The column titles, with a checkbox that checks or clears every row shown (<paramref name="checkedState"/> null: some are).
-    /// Like every checkbox and action of the table, it is disabled while not <paramref name="connected"/>.
+    /// Like every checkbox and action of the table, it is disabled while not <paramref name="connected"/>. Every title but Ports is a
+    /// button that sorts by its column (<paramref name="onSort"/>); the sorted one shows an arrow.
     /// </summary>
-    public static Element Header(bool? checkedState, bool connected, bool compact, Action<bool> onCheckAll) =>
+    public static Element Header(bool? checkedState, bool connected, bool compact, Action<bool> onCheckAll, ContainerSort sort, Action<SortColumn> onSort) =>
         Cells(
             minHeight: 36,
             compact,
             SelectBox(checkedState, onCheckAll, "Select all").IsEnabled(connected).Grid(column: 0),
-            ColumnTitle("Name").Grid(column: 3),
-            ColumnTitle("Image").Grid(column: 4),
-            ColumnTitle("Status").Grid(column: 5),
+            SortTitle(SortColumn.Name, sort, onSort).Grid(column: 3),
+            SortTitle(SortColumn.Image, sort, onSort).Grid(column: 4),
+            SortTitle(SortColumn.Status, sort, onSort).Grid(column: 5),
             ColumnTitle("Ports").Grid(column: 6),
-            ColumnTitle("Created").Grid(column: 7));
+            SortTitle(SortColumn.Created, sort, onSort).Grid(column: 7));
 
     /// <summary>
     /// One container. <paramref name="project"/> not null: it belongs to that compose project and sits under the project's row,
@@ -293,6 +294,29 @@ internal static class ContainerRowView
 
     private static Element ColumnTitle(string text) =>
         Caption(text).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center);
+
+    /// <summary>
+    /// A column title as a borderless button: its text, and an arrow while the table is sorted by it (up ascending, down
+    /// descending). Its accessible name says the state ("Name, sorted ascending"). The negative margin keeps the text in line with
+    /// the column's cells while the button keeps its padding for the hover background.
+    /// </summary>
+    private static Element SortTitle(SortColumn column, ContainerSort sort, Action<SortColumn> onSort)
+    {
+        var sorted = sort.Column == column;
+        // A stack, not a flex row: a flex row takes the whole width it is offered, which would stretch the button over the cell.
+        var content = HStack(
+            4,
+            Caption(column.ToString()).Foreground(sorted ? Theme.PrimaryText : Theme.SecondaryText).VAlign(VerticalAlignment.Center),
+            sorted ? Widgets.Glyph(sort.Descending ? Glyphs.ArrowDown : Glyphs.ArrowUp, size: 12, color: Theme.PrimaryText).VAlign(VerticalAlignment.Center) : Empty());
+
+        var button = Button(content, () => onSort(column))
+            .SubtleButton()
+            .AutomationId("sort-" + column.ToString().ToLowerInvariant())
+            .AutomationName(sort.AccessibleName(column))
+            .Padding(8, 4, 8, 4);
+
+        return button.Margin(-8, 0, 0, 0).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
+    }
 
     /// <summary>One line of text that ends in an ellipsis when it does not fit (the body style wraps by default, which would make rows uneven).</summary>
     private static TextBlockElement OneLine(TextBlockElement text) =>

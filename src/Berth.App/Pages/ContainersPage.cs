@@ -46,8 +46,9 @@ internal sealed class ContainersPage : EngineStateComponent
 
         var connected = state.Status == ConnectionStatus.Connected;
         var runningOnly = settings.ContainerList.RunningOnly;
+        var sort = settings.ContainerList.Sort;
         var filter = UseMemo(() => new ContainerFilter(search, runningOnly), search, runningOnly);
-        var groups = UseMemo(() => ComposeGrouping.Build(state.Containers, state.Pending, filter), state.Containers, state.Pending, filter);
+        var groups = UseMemo(() => sort.Apply(ComposeGrouping.Build(state.Containers, state.Pending, filter)), state.Containers, state.Pending, filter, sort);
         var items = UseMemo(() => Flatten(groups, collapsed), groups, collapsed);
         // The rows the filter shows, collapsed projects included: only these count for the bulk actions.
         var visibleRows = UseMemo(() => groups.SelectMany(g => g.Rows).ToArray(), groups);
@@ -72,7 +73,7 @@ internal sealed class ContainersPage : EngineStateComponent
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 Toolbar(search, setSearch, runningOnly),
                 BulkBar(visibleRows, checkedIds, connected, callbacks),
-                Table(state, filter, groups, items, shownIds, checkedIds, connected, compact, callbacks),
+                Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
                 DeleteDialog(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -93,6 +94,13 @@ internal sealed class ContainersPage : EngineStateComponent
 
     private static void SetRunningOnly(bool value) =>
         AppServices.Current.UpdateSettings(settings => settings with { ContainerList = settings.ContainerList with { RunningOnly = value } });
+
+    /// <summary>A click on a column title: sorts by that column, or reverses it when it is the one sorted by; kept in the settings.</summary>
+    private static void SortBy(SortColumn column) =>
+        AppServices.Current.UpdateSettings(settings => settings with
+        {
+            ContainerList = settings.ContainerList with { Sort = settings.ContainerList.Sort.Toggle(column) },
+        });
 
     /// <summary>Groups and rows as one list: a compose project's row, then its rows unless it is collapsed; a container on its own as a plain row.</summary>
     private static IReadOnlyList<ListItem> Flatten(IReadOnlyList<ContainerGroup> groups, ImmutableHashSet<string> collapsed)
@@ -161,6 +169,7 @@ internal sealed class ContainersPage : EngineStateComponent
     private static Element Table(
         EngineState state,
         ContainerFilter filter,
+        ContainerSort sort,
         IReadOnlyList<ContainerGroup> groups,
         IReadOnlyList<ListItem> items,
         string[] shownIds,
@@ -182,7 +191,7 @@ internal sealed class ContainersPage : EngineStateComponent
             return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
         }
 
-        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value));
+        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value), sort, SortBy);
 
         var list = ListView(items, item => item.Key, (item, _) => item switch
             {

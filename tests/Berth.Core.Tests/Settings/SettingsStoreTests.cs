@@ -1,4 +1,5 @@
 using Berth.Connections;
+using Berth.Presentation;
 using Berth.Settings;
 
 namespace Berth.Tests.Settings;
@@ -28,7 +29,7 @@ public sealed class SettingsStoreTests : IDisposable
     public void A_saved_connection_keeps_the_name_an_older_first_run_gave_it()
     {
         var old = new ConnectionProfile("one", "Docker (tcp://127.0.0.1:2375)", TransportKind.Tcp, "127.0.0.1", 2375, "", null);
-        new SettingsStore(_directory, null).Save(new AppSettings([old], "one", new ContainerListOptions(RunningOnly: false)));
+        new SettingsStore(_directory, null).Save(new AppSettings([old], "one", new ContainerListOptions(RunningOnly: false, ContainerSort.Default)));
 
         var settings = new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load().Settings;
 
@@ -45,7 +46,7 @@ public sealed class SettingsStoreTests : IDisposable
                 new ConnectionProfile("two", "Local engine", TransportKind.NamedPipe, ".", 0, "docker_engine", null),
             ],
             "two",
-            new ContainerListOptions(RunningOnly: true));
+            new ContainerListOptions(RunningOnly: true, new ContainerSort(SortColumn.Created, Descending: true)));
 
         store.Save(saved);
         var loaded = new SettingsStore(_directory, null).Load().Settings;
@@ -57,7 +58,24 @@ public sealed class SettingsStoreTests : IDisposable
         var json = File.ReadAllText(SettingsFile);
         Assert.Contains("\"activeConnectionId\"", json);
         Assert.Contains("\"NamedPipe\"", json);
+        Assert.Contains("\"Created\"", json);
         Assert.Contains("\n", json);
+    }
+
+    [Theory]
+    [InlineData("""{ "runningOnly": true }""", SortColumn.Name, false)]
+    [InlineData("""{ "runningOnly": true, "sort": { "column": "Status" } }""", SortColumn.Status, false)]
+    [InlineData("""{ "runningOnly": true, "sort": { "descending": true } }""", SortColumn.Name, true)]
+    [InlineData("""{ "runningOnly": true, "sort": { "column": "Ports", "descending": true } }""", SortColumn.Name, true)]
+    [InlineData("""{ "runningOnly": true, "sort": null }""", SortColumn.Name, false)]
+    public void A_missing_or_unknown_sort_reads_as_the_default_and_keeps_the_rest(string containerList, SortColumn column, bool descending)
+    {
+        File.WriteAllText(SettingsFile, $$"""{ "connections": [ { "id": "one", "name": "Build host", "kind": "Tcp", "host": "build-host" } ], "containerList": {{containerList}} }""");
+
+        var result = new SettingsStore(_directory, null).Load();
+
+        Assert.False(result.SetAside);
+        Assert.Equal(new ContainerListOptions(RunningOnly: true, new ContainerSort(column, descending)), result.Settings.ContainerList);
     }
 
     [Fact]
@@ -145,7 +163,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.False(result.SetAside);
         Assert.Equal("docker_engine", Assert.Single(result.Settings.Connections).PipeName);
-        Assert.Equal(new ContainerListOptions(RunningOnly: false), result.Settings.ContainerList);
+        Assert.Equal(new ContainerListOptions(RunningOnly: false, ContainerSort.Default), result.Settings.ContainerList);
     }
 
     [Fact]
@@ -213,7 +231,7 @@ public sealed class SettingsStoreTests : IDisposable
     public void A_valid_file_is_not_set_aside()
     {
         var store = new SettingsStore(_directory, null);
-        store.Save(new AppSettings([new ConnectionProfile("one", "Local", TransportKind.Tcp, "h", 2375, "", null)], "one", new ContainerListOptions(false)));
+        store.Save(new AppSettings([new ConnectionProfile("one", "Local", TransportKind.Tcp, "h", 2375, "", null)], "one", new ContainerListOptions(false, ContainerSort.Default)));
 
         var result = store.Load();
 
@@ -264,7 +282,7 @@ public sealed class SettingsStoreTests : IDisposable
                 new ConnectionProfile("second", "Second", TransportKind.Tcp, "b", 2375, "", null),
             ],
             "gone",
-            new ContainerListOptions(RunningOnly: false)));
+            new ContainerListOptions(RunningOnly: false, ContainerSort.Default)));
 
         var settings = store.Load().Settings;
 
