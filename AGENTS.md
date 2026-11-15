@@ -10,7 +10,8 @@ and remote engines). UI is pure C# with
 ```
 Berth.slnx             the solution: /src/ (Berth.App, Berth.Core), /tests/
 src/Berth.App/         UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
-  App.cs               entry point and the window component
+  Program.cs           entry point: log, services, first connect, window
+  App.cs               the window component (title bar, navigation, status bar)
   Package.appxmanifest package identity Koderi.Berth, publisher CN=Koderi
 src/Berth.Core/        plain net11.0 library, no WinUI/Reactor reference; pure logic, unit-tested (root namespace Berth)
 tests/                 xunit tests for Core (no test may need a Docker engine)

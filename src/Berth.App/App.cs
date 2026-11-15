@@ -1,93 +1,98 @@
-﻿using Microsoft.UI.Reactor;
+﻿using Berth.Components;
+using Berth.Hooks;
+using Berth.Pages;
+using Berth.Session;
+using Berth.Settings;
+using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Layout;
 using Microsoft.UI.Xaml.Controls;
 using static Microsoft.UI.Reactor.Factories;
 
-// To learn more about Reactor, the Reactor project structure, and more about
-// our project templates, see: https://github.com/microsoft/microsoft-ui-reactor
-ReactorApp.Run<App>("Berth");
+namespace Berth;
 
-enum AppRoute { Home, About, Settings }
+internal enum AppRoute { Containers, Settings }
 
-class App : Component
+/// <summary>The main window: title bar with the connection switcher, the navigation and its page, the error bar and the status bar.</summary>
+internal sealed class App : EngineStateComponent
 {
-    // The built-in Settings item is selected via the SettingsTag sentinel.
-    static string RouteToTag(AppRoute route) => route switch
+    private const string ContainersTag = "containers";
+
+    private static readonly Func<Action, Action> SubscribeSettings = onChange =>
     {
-        AppRoute.About => "about",
-        AppRoute.Settings => NavigationViewElement.SettingsTag,
-        _ => "home",
+        var services = AppServices.Current;
+        services.SettingsChanged += onChange;
+        return () => services.SettingsChanged -= onChange;
     };
 
-    static AppRoute TagToRoute(string? tag) => tag switch
-    {
-        "about" => AppRoute.About,
-        NavigationViewElement.SettingsTag => AppRoute.Settings,
-        null => AppRoute.Settings,
-        _ => AppRoute.Home,
-    };
-
-    static Element RouteToPage(AppRoute route) => route switch
-    {
-        AppRoute.About => Component<AboutPage>(),
-        AppRoute.Settings => Component<SettingsPage>(),
-        _ => Component<HomePage>(),
-    };
+    private static readonly Func<AppSettings> SettingsSnapshot = () => AppServices.Current.Settings;
 
     public override Element Render()
     {
-        var nav = UseNavigation(AppRoute.Home);
+        var state = UseEngineState();
+        var settings = UseExternalStore(SubscribeSettings, SettingsSnapshot);
+        var nav = UseNavigation(AppRoute.Containers);
         var (isPaneOpen, setIsPaneOpen) = UseState(true);
 
-        var items = new[]
-        {
-            NavItem("Home", icon: "Home", tag: "home"),
-            NavItem("About", tag: "about") with { IconElement = new FontIconData("\uEA3A") },
-        };
-
-        var titleBar = TitleBar("Berth")
+        var titleBar = (TitleBar("Berth") with
+            {
+                Content = (FlexRow(
+                        ConnectionSwitcher.Render(settings, id => AppServices.Current.SwitchConnection(id)),
+                        StatusLabel(state))
+                    with
+                    {
+                        AlignItems = FlexAlign.Center,
+                        ColumnGap = 12,
+                    }),
+            })
             .WithNavigation(nav)
             .PaneToggleButtonVisible(true)
             .PaneToggleRequested(() => setIsPaneOpen(!isPaneOpen))
             .Tall()
             .Flex(shrink: 0);
 
-        var navView = (NavigationView(items, NavigationHost(nav, RouteToPage)) with
-        {
-            SelectedTag = RouteToTag(nav.CurrentRoute),
-            OnSelectedTagChanged = tag => nav.Navigate(TagToRoute(tag)),
-            IsSettingsVisible = true,
-            IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
-            IsPaneToggleButtonVisible = false,
-        })
-        .IsPaneOpen(isPaneOpen, setIsPaneOpen)
-        .Flex(grow: 1, basis: 0);
+        var content = FlexColumn(
+            ErrorBar.Render(state.ActionError, () => AppServices.Current.Session.Dispatch(new ActionErrorDismissed())),
+            NavigationHost(nav, route => RouteToPage(route, state)).Flex(grow: 1, basis: 0));
 
-        return FlexColumn(titleBar, navView).Backdrop(BackdropKind.Mica);
+        var items = new[] { NavItem("Containers", icon: "Library", tag: ContainersTag) };
+        var navView = (NavigationView(items, content) with
+            {
+                SelectedTag = nav.CurrentRoute == AppRoute.Settings ? NavigationViewElement.SettingsTag : ContainersTag,
+                // Anything but the containers item is the built-in Settings item, whose reported tag is not always SettingsTag.
+                OnSelectedTagChanged = tag => nav.Navigate(tag == ContainersTag ? AppRoute.Containers : AppRoute.Settings),
+                IsSettingsVisible = true,
+                IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
+                IsPaneToggleButtonVisible = false,
+            })
+            .IsPaneOpen(isPaneOpen, setIsPaneOpen)
+            .Flex(grow: 1, basis: 0);
+
+        return FlexColumn(titleBar, navView, StatusBar.Render(state));
     }
-}
 
-class HomePage : Component
-{
-    public override Element Render() => Ui.Page("Home", "This is the Home page");
-}
+    /// <summary>The connection status; while disconnected, its tooltip gives the reason (the page may still show the last list).</summary>
+    private static Element StatusLabel(EngineState state)
+    {
+        var text = state.Status switch
+        {
+            ConnectionStatus.Connecting => "Connecting…",
+            ConnectionStatus.Connected => "Connected · Docker " + state.Version?.Version,
+            _ => "Disconnected",
+        };
+        var label = Caption(text).Foreground(Theme.SecondaryText);
+        return state.Status == ConnectionStatus.Disconnected && state.ConnectionError is { } error ? label.ToolTip(error) : label;
+    }
 
-class AboutPage : Component
-{
-    public override Element Render() => Ui.Page("About", "This is the About page");
-}
-
-class SettingsPage : Component
-{
-    public override Element Render() => Ui.Page("Settings", "This is the Settings page");
-}
-
-static class Ui
-{
-    public static Element Page(string title, string body) =>
-        VStack(24,
-            Title(title),
-            Body(body)
-        ).Padding(24, 16, 24, 16);
+    /// <summary>
+    /// The page for <paramref name="route"/>. With no connection and no list from an earlier one, the containers page has nothing to
+    /// show and the disconnected view takes its place; the settings page stays reachable to fix the connection.
+    /// </summary>
+    private static Element RouteToPage(AppRoute route, EngineState state) => route switch
+    {
+        AppRoute.Settings => Component<SettingsPage>(),
+        _ when state.Status != ConnectionStatus.Connected && state.Containers.IsEmpty =>
+            DisconnectedView.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
+        _ => Component<ContainersPage>(),
+    };
 }
