@@ -20,6 +20,8 @@ public enum ContainerAction { Start, Stop, Restart, Pause, Unpause, Remove }
 /// The first list of the current connection has arrived. Cleared on every connect; until it is set, an empty
 /// <see cref="Containers"/> means "not loaded yet", not "no containers".
 /// </param>
+/// <param name="Stats">The latest stats sample of each running container, while <see cref="StatsWanted"/> and connected.</param>
+/// <param name="StatsWanted">A screen that shows list stats is open, so the running containers' stats are followed.</param>
 public sealed record EngineState(
     ConnectionStatus Status,
     EngineVersion? Version,
@@ -31,7 +33,9 @@ public sealed record EngineState(
     int RetryAttempt,
     int LoadGeneration,
     bool ReloadScheduled,
-    bool ListLoaded)
+    bool ListLoaded,
+    ImmutableDictionary<string, StatsSample> Stats,
+    bool StatsWanted)
 {
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
@@ -44,5 +48,7 @@ public sealed record EngineState(
         RetryAttempt: 0,
         LoadGeneration: 0,
         ReloadScheduled: false,
-        ListLoaded: false);
+        ListLoaded: false,
+        Stats: ImmutableDictionary<string, StatsSample>.Empty.WithComparers(StringComparer.Ordinal),
+        StatsWanted: false);
 }

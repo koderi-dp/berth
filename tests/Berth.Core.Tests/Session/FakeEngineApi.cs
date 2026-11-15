@@ -19,6 +19,8 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, Exception> _failures = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Gate> _gates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ContainerInspection> _inspections = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> _cancelledWaiters = new(StringComparer.Ordinal);
     private readonly Channel<EngineEventMessage> _events = Channel.CreateUnbounded<EngineEventMessage>();
     private readonly TaskCompletionSource _streamStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile IReadOnlyList<ContainerSummary> _containers = [Container("a"), Container("b")];
@@ -50,6 +52,15 @@ internal sealed class FakeEngineApi : IEngineApi
 
     /// <summary>The stats stream: push samples, end it (the container stopped) or fail it.</summary>
     public ScriptedStream<StatsSample> Stats { get; } = new();
+
+    /// <summary>
+    /// The stats stream of container <paramref name="id"/> alone. Once asked for (before the stream opens), stats of that
+    /// container read from it instead of <see cref="Stats"/>.
+    /// </summary>
+    public ScriptedStream<StatsSample> StatsOf(string id) => _statsOf.GetOrAdd(id, _ => new ScriptedStream<StatsSample>());
+
+    /// <summary>Completes once a held call or stream recorded as <paramref name="entry"/> has been cancelled.</summary>
+    public Task WhenCancelled(string entry) => CancelledWaiter(entry).Task;
 
     public bool IsDisposed => _disposed;
 
@@ -149,7 +160,8 @@ internal sealed class FakeEngineApi : IEngineApi
     {
         var entry = $"Stats {id}";
         await EnterAsync("Stats", entry, ct);
-        await foreach (var sample in ReadAsync(Stats, entry, ct))
+        var source = _statsOf.TryGetValue(id, out var own) ? own : Stats;
+        await foreach (var sample in ReadAsync(source, entry, ct))
             yield return sample;
     }
 
@@ -173,7 +185,7 @@ internal sealed class FakeEngineApi : IEngineApi
             }
             catch (OperationCanceledException)
             {
-                Cancelled.Enqueue(entry);
+                MarkCancelled(entry);
                 throw;
             }
 
@@ -184,6 +196,15 @@ internal sealed class FakeEngineApi : IEngineApi
                 yield return item;
         }
     }
+
+    private void MarkCancelled(string entry)
+    {
+        Cancelled.Enqueue(entry);
+        CancelledWaiter(entry).TrySetResult();
+    }
+
+    private TaskCompletionSource CancelledWaiter(string entry) =>
+        _cancelledWaiters.GetOrAdd(entry, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 
     private async Task EnterAsync(string call, string entry, CancellationToken ct)
     {
@@ -197,7 +218,7 @@ internal sealed class FakeEngineApi : IEngineApi
             }
             catch (OperationCanceledException)
             {
-                Cancelled.Enqueue(entry);
+                MarkCancelled(entry);
                 throw;
             }
         }

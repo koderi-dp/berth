@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Berth.Session;
 
 /// <summary>Work the reducer asks the session runtime to carry out.</summary>
@@ -23,3 +25,22 @@ public sealed record ScheduleReloadEffect(TimeSpan Delay) : SessionEffect;
 
 /// <summary>Run one container action; answers with ActionSucceeded or ActionFailed.</summary>
 public sealed record RunActionEffect(string Id, ContainerAction Action, bool Force) : SessionEffect;
+
+/// <summary>
+/// Follow the stats of exactly <see cref="ContainerIds"/> on the current connection, starting and stopping only the
+/// difference from the set watched so far; empty stops all. Answers with one StatsBatchArrived a second.
+/// </summary>
+public sealed record WatchStatsEffect(ImmutableArray<string> ContainerIds) : SessionEffect
+{
+    /// <summary>Equal when the ids are the same, in the same order (an <see cref="ImmutableArray{T}"/> compares by reference).</summary>
+    public bool Equals(WatchStatsEffect? other) =>
+        other is not null && ContainerIds.SequenceEqual(other.ContainerIds, StringComparer.Ordinal);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        foreach (var id in ContainerIds)
+            hash.Add(id, StringComparer.Ordinal);
+        return hash.ToHashCode();
+    }
+}

@@ -469,6 +469,163 @@ public sealed class EngineSessionTests
         Assert.Empty(h.Errors);
     }
 
+    private static StatsSample Sample(int second, double cpu) =>
+        new(new DateTimeOffset(2026, 11, 15, 8, 0, second, TimeSpan.Zero), cpu, 1024, 4096, 0, 0, 0, 0, 1);
+
+    [Fact]
+    public async Task List_stats_arrive_as_one_batch_a_second_with_the_latest_sample_of_each_container()
+    {
+        var api = new FakeEngineApi();
+        var a = api.StatsOf("a");
+        var b = api.StatsOf("b");
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+
+        h.Session.Dispatch(new StatsWantedChanged(true));
+        await a.WhenOpened().WaitAsync(Patience);
+        await b.WhenOpened().WaitAsync(Patience);
+        var recorded = h.WaitForStatsRecorded(5);
+        a.Push(Sample(0, cpu: 1));
+        a.Push(Sample(1, cpu: 2));
+        a.Push(Sample(2, cpu: 3));
+        b.Push(Sample(0, cpu: 10));
+        b.Push(Sample(1, cpu: 20));
+        await recorded;
+
+        var changes = 0;
+        h.Session.StateChanged += _ => Interlocked.Increment(ref changes);
+        h.Time.Advance(EngineSession.StatsBatchInterval);
+        var state = await h.WaitFor(s => s.Stats.Count == 2);
+
+        Assert.Equal(1, Volatile.Read(ref changes));
+        Assert.Equal(3, state.Stats["a"].CpuPercent);
+        Assert.Equal(20, state.Stats["b"].CpuPercent);
+
+        recorded = h.WaitForStatsRecorded(1);
+        b.Push(Sample(2, cpu: 30));
+        await recorded;
+        h.Time.Advance(EngineSession.StatsBatchInterval);
+        var next = await h.WaitFor(s => s.Stats["b"].CpuPercent == 30);
+
+        Assert.Equal(2, Volatile.Read(ref changes));
+        Assert.Equal(3, next.Stats["a"].CpuPercent);
+    }
+
+    [Fact]
+    public async Task A_stats_stream_that_fails_for_one_container_does_not_stop_the_others()
+    {
+        var api = new FakeEngineApi();
+        var a = api.StatsOf("a");
+        var b = api.StatsOf("b");
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        h.Session.Dispatch(new StatsWantedChanged(true));
+        await a.WhenOpened().WaitAsync(Patience);
+        await b.WhenOpened().WaitAsync(Patience);
+
+        var broken = new EngineException(500, "stats broke");
+        a.End(broken);
+        var error = await h.WaitForError();
+        var recorded = h.WaitForStatsRecorded(1);
+        b.Push(Sample(0, cpu: 10));
+        await recorded;
+        h.Time.Advance(EngineSession.StatsBatchInterval);
+        var state = await h.WaitFor(s => s.Stats.ContainsKey("b"));
+
+        Assert.Equal("a container stats stream failed", error.What);
+        Assert.Same(broken, error.Exception);
+        Assert.Equal(ConnectionStatus.Connected, state.Status);
+        Assert.Null(state.ConnectionError);
+        Assert.False(state.Stats.ContainsKey("a"));
+    }
+
+    [Fact]
+    public async Task A_stats_stream_that_ends_because_its_container_stopped_is_not_an_error()
+    {
+        var api = new FakeEngineApi();
+        var a = api.StatsOf("a");
+        var b = api.StatsOf("b");
+        a.End();
+        b.End(new EngineException(404, "No such container: b"));
+        var h = Harness.With(api);
+        await h.ConnectAsync();
+
+        h.Session.Dispatch(new StatsWantedChanged(true));
+        await a.WhenOpened().WaitAsync(Patience);
+        await b.WhenOpened().WaitAsync(Patience);
+        await h.DisposeAsync();
+
+        Assert.Empty(h.Errors);
+    }
+
+    [Fact]
+    public async Task A_list_change_starts_and_stops_only_the_difference()
+    {
+        var api = new FakeEngineApi();
+        var a = api.StatsOf("a");
+        var b = api.StatsOf("b");
+        var c = api.StatsOf("c");
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        h.Session.Dispatch(new StatsWantedChanged(true));
+        await a.WhenOpened().WaitAsync(Patience);
+        await b.WhenOpened().WaitAsync(Patience);
+
+        api.Containers = [FakeEngineApi.Container("b"), FakeEngineApi.Container("c")];
+        h.Session.Dispatch(new ReloadRequested());
+        await c.WhenOpened().WaitAsync(Patience);
+        await api.WhenCancelled("Stats a").WaitAsync(Patience);
+
+        Assert.Equal(1, b.Opened);
+        Assert.DoesNotContain("Stats b", api.Cancelled);
+        Assert.Equal(1, api.Calls.Count(call => call == "Stats b"));
+    }
+
+    [Fact]
+    public async Task Turning_list_stats_off_stops_every_stream_and_clears_them()
+    {
+        var api = new FakeEngineApi();
+        var a = api.StatsOf("a");
+        var b = api.StatsOf("b");
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        h.Session.Dispatch(new StatsWantedChanged(true));
+        await a.WhenOpened().WaitAsync(Patience);
+        await b.WhenOpened().WaitAsync(Patience);
+        var recorded = h.WaitForStatsRecorded(1);
+        a.Push(Sample(0, cpu: 1));
+        await recorded;
+        h.Time.Advance(EngineSession.StatsBatchInterval);
+        await h.WaitFor(s => s.Stats.Count == 1);
+
+        h.Session.Dispatch(new StatsWantedChanged(false));
+        var state = await h.WaitFor(s => !s.StatsWanted);
+        await api.WhenCancelled("Stats a").WaitAsync(Patience);
+        await api.WhenCancelled("Stats b").WaitAsync(Patience);
+
+        Assert.Empty(state.Stats);
+        Assert.Empty(h.Errors);
+    }
+
+    [Fact]
+    public async Task Losing_the_connection_stops_the_list_stats()
+    {
+        var first = new FakeEngineApi();
+        var a = first.StatsOf("a");
+        await using var h = Harness.With(first);
+        await h.ConnectAsync();
+        await first.StreamStarted.WaitAsync(Patience);
+        h.Session.Dispatch(new StatsWantedChanged(true));
+        await a.WhenOpened().WaitAsync(Patience);
+
+        first.EndStream(new EngineException(0, "connection reset by peer"));
+        var state = await h.WaitFor(s => s.Status == ConnectionStatus.Disconnected);
+        await first.WhenCancelled("Stats a").WaitAsync(Patience);
+
+        Assert.Empty(state.Stats);
+        Assert.True(state.StatsWanted);
+    }
+
     /// <summary>A fake clock whose first timer cannot be created, so starting the effect that needs it throws.</summary>
     private sealed class BrokenTimerTimeProvider : FakeTimeProvider
     {
@@ -565,6 +722,27 @@ public sealed class EngineSessionTests
             {
                 Session.StateChanged -= Check;
             }
+        }
+
+        /// <summary>Completes once <paramref name="count"/> more list stats samples have been read.</summary>
+        public Task WaitForStatsRecorded(int count)
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var seen = 0;
+            void Count(string _)
+            {
+                if (Interlocked.Increment(ref seen) >= count)
+                    done.TrySetResult();
+            }
+
+            Session.StatsSampleRecorded += Count;
+            return done.Task.WaitAsync(Patience).ContinueWith(
+                t =>
+                {
+                    Session.StatsSampleRecorded -= Count;
+                    return t;
+                },
+                TaskScheduler.Default).Unwrap();
         }
 
         /// <summary>Completes when the session drops an event of type <typeparamref name="T"/> from an older connection.</summary>

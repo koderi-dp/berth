@@ -37,3 +37,9 @@ public sealed record ActionSucceeded(string Id) : SessionEvent;
 public sealed record ActionFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent;
 
 public sealed record ActionErrorDismissed : SessionEvent;
+
+/// <summary>A screen that shows list stats opened (<paramref name="Wanted"/>) or closed.</summary>
+public sealed record StatsWantedChanged(bool Wanted) : SessionEvent;
+
+/// <summary>The latest stats sample of each watched container that sent one since the last batch.</summary>
+public sealed record StatsBatchArrived(ImmutableDictionary<string, StatsSample> Latest) : SessionEvent;

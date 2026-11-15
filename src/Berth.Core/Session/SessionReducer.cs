@@ -29,7 +29,7 @@ public static class SessionReducer
                 return (state with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false }, [new ConnectEffect()]);
 
             case ConnectRequested:
-                // Starting over drops in-flight work: action results and the reload timer may never arrive.
+                // Starting over drops in-flight work: action results, the reload timer and the stats streams.
                 return (
                     state with
                     {
@@ -39,6 +39,7 @@ public static class SessionReducer
                         LoadGeneration = state.LoadGeneration + 1,
                         ReloadScheduled = false,
                         ListLoaded = false,
+                        Stats = state.Stats.Clear(),
                     },
                     [new StopStreamsEffect(), new ConnectEffect()]);
 
@@ -79,9 +80,14 @@ public static class SessionReducer
             {
                 var ids = loaded.Containers.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
                 var gone = state.Pending.Keys.Where(id => !ids.Contains(id));
-                return (
-                    state with { Containers = loaded.Containers, Info = loaded.Info, Pending = state.Pending.RemoveRange(gone), ListLoaded = true },
-                    None);
+                var next = state with
+                {
+                    Containers = loaded.Containers,
+                    Info = loaded.Info,
+                    Pending = state.Pending.RemoveRange(gone),
+                    ListLoaded = true,
+                };
+                return next.StatsWanted ? Watch(next) : (next, None);
             }
 
             case LoadFailed failure when connected && failure.Generation == state.LoadGeneration:
@@ -123,6 +129,25 @@ public static class SessionReducer
             case ActionErrorDismissed when state.ActionError is not null:
                 return (state with { ActionError = null }, None);
 
+            case StatsWantedChanged wanted when wanted.Wanted != state.StatsWanted:
+            {
+                var next = state with { StatsWanted = wanted.Wanted };
+                if (!connected)
+                    return (next with { Stats = next.Stats.Clear() }, None);
+                if (!wanted.Wanted)
+                    return (next with { Stats = next.Stats.Clear() }, [new WatchStatsEffect([])]);
+
+                // Until the connection's first list arrives the running set is not known; that list starts the watch.
+                return next.ListLoaded ? Watch(next) : (next, None);
+            }
+
+            case StatsBatchArrived batch when connected && state.StatsWanted:
+            {
+                var running = RunningIds(state);
+                var fresh = batch.Latest.Where(sample => running.Contains(sample.Key)).ToList();
+                return fresh.Count == 0 ? (state, None) : (state with { Stats = state.Stats.SetItems(fresh) }, None);
+            }
+
             default:
                 return (state, None);
         }
@@ -141,8 +166,23 @@ public static class SessionReducer
             RetryAttempt = state.RetryAttempt + 1,
             LoadGeneration = state.LoadGeneration + 1,
             ReloadScheduled = false,
+            Stats = state.Stats.Clear(),
         },
         [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
+
+    /// <summary>Watches the stats of the running containers and forgets those of containers no longer running.</summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) Watch(EngineState state)
+    {
+        var running = RunningIds(state);
+        var stale = state.Stats.Keys.Where(id => !running.Contains(id));
+        var ids = state.Containers.Where(IsRunning).Select(c => c.Id).ToImmutableArray();
+        return (state with { Stats = state.Stats.RemoveRange(stale) }, [new WatchStatsEffect(ids)]);
+    }
+
+    private static bool IsRunning(ContainerSummary container) => container.State == "running";
+
+    private static HashSet<string> RunningIds(EngineState state) =>
+        state.Containers.Where(IsRunning).Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
 
     /// <summary>Schedules a debounced reload unless one is already waiting.</summary>
     private static (EngineState, ImmutableArray<SessionEffect>) RequestReload(EngineState state) =>

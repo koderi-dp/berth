@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Berth.Engine.Models;
 using Berth.Session;
 
@@ -613,4 +614,150 @@ public sealed class SessionReducerTests
         Assert.False(connected.ListLoaded);
         Assert.Equal(["a", "b"], connected.Containers.Select(c => c.Id));
     }
+
+    private static ContainerSummary Stopped(string id) => Container(id) with { State = "exited", Status = "Exited (0) 1 minute ago" };
+
+    private static StatsSample Sample(double cpu) =>
+        new(new DateTimeOffset(2026, 11, 15, 8, 0, 0, TimeSpan.Zero), cpu, 1024, 4096, 0, 0, 0, 0, 1);
+
+    private static ImmutableDictionary<string, StatsSample> Batch(params (string Id, double Cpu)[] samples) =>
+        samples.ToImmutableDictionary(s => s.Id, s => Sample(s.Cpu), StringComparer.Ordinal);
+
+    /// <summary>Connected with a and b running and c stopped, list stats wanted.</summary>
+    private static EngineState Watching()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+        var (loaded, _) = Reduce(
+            connected, new ContainersLoaded(connected.LoadGeneration, [Container("a"), Container("b"), Stopped("c")], Info));
+        var (watching, _) = Reduce(loaded, new StatsWantedChanged(true));
+        return watching;
+    }
+
+    [Fact]
+    public void Stats_wanted_while_connected_watches_the_running_containers()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+        var (loaded, _) = Reduce(
+            connected, new ContainersLoaded(connected.LoadGeneration, [Container("a"), Container("b"), Stopped("c")], Info));
+
+        var (state, effects) = Reduce(loaded, new StatsWantedChanged(true));
+
+        Assert.True(state.StatsWanted);
+        Assert.Equal([new WatchStatsEffect(["a", "b"])], effects);
+    }
+
+    [Fact]
+    public void Stats_wanted_again_changes_nothing()
+    {
+        var watching = Watching();
+
+        var (state, effects) = Reduce(watching, new StatsWantedChanged(true));
+
+        Assert.Same(watching, state);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void Stats_wanted_before_the_list_is_loaded_waits_for_the_list()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (wanted, wantedEffects) = Reduce(connecting, new StatsWantedChanged(true));
+        var (connected, connectedEffects) = Reduce(wanted, new ConnectSucceeded(Version, Info));
+
+        var (state, effects) = Reduce(connected, new ContainersLoaded(connected.LoadGeneration, [Container("a")], Info));
+
+        Assert.True(wanted.StatsWanted);
+        Assert.Empty(wantedEffects);
+        Assert.DoesNotContain(connectedEffects, e => e is WatchStatsEffect);
+        Assert.Equal([new WatchStatsEffect(["a"])], effects);
+        Assert.True(state.StatsWanted);
+    }
+
+    [Fact]
+    public void A_list_change_re_emits_the_watch_and_drops_the_stats_of_containers_no_longer_running()
+    {
+        var (sampled, _) = Reduce(Watching(), new StatsBatchArrived(Batch(("a", 1), ("b", 2))));
+
+        var (state, effects) = Reduce(
+            sampled, new ContainersLoaded(sampled.LoadGeneration, [Stopped("a"), Container("b"), Container("c")], Info));
+
+        Assert.Equal([new WatchStatsEffect(["b", "c"])], effects);
+        Assert.Equal(["b"], state.Stats.Keys);
+    }
+
+    [Fact]
+    public void A_list_while_stats_are_not_wanted_watches_nothing()
+    {
+        var connected = Connected();
+
+        var (state, effects) = Reduce(connected, new ContainersLoaded(connected.LoadGeneration, [Container("a")], Info));
+
+        Assert.Empty(effects);
+        Assert.Empty(state.Stats);
+    }
+
+    [Fact]
+    public void Stats_not_wanted_stops_the_watch_and_clears_the_stats()
+    {
+        var (sampled, _) = Reduce(Watching(), new StatsBatchArrived(Batch(("a", 1))));
+
+        var (state, effects) = Reduce(sampled, new StatsWantedChanged(false));
+
+        Assert.False(state.StatsWanted);
+        Assert.Empty(state.Stats);
+        Assert.Equal([new WatchStatsEffect([])], effects);
+    }
+
+    [Fact]
+    public void A_lost_connection_clears_the_stats_and_keeps_them_wanted()
+    {
+        var (sampled, _) = Reduce(Watching(), new StatsBatchArrived(Batch(("a", 1))));
+
+        var (state, effects) = Reduce(sampled, new ConnectionLost("stream closed"));
+
+        Assert.True(state.StatsWanted);
+        Assert.Empty(state.Stats);
+        Assert.Contains(new StopStreamsEffect(), effects);
+    }
+
+    [Fact]
+    public void Starting_over_clears_the_stats()
+    {
+        var (sampled, _) = Reduce(Watching(), new StatsBatchArrived(Batch(("a", 1))));
+
+        var (state, effects) = Reduce(sampled, new ConnectRequested());
+
+        Assert.Empty(state.Stats);
+        Assert.Equal([new StopStreamsEffect(), new ConnectEffect()], effects);
+    }
+
+    [Fact]
+    public void A_batch_replaces_the_latest_and_ignores_ids_not_running()
+    {
+        var (first, _) = Reduce(Watching(), new StatsBatchArrived(Batch(("a", 1), ("b", 2))));
+
+        var (state, effects) = Reduce(first, new StatsBatchArrived(Batch(("a", 5), ("c", 7), ("gone", 9))));
+
+        Assert.Empty(effects);
+        Assert.Equal(["a", "b"], state.Stats.Keys.Order());
+        Assert.Equal(5, state.Stats["a"].CpuPercent);
+        Assert.Equal(2, state.Stats["b"].CpuPercent);
+    }
+
+    [Fact]
+    public void A_batch_when_stats_are_not_wanted_is_ignored()
+    {
+        var connected = Connected();
+
+        var (state, effects) = Reduce(connected, new StatsBatchArrived(Batch(("a", 1))));
+
+        Assert.Same(connected, state);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void Watch_effects_compare_by_their_ids() =>
+        Assert.Equal(new WatchStatsEffect(["a", "b"]), new WatchStatsEffect(ImmutableArray.Create("a", "b")));
 }
