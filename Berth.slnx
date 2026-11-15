@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Berth.App/Berth.App.csproj" />
+    <Project Path="src/Berth.Core/Berth.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+</Solution>

@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Berth.App (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "Berth.App (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
