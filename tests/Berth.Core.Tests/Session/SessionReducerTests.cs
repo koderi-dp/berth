@@ -224,6 +224,42 @@ public sealed class SessionReducerTests
     }
 
     [Fact]
+    public void A_reload_asked_for_loads_the_list_at_once_with_a_new_generation()
+    {
+        var connected = Connected();
+
+        var (state, effects) = Reduce(connected, new ReloadRequested());
+
+        Assert.Equal(connected.LoadGeneration + 1, state.LoadGeneration);
+        Assert.Equal([new LoadContainersEffect(connected.LoadGeneration + 1)], effects);
+        Assert.Equal(connected.Containers, state.Containers);
+    }
+
+    [Fact]
+    public void A_reload_asked_for_while_a_debounced_one_waits_still_loads_and_leaves_the_timer_to_clear_its_flag()
+    {
+        var (scheduled, _) = Reduce(Connected(), new EngineEventReceived(Event("container", "die")));
+
+        var (state, effects) = Reduce(scheduled, new ReloadRequested());
+
+        Assert.True(state.ReloadScheduled);
+        Assert.Equal([new LoadContainersEffect(scheduled.LoadGeneration + 1)], effects);
+    }
+
+    [Theory]
+    [InlineData(ConnectionStatus.Disconnected)]
+    [InlineData(ConnectionStatus.Connecting)]
+    public void A_reload_asked_for_while_not_connected_does_nothing(ConnectionStatus status)
+    {
+        var state = status == ConnectionStatus.Disconnected ? EngineState.Initial : Reduce(EngineState.Initial, new ConnectRequested()).State;
+
+        var (next, effects) = Reduce(state, new ReloadRequested());
+
+        Assert.Same(state, next);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
     public void A_load_result_from_an_older_generation_is_ignored()
     {
         var connected = Connected();

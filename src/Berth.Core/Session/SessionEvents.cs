@@ -25,6 +25,9 @@ public sealed record EngineEventReceived(EngineEventMessage Message) : SessionEv
 
 public sealed record ReloadDue : SessionEvent;
 
+/// <summary>The user asked for the list to be read again now (F5).</summary>
+public sealed record ReloadRequested : SessionEvent;
+
 /// <param name="Force">Applies to <see cref="ContainerAction.Remove"/>.</param>
 public sealed record ActionRequested(ImmutableArray<string> Ids, ContainerAction Action, bool Force = false) : SessionEvent;
 

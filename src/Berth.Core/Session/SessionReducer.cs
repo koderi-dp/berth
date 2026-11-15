@@ -102,6 +102,13 @@ public static class SessionReducer
                 return (cleared with { LoadGeneration = generation }, [new LoadContainersEffect(generation)]);
             }
 
+            case ReloadRequested when connected:
+            {
+                // At once, not debounced: the user is waiting. A load still in flight is superseded by the new generation.
+                var generation = state.LoadGeneration + 1;
+                return (state with { LoadGeneration = generation }, [new LoadContainersEffect(generation)]);
+            }
+
             case ActionRequested request when connected:
                 return RequestActions(state, request);
 

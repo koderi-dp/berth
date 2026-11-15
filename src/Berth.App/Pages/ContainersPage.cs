@@ -6,9 +6,12 @@ using Berth.Session;
 using Berth.Settings;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Reactor.Hooks;
+using Microsoft.UI.Reactor.Input;
 using Microsoft.UI.Reactor.Layout;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.System;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Pages;
@@ -43,6 +46,8 @@ internal sealed class ContainersPage : EngineStateComponent
         var (checkedIds, updateChecked) = UseReducer(NoIds);
         var (collapsed, updateCollapsed) = UseReducer(NoIds);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
+        var (searchFocused, setSearchFocused) = UseState(false);
+        var searchBox = this.UseElementRef<TextBox>();
 
         var connected = state.Status == ConnectionStatus.Connected;
         var runningOnly = settings.ContainerList.RunningOnly;
@@ -67,20 +72,73 @@ internal sealed class ContainersPage : EngineStateComponent
             rows => setDeleteRequest(new DeleteRequest([.. rows.Select(r => r.Id)], BulkSelection.DeleteText(rows))));
 
         var shownIds = visibleRows.Select(r => r.Id).ToArray();
+        var deleteRows = DeleteRows(visibleRows, checkedIds, connected);
 
-        return (FlexColumn(
+        // Keyboard shortcuts while the focus is on the page. None of them acts while the delete confirmation is open; Delete and
+        // Escape leave the search box's own keys alone (Delete there deletes text), and Escape only clears it.
+        var dialogOpen = deleteRequest is not null;
+        Command[] shortcuts =
+        [
+            new()
+            {
+                Label = "Search",
+                Execute = () => FocusSearch(searchBox.Current),
+                CanExecute = !dialogOpen,
+                Accelerator = Accelerator(VirtualKey.F, VirtualKeyModifiers.Control),
+            },
+            new()
+            {
+                Label = "Reload",
+                Execute = () => AppServices.Current.Session.Dispatch(new ReloadRequested()),
+                CanExecute = !dialogOpen && connected,
+                Accelerator = Accelerator(VirtualKey.F5),
+            },
+            new()
+            {
+                Label = "Delete selected",
+                Execute = () => callbacks.RequestDelete(deleteRows),
+                CanExecute = !dialogOpen && !searchFocused && deleteRows.Length > 0,
+                Accelerator = Accelerator(VirtualKey.Delete),
+            },
+            new()
+            {
+                Label = "Clear search",
+                Execute = () => setSearch(""),
+                CanExecute = !dialogOpen && searchFocused && search.Length > 0,
+                Accelerator = Accelerator(VirtualKey.Escape),
+            },
+        ];
+
+        var page = (FlexColumn(
                 Title("Containers").Flex(shrink: 0),
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
-                Toolbar(search, setSearch, runningOnly),
-                BulkBar(visibleRows, checkedIds, connected, callbacks),
+                Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused),
+                BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
                 Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
                 DeleteDialog(deleteRequest, () => setDeleteRequest(null)))
             with
             {
                 RowGap = 16,
             })
-            .FlexPadding(24, 16, 24, 0)
-            .Flex(grow: 1, basis: 0);
+            .FlexPadding(24, 16, 24, 0);
+
+        return CommandHost(shortcuts, page).Flex(grow: 1, basis: 0);
+    }
+
+    /// <summary>The checked rows the Delete button and the Delete key ask to remove: shown, not pending, and none while not connected.</summary>
+    private static ContainerRow[] DeleteRows(ContainerRow[] visibleRows, ImmutableHashSet<string> checkedIds, bool connected)
+    {
+        var ids = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
+        return [.. visibleRows.Where(r => ids.Contains(r.Id))];
+    }
+
+    /// <summary>Ctrl+F: the focus goes to the search box with its text selected, so typing replaces it.</summary>
+    private static void FocusSearch(TextBox? box)
+    {
+        if (box is null)
+            return;
+        box.Focus(FocusState.Keyboard);
+        box.SelectAll();
     }
 
     /// <summary>Sends <paramref name="action"/> for <paramref name="ids"/> to the session current at the time of the click.</summary>
@@ -123,10 +181,15 @@ internal sealed class ContainersPage : EngineStateComponent
         return items;
     }
 
-    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly) =>
+    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
         (FlexRow(
                 TextBox(search, setSearch, placeholderText: "Search")
+                    .Ref(searchBox)
+                    .AutomationId("search")
                     .AutomationName("Search")
+                    .ToolTip("Search by name, image or ID (Ctrl+F)")
+                    .OnGotFocus((_, _) => setSearchFocused(true))
+                    .OnLostFocus((_, _) => setSearchFocused(false))
                     .Width(320),
                 ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
                     .AutomationName("Only show running containers"))
@@ -142,7 +205,7 @@ internal sealed class ContainersPage : EngineStateComponent
     /// out; a button that would send nothing, which is every button while not connected, is disabled). Checked rows the filter
     /// hides are kept but not counted or acted on.
     /// </summary>
-    private static Element? BulkBar(ContainerRow[] visibleRows, ImmutableHashSet<string> checkedIds, bool connected, ContainerListCallbacks callbacks)
+    private static Element? BulkBar(ContainerRow[] visibleRows, ImmutableHashSet<string> checkedIds, ContainerRow[] deleteRows, bool connected, ContainerListCallbacks callbacks)
     {
         var count = BulkSelection.SelectedCount(visibleRows, checkedIds);
         if (count == 0)
@@ -150,14 +213,12 @@ internal sealed class ContainersPage : EngineStateComponent
 
         var start = BulkSelection.StartIds(visibleRows, checkedIds, connected);
         var stop = BulkSelection.StopIds(visibleRows, checkedIds, connected);
-        var delete = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
-        ContainerRow[] deleteRows = [.. visibleRows.Where(r => delete.Contains(r.Id))];
 
         return (FlexRow(
                 Body($"{count} selected"),
                 Button("Start", () => callbacks.Send(start, ContainerAction.Start)).IsEnabled(!start.IsEmpty),
                 Button("Stop", () => callbacks.Send(stop, ContainerAction.Stop)).IsEnabled(!stop.IsEmpty),
-                Button("Delete", () => callbacks.RequestDelete(deleteRows)).IsEnabled(deleteRows.Length > 0))
+                Button("Delete", () => callbacks.RequestDelete(deleteRows)).ToolTip("Delete the selected containers (Delete)").IsEnabled(deleteRows.Length > 0))
             with
             {
                 AlignItems = FlexAlign.Center,
