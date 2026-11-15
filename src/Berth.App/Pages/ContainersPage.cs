@@ -42,6 +42,7 @@ internal sealed class ContainersPage : EngineStateComponent
         var (collapsed, updateCollapsed) = UseReducer(NoIds);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
 
+        var connected = state.Status == ConnectionStatus.Connected;
         var runningOnly = settings.ContainerList.RunningOnly;
         var filter = UseMemo(() => new ContainerFilter(search, runningOnly), search, runningOnly);
         var groups = UseMemo(() => ComposeGrouping.Build(state.Containers, state.Pending, filter), state.Containers, state.Pending, filter);
@@ -66,9 +67,10 @@ internal sealed class ContainersPage : EngineStateComponent
 
         return (FlexColumn(
                 Title("Containers").Flex(shrink: 0),
+                ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 Toolbar(search, setSearch, runningOnly),
-                BulkBar(visibleRows, checkedIds, callbacks),
-                Table(state, filter, groups, items, shownIds, checkedIds, callbacks),
+                BulkBar(visibleRows, checkedIds, connected, callbacks),
+                Table(state, filter, groups, items, shownIds, checkedIds, connected, callbacks),
                 DeleteDialog(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -127,17 +129,18 @@ internal sealed class ContainersPage : EngineStateComponent
 
     /// <summary>
     /// Shown while shown rows are checked: how many, and Start, Stop and Delete for them (rows with an action in progress are left
-    /// out; a button that would send nothing is disabled). Checked rows the filter hides are kept but not counted or acted on.
+    /// out; a button that would send nothing, which is every button while not connected, is disabled). Checked rows the filter
+    /// hides are kept but not counted or acted on.
     /// </summary>
-    private static Element? BulkBar(ContainerRow[] visibleRows, ImmutableHashSet<string> checkedIds, ContainerListCallbacks callbacks)
+    private static Element? BulkBar(ContainerRow[] visibleRows, ImmutableHashSet<string> checkedIds, bool connected, ContainerListCallbacks callbacks)
     {
         var count = BulkSelection.SelectedCount(visibleRows, checkedIds);
         if (count == 0)
             return null;
 
-        var start = BulkSelection.StartIds(visibleRows, checkedIds);
-        var stop = BulkSelection.StopIds(visibleRows, checkedIds);
-        var delete = BulkSelection.DeleteIds(visibleRows, checkedIds);
+        var start = BulkSelection.StartIds(visibleRows, checkedIds, connected);
+        var stop = BulkSelection.StopIds(visibleRows, checkedIds, connected);
+        var delete = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
         ContainerRow[] deleteRows = [.. visibleRows.Where(r => delete.Contains(r.Id))];
 
         return (FlexRow(
@@ -160,6 +163,7 @@ internal sealed class ContainersPage : EngineStateComponent
         IReadOnlyList<ListItem> items,
         string[] shownIds,
         ImmutableHashSet<string> checkedIds,
+        bool connected,
         ContainerListCallbacks callbacks)
     {
         if (groups.Count == 0 && !state.ListLoaded)
@@ -175,12 +179,12 @@ internal sealed class ContainersPage : EngineStateComponent
             return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
         }
 
-        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), value => callbacks.SetChecked(shownIds, value));
+        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, value => callbacks.SetChecked(shownIds, value));
 
         var list = ListView(items, item => item.Key, (item, _) => item switch
             {
-                GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), callbacks).WithKey(g.Key),
-                RowItem r => ContainerRowView.Row(r.Row, r.Indented, checkedIds.Contains(r.Row.Id), callbacks).WithKey(r.Key),
+                GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, callbacks).WithKey(g.Key),
+                RowItem r => ContainerRowView.Row(r.Row, r.Indented, checkedIds.Contains(r.Row.Id), connected, callbacks).WithKey(r.Key),
                 _ => throw new InvalidOperationException("A new list item needs its row here: " + item.GetType().Name),
             })
             .Set(view =>
@@ -243,13 +247,14 @@ internal sealed class ContainersPage : EngineStateComponent
 
     /// <summary>
     /// Removes the confirmed containers as they are now, read from the current session when the user confirms: rows that are gone
-    /// or became pending while the dialog was open are skipped, and running ones are stopped first (force).
+    /// or became pending while the dialog was open are skipped, running ones are stopped first (force), and nothing is sent when
+    /// the connection was lost meanwhile.
     /// </summary>
     private static void ConfirmDelete(ImmutableArray<string> ids)
     {
         var state = AppServices.Current.Session.State;
         var rows = ComposeGrouping.Build(state.Containers, state.Pending, NoFilter).SelectMany(g => g.Rows);
-        var removal = BulkSelection.Removal(rows, ids);
+        var removal = BulkSelection.Removal(rows, ids, state.Status == ConnectionStatus.Connected);
         Send(removal.Ids, ContainerAction.Remove, removal.Force);
     }
 }

@@ -78,7 +78,8 @@ internal sealed class App : EngineStateComponent
 
     /// <summary>
     /// The page for <paramref name="route"/>. With no connection and no list from an earlier one, the containers page has nothing to
-    /// show and the disconnected view takes its place; the settings page stays reachable to fix the connection.
+    /// show and the disconnected view takes its place (with a list, the page keeps it and shows <see cref="ConnectionBar"/> above it);
+    /// the settings page stays reachable to fix the connection.
     /// </summary>
     private static Element RouteToPage(AppRoute route, EngineState state) => route switch
     {

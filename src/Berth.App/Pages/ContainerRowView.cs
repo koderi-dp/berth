@@ -52,21 +52,28 @@ internal static class ContainerRowView
     /// <summary>How many ports a row shows before it sums up the rest.</summary>
     private const int ShownPorts = 2;
 
-    /// <summary>The column titles, with a checkbox that checks or clears every row shown (<paramref name="checkedState"/> null: some are).</summary>
-    public static Element Header(bool? checkedState, Action<bool> onCheckAll) =>
+    /// <summary>
+    /// The column titles, with a checkbox that checks or clears every row shown (<paramref name="checkedState"/> null: some are).
+    /// Like every checkbox and action of the table, it is disabled while not <paramref name="connected"/>.
+    /// </summary>
+    public static Element Header(bool? checkedState, bool connected, Action<bool> onCheckAll) =>
         Cells(
             minHeight: 36,
-            SelectBox(checkedState, onCheckAll, "Select all").Grid(column: 0),
+            SelectBox(checkedState, onCheckAll, "Select all").IsEnabled(connected).Grid(column: 0),
             ColumnTitle("Name").Grid(column: 2),
             ColumnTitle("Image").Grid(column: 3),
             ColumnTitle("Status").Grid(column: 4),
             ColumnTitle("Ports").Grid(column: 5),
             ColumnTitle("Created").Grid(column: 6));
 
-    /// <summary>One container. <paramref name="indented"/>: it belongs to a compose project and sits under the project's row.</summary>
-    public static Element Row(ContainerRow row, bool indented, bool isChecked, ContainerListCallbacks callbacks)
+    /// <summary>
+    /// One container. <paramref name="indented"/>: it belongs to a compose project and sits under the project's row. Its checkbox
+    /// and actions are disabled while not <paramref name="connected"/>; its actions also while one is in progress on it.
+    /// </summary>
+    public static Element Row(ContainerRow row, bool indented, bool isChecked, bool connected, ContainerListCallbacks callbacks)
     {
         var busy = row.Pending is not null;
+        var canAct = BulkSelection.CanAct(row, connected);
         var stopped = row.State == RowState.Stopped;
         string[] ids = [row.Id];
 
@@ -107,25 +114,26 @@ internal static class ContainerRowView
 
         return Cells(
             minHeight: RowHeight,
-            SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).Grid(column: 0),
+            SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).IsEnabled(connected).Grid(column: 0),
             StateMark(row.State, busy).Grid(column: 1),
             name.Grid(column: 2),
             CellText(row.Image).Grid(column: 3),
             CellText(row.Status).Grid(column: 4),
             Ports(row.Ports).Grid(column: 5),
             CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 6),
-            Actions(startOrStop.IsEnabled(!busy), more.IsEnabled(!busy), delete.IsEnabled(!busy)).Grid(column: 7));
+            Actions(startOrStop.IsEnabled(canAct), more.IsEnabled(canAct), delete.IsEnabled(canAct)).Grid(column: 7));
     }
 
     /// <summary>
     /// A compose project: a chevron that collapses or expands it, its state, its name, and actions for all its rows shown: Start sends
-    /// the stopped ones, Stop the others, Delete all of them.
+    /// the stopped ones, Stop the others, Delete all of them. Its checkbox and actions are disabled while not
+    /// <paramref name="connected"/>; its actions also while one is in progress on any of its rows.
     /// </summary>
-    public static Element Group(ContainerGroup group, bool collapsed, bool? checkedState, ContainerListCallbacks callbacks)
+    public static Element Group(ContainerGroup group, bool collapsed, bool? checkedState, bool connected, ContainerListCallbacks callbacks)
     {
         var project = group.Project ?? throw new ArgumentException("A group row needs a compose project.", nameof(group));
         var rows = group.Rows;
-        var busy = rows.Any(r => r.Pending is not null);
+        var canAct = BulkSelection.CanAct(rows, connected);
         string[] stopped = [.. rows.Where(r => r.State == RowState.Stopped).Select(r => r.Id)];
         string[] running = [.. rows.Where(r => r.State != RowState.Stopped).Select(r => r.Id)];
 
@@ -150,16 +158,16 @@ internal static class ContainerRowView
             .Margin(0, 0, 12, 0);
 
         var start = stopped.Length > 0
-            ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(stopped, ContainerAction.Start)).AutomationId("start-" + project).IsEnabled(!busy)
+            ? Widgets.IconButton(Glyphs.Play, "Start", () => callbacks.Send(stopped, ContainerAction.Start)).AutomationId("start-" + project).IsEnabled(canAct)
             : null;
         var stop = running.Length > 0
-            ? Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(running, ContainerAction.Stop)).AutomationId("stop-" + project).IsEnabled(!busy)
+            ? Widgets.IconButton(Glyphs.Stop, "Stop", () => callbacks.Send(running, ContainerAction.Stop)).AutomationId("stop-" + project).IsEnabled(canAct)
             : null;
-        var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete(rows)).AutomationId("delete-" + project).IsEnabled(!busy);
+        var delete = Widgets.IconButton(Glyphs.Delete, "Delete", () => callbacks.RequestDelete(rows)).AutomationId("delete-" + project).IsEnabled(canAct);
 
         return Cells(
             minHeight: RowHeight,
-            SelectBox(checkedState, value => callbacks.SetChecked(rows.Select(r => r.Id), value), "Select " + project).Grid(column: 0),
+            SelectBox(checkedState, value => callbacks.SetChecked(rows.Select(r => r.Id), value), "Select " + project).IsEnabled(connected).Grid(column: 0),
             chevron.Grid(column: 1),
             name.Grid(column: 2, columnSpan: 5),
             Actions(start, stop, delete).Grid(column: 7));

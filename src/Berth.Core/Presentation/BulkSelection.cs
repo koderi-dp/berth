@@ -8,7 +8,8 @@ public sealed record Removal(ImmutableArray<string> Ids, bool Force);
 /// <summary>
 /// The Containers page's decisions about checked rows, the delete confirmation and the empty list. Only rows the filter shows
 /// count: a checked row the search or "running only" hides stays checked but is neither counted nor acted on. A row with an
-/// action in progress is never sent another one.
+/// action in progress is never sent another one, and nothing is sent while the engine is not connected (the session would
+/// drop it).
 /// </summary>
 public static class BulkSelection
 {
@@ -19,24 +20,33 @@ public static class BulkSelection
     public static int SelectedCount(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds) =>
         visibleRows.Count(r => checkedIds.Contains(r.Id));
 
-    /// <summary>Checked, shown, stopped and not pending.</summary>
-    public static ImmutableArray<string> StartIds(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds) =>
-        Pick(visibleRows, checkedIds, r => r.State == RowState.Stopped);
+    /// <summary>Whether a row's own buttons act: connected and no action in progress on it.</summary>
+    public static bool CanAct(ContainerRow row, bool connected) => connected && row.Pending is null;
 
-    /// <summary>Checked, shown, not stopped (running, paused or restarting) and not pending.</summary>
-    public static ImmutableArray<string> StopIds(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds) =>
-        Pick(visibleRows, checkedIds, r => r.State != RowState.Stopped);
+    /// <summary>Whether a compose project's buttons act: connected and no action in progress on any of its rows.</summary>
+    public static bool CanAct(IEnumerable<ContainerRow> rows, bool connected) => connected && rows.All(r => r.Pending is null);
 
-    /// <summary>Checked, shown and not pending.</summary>
-    public static ImmutableArray<string> DeleteIds(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds) =>
-        Pick(visibleRows, checkedIds, _ => true);
+    /// <summary>Checked, shown, stopped and not pending; none while not connected.</summary>
+    public static ImmutableArray<string> StartIds(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds, bool connected) =>
+        Pick(visibleRows, checkedIds, connected, r => r.State == RowState.Stopped);
+
+    /// <summary>Checked, shown, not stopped (running, paused or restarting) and not pending; none while not connected.</summary>
+    public static ImmutableArray<string> StopIds(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds, bool connected) =>
+        Pick(visibleRows, checkedIds, connected, r => r.State != RowState.Stopped);
+
+    /// <summary>Checked, shown and not pending; none while not connected.</summary>
+    public static ImmutableArray<string> DeleteIds(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds, bool connected) =>
+        Pick(visibleRows, checkedIds, connected, _ => true);
 
     /// <summary>
     /// What to remove when the user confirms a delete of <paramref name="requestedIds"/>: those still among <paramref name="rows"/>
-    /// and not pending, in the requested order; forced when any of them is not stopped.
+    /// and not pending, in the requested order; forced when any of them is not stopped. Nothing while not connected.
     /// </summary>
-    public static Removal Removal(IEnumerable<ContainerRow> rows, IEnumerable<string> requestedIds)
+    public static Removal Removal(IEnumerable<ContainerRow> rows, IEnumerable<string> requestedIds, bool connected)
     {
+        if (!connected)
+            return new Removal([], Force: false);
+
         var byId = rows.ToDictionary(r => r.Id);
         ContainerRow[] kept =
         [
@@ -78,6 +88,6 @@ public static class BulkSelection
         : filter.RunningOnly && string.IsNullOrWhiteSpace(filter.Search) ? "No containers are running."
         : "No containers match the search.";
 
-    private static ImmutableArray<string> Pick(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds, Func<ContainerRow, bool> applies) =>
-        [.. visibleRows.Where(r => checkedIds.Contains(r.Id) && r.Pending is null && applies(r)).Select(r => r.Id)];
+    private static ImmutableArray<string> Pick(IEnumerable<ContainerRow> visibleRows, IReadOnlySet<string> checkedIds, bool connected, Func<ContainerRow, bool> applies) =>
+        [.. visibleRows.Where(r => checkedIds.Contains(r.Id) && CanAct(r, connected) && applies(r)).Select(r => r.Id)];
 }

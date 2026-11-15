@@ -37,7 +37,7 @@ public sealed class BulkSelectionTests
     {
         var selection = Checked("run", "paused", "stopped", "pend-stopped", "pend-run", "hidden");
 
-        Assert.Equal<string>(["stopped"], BulkSelection.StartIds(Visible, selection));
+        Assert.Equal<string>(["stopped"], BulkSelection.StartIds(Visible, selection, connected: true));
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class BulkSelectionTests
     {
         var selection = Checked("run", "paused", "stopped", "pend-stopped", "pend-run", "hidden");
 
-        Assert.Equal<string>(["run", "paused"], BulkSelection.StopIds(Visible, selection));
+        Assert.Equal<string>(["run", "paused"], BulkSelection.StopIds(Visible, selection, connected: true));
     }
 
     [Fact]
@@ -53,22 +53,22 @@ public sealed class BulkSelectionTests
     {
         var selection = Checked("run", "paused", "stopped", "pend-stopped", "pend-run", "hidden");
 
-        Assert.Equal<string>(["run", "paused", "stopped"], BulkSelection.DeleteIds(Visible, selection));
+        Assert.Equal<string>(["run", "paused", "stopped"], BulkSelection.DeleteIds(Visible, selection, connected: true));
     }
 
     [Fact]
     public void Nothing_checked_sends_nothing()
     {
-        Assert.Empty(BulkSelection.StartIds(Visible, Checked()));
-        Assert.Empty(BulkSelection.StopIds(Visible, Checked()));
-        Assert.Empty(BulkSelection.DeleteIds(Visible, Checked()));
+        Assert.Empty(BulkSelection.StartIds(Visible, Checked(), connected: true));
+        Assert.Empty(BulkSelection.StopIds(Visible, Checked(), connected: true));
+        Assert.Empty(BulkSelection.DeleteIds(Visible, Checked(), connected: true));
         Assert.Equal(0, BulkSelection.SelectedCount(Visible, Checked()));
     }
 
     [Fact]
     public void Removal_at_confirm_skips_rows_that_are_gone_or_pending()
     {
-        var removal = BulkSelection.Removal(Visible, ["stopped", "pend-run", "gone"]);
+        var removal = BulkSelection.Removal(Visible, ["stopped", "pend-run", "gone"], connected: true);
 
         Assert.Equal<string>(["stopped"], removal.Ids);
         Assert.False(removal.Force);
@@ -77,7 +77,7 @@ public sealed class BulkSelectionTests
     [Fact]
     public void Removal_at_confirm_forces_when_any_row_is_not_stopped()
     {
-        var removal = BulkSelection.Removal(Visible, ["stopped", "paused"]);
+        var removal = BulkSelection.Removal(Visible, ["stopped", "paused"], connected: true);
 
         Assert.Equal<string>(["stopped", "paused"], removal.Ids);
         Assert.True(removal.Force);
@@ -86,9 +86,46 @@ public sealed class BulkSelectionTests
     [Fact]
     public void Removal_keeps_the_requested_order()
     {
-        var removal = BulkSelection.Removal(Visible, ["stopped", "run"]);
+        var removal = BulkSelection.Removal(Visible, ["stopped", "run"], connected: true);
 
         Assert.Equal<string>(["stopped", "run"], removal.Ids);
+    }
+
+    [Fact]
+    public void Nothing_is_sent_for_checked_rows_while_not_connected()
+    {
+        var selection = Checked("run", "paused", "stopped");
+
+        Assert.Empty(BulkSelection.StartIds(Visible, selection, connected: false));
+        Assert.Empty(BulkSelection.StopIds(Visible, selection, connected: false));
+        Assert.Empty(BulkSelection.DeleteIds(Visible, selection, connected: false));
+        Assert.Equal(3, BulkSelection.SelectedCount(Visible, selection));
+    }
+
+    [Fact]
+    public void Removal_at_confirm_removes_nothing_while_not_connected()
+    {
+        var removal = BulkSelection.Removal(Visible, ["stopped", "run"], connected: false);
+
+        Assert.Empty(removal.Ids);
+        Assert.False(removal.Force);
+    }
+
+    [Fact]
+    public void A_row_can_act_when_connected_and_not_pending()
+    {
+        Assert.True(BulkSelection.CanAct(Running, connected: true));
+        Assert.True(BulkSelection.CanAct(Stopped, connected: true));
+        Assert.False(BulkSelection.CanAct(PendingRunning, connected: true));
+        Assert.False(BulkSelection.CanAct(Running, connected: false));
+    }
+
+    [Fact]
+    public void A_project_can_act_when_connected_and_none_of_its_rows_is_pending()
+    {
+        Assert.True(BulkSelection.CanAct([Running, Stopped], connected: true));
+        Assert.False(BulkSelection.CanAct([Running, PendingStopped], connected: true));
+        Assert.False(BulkSelection.CanAct([Running, Stopped], connected: false));
     }
 
     [Fact]
