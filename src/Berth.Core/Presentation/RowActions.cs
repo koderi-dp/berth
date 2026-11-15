@@ -3,8 +3,8 @@ using Berth.Session;
 
 namespace Berth.Presentation;
 
-/// <summary>Everything a row of the containers table can do.</summary>
-public enum RowActionKind { Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, Delete }
+/// <summary>Everything a row of the containers table, or the header of a container's detail page, can do.</summary>
+public enum RowActionKind { ViewDetails, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, Delete }
 
 /// <summary>When an action is a button on its row; when it is not, it is in the row's "more" menu.</summary>
 public enum ButtonWhen
@@ -62,10 +62,11 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
         action.Button == ButtonWhen.Always || (action.Button == ButtonWhen.Wide && !compact);
 
     /// <summary>
-    /// A container: Start (stopped) or Stop (active), Restart, Pause (enabled only while running) or Resume (paused); then Open in
-    /// browser (only with a published port), Copy name, Copy ID; then Delete.
+    /// A container: View details (on its own, first, always enabled); then Start (stopped) or Stop (active), Restart, Pause (enabled
+    /// only while running) or Resume (paused); then Open in browser (only with a published port), Copy name, Copy ID; then Delete.
     /// </summary>
-    public static RowActions ForContainer(ContainerRow row, bool connected)
+    /// <param name="viewDetails">False on the container's detail page, which has the same actions but View details.</param>
+    public static RowActions ForContainer(ContainerRow row, bool connected, bool viewDetails = true)
     {
         var canAct = BulkSelection.CanAct(row, connected);
         ImmutableArray<string> ids = [row.Id];
@@ -96,7 +97,9 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
         ];
         RowAction delete = new(RowActionKind.Delete, "Delete", canAct, ButtonWhen.Always, IsMain: false, EngineAction: null, ids);
 
-        return new RowActions([run, other, [delete]], browserUrl);
+        return viewDetails
+            ? new RowActions([[Local(RowActionKind.ViewDetails, "View details")], run, other, [delete]], browserUrl)
+            : new RowActions([run, other, [delete]], browserUrl);
     }
 
     /// <summary>

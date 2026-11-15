@@ -21,6 +21,8 @@ internal static class Glyphs
     public const string ChevronDown = "";
     public const string ArrowUp = "";
     public const string ArrowDown = "";
+    public const string ChevronLeft = "";
+    public const string Details = ""; // Info
     public const string ChevronRight = "";
 }
 
@@ -74,6 +76,13 @@ internal static class Widgets
 
     /// <summary>A Segoe Fluent Icons glyph as a menu item's icon, so a menu shows the same icon as the button for the action.</summary>
     public static IconData MenuGlyph(string glyph) => FontIcon(glyph, IconFont);
+
+    /// <summary>A short note centred in the room it is given, in the secondary text colour.</summary>
+    public static Element CenteredNote(string text) =>
+        Body(text)
+            .Foreground(Theme.SecondaryText)
+            .HAlign(Microsoft.UI.Xaml.HorizontalAlignment.Center)
+            .VAlign(Microsoft.UI.Xaml.VerticalAlignment.Center);
 
     /// <summary>
     /// A borderless button that shows only <paramref name="glyph"/>; <paramref name="label"/> is its accessible name and its tooltip.

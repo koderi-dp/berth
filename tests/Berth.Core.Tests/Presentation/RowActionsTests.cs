@@ -25,6 +25,7 @@ public sealed class RowActionsTests
 
         Assert.Equal(
             [
+                [RowActionKind.ViewDetails],
                 [RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Pause],
                 [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId],
                 [RowActionKind.Delete],
@@ -40,6 +41,7 @@ public sealed class RowActionsTests
 
         Assert.Equal(
             [
+                [RowActionKind.ViewDetails],
                 [RowActionKind.Start, RowActionKind.Restart, RowActionKind.Pause],
                 [RowActionKind.CopyName, RowActionKind.CopyId],
                 [RowActionKind.Delete],
@@ -53,7 +55,7 @@ public sealed class RowActionsTests
     {
         var actions = RowActions.ForContainer(Row("p", RowState.Paused), connected: true);
 
-        Assert.Equal([RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Resume], Kinds(actions.Sections)[0]);
+        Assert.Equal([RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Resume], Kinds(actions.Sections)[1]);
     }
 
     [Fact]
@@ -62,7 +64,7 @@ public sealed class RowActionsTests
         var actions = RowActions.ForContainer(Row("web", published: true), connected: true);
 
         Assert.Equal(
-            ["Stop", "Restart", "Pause", "Open in browser", "Copy name", "Copy ID", "Delete"],
+            ["View details", "Stop", "Restart", "Pause", "Open in browser", "Copy name", "Copy ID", "Delete"],
             actions.Sections.SelectMany(s => s).Select(a => a.Label));
         Assert.Equal("Resume", Find(RowActions.ForContainer(Row("p", RowState.Paused), connected: true), RowActionKind.Resume).Label);
         Assert.Equal("Start", Find(RowActions.ForContainer(Row("s", RowState.Stopped), connected: true), RowActionKind.Start).Label);
@@ -86,7 +88,7 @@ public sealed class RowActionsTests
         var actions = RowActions.ForContainer(Row("web", RowState.Paused, pending, published: true), connected);
 
         var enabled = actions.Sections.SelectMany(s => s).Where(a => a.IsEnabled).Select(a => a.Kind);
-        Assert.Equal([RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId], enabled);
+        Assert.Equal([RowActionKind.ViewDetails, RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId], enabled);
     }
 
     [Fact]
@@ -111,7 +113,9 @@ public sealed class RowActionsTests
         var actions = RowActions.ForContainer(Row("web", published: true), connected: true);
 
         Assert.Equal([RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Pause], actions.Buttons(compact: false).Select(a => a.Kind));
-        Assert.Equal([[RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId]], Kinds(actions.MoreMenu(compact: false)));
+        Assert.Equal(
+            [[RowActionKind.ViewDetails], [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId]],
+            Kinds(actions.MoreMenu(compact: false)));
         Assert.Equal(RowActionKind.Delete, actions.Delete.Kind);
     }
 
@@ -122,7 +126,7 @@ public sealed class RowActionsTests
 
         Assert.Equal([RowActionKind.Stop], actions.Buttons(compact: true).Select(a => a.Kind));
         Assert.Equal(
-            [[RowActionKind.Restart, RowActionKind.Pause], [RowActionKind.CopyName, RowActionKind.CopyId]],
+            [[RowActionKind.ViewDetails], [RowActionKind.Restart, RowActionKind.Pause], [RowActionKind.CopyName, RowActionKind.CopyId]],
             Kinds(actions.MoreMenu(compact: true)));
     }
 
@@ -133,6 +137,49 @@ public sealed class RowActionsTests
         Assert.True(Find(RowActions.ForContainer(Row("s", RowState.Stopped), connected: true), RowActionKind.Start).IsMain);
         Assert.False(Find(RowActions.ForContainer(Row("r"), connected: true), RowActionKind.Restart).IsMain);
     }
+
+    // View details: first in the "more" and context menus of a row; not on the detail page itself.
+
+    [Fact]
+    public void View_details_comes_first_in_the_context_and_more_menus_of_a_container()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: true);
+
+        var viewDetails = Find(actions, RowActionKind.ViewDetails);
+        Assert.Same(viewDetails, actions.Sections[0].Single());
+        Assert.Same(viewDetails, actions.MoreMenu(compact: false)[0].Single());
+        Assert.Same(viewDetails, actions.MoreMenu(compact: true)[0].Single());
+        Assert.DoesNotContain(viewDetails, actions.Buttons(compact: false));
+        Assert.Equal("View details", viewDetails.Label);
+        Assert.Null(viewDetails.EngineAction);
+        Assert.Equal<string>(["web"], viewDetails.Ids);
+    }
+
+    [Fact]
+    public void View_details_is_enabled_while_not_connected_or_busy()
+    {
+        Assert.True(Find(RowActions.ForContainer(Row("web"), connected: false), RowActionKind.ViewDetails).IsEnabled);
+        Assert.True(Find(RowActions.ForContainer(Row("web", pending: ContainerAction.Stop), connected: true), RowActionKind.ViewDetails).IsEnabled);
+    }
+
+    [Fact]
+    public void The_detail_page_has_the_same_actions_without_view_details()
+    {
+        var row = Row("web", published: true);
+        var list = RowActions.ForContainer(row, connected: true);
+        var page = RowActions.ForContainer(row, connected: true, viewDetails: false);
+
+        static object Shape(RowAction a) => (a.Kind, a.Label, a.IsEnabled, a.Button, a.IsMain, a.EngineAction, string.Join(",", a.Ids));
+        Assert.Equal(list.Sections.Skip(1).Select(s => s.Select(Shape).ToArray()), page.Sections.Select(s => s.Select(Shape).ToArray()));
+        Assert.Equal(list.Buttons(compact: false).Select(Shape), page.Buttons(compact: false).Select(Shape));
+        Assert.Equal(list.BrowserUrl, page.BrowserUrl);
+    }
+
+    [Fact]
+    public void A_project_has_no_view_details() =>
+        Assert.DoesNotContain(
+            RowActions.ForProject([Row("a")], connected: true).Sections.SelectMany(s => s),
+            a => a.Kind == RowActionKind.ViewDetails);
 
     // Compose projects.
 

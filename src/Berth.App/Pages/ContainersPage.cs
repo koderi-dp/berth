@@ -9,6 +9,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Hooks;
 using Microsoft.UI.Reactor.Input;
 using Microsoft.UI.Reactor.Layout;
+using Microsoft.UI.Reactor.Navigation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.System;
@@ -29,12 +30,7 @@ internal sealed class ContainersPage : EngineStateComponent
 
     private sealed record RowItem(ContainerRow Row, string? Project) : ListItem(Row.Id);
 
-    /// <summary>What the delete confirmation is about: the ids asked for and the text that names them.</summary>
-    private sealed record DeleteRequest(ImmutableArray<string> Ids, string Text);
-
     private static readonly ImmutableHashSet<string> NoIds = ImmutableHashSet<string>.Empty;
-
-    private static readonly ContainerFilter NoFilter = new("", RunningOnly: false);
 
     public override Element Render()
     {
@@ -48,6 +44,11 @@ internal sealed class ContainersPage : EngineStateComponent
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
         var (searchFocused, setSearchFocused) = UseState(false);
         var searchBox = this.UseElementRef<TextBox>();
+        var nav = UseNavigation<AppRoute>();
+        // Each return to the page (it is kept while a detail page shows) mounts a new search box with the kept text. A box that was
+        // kept drops the first edit after the return: Reactor waits for the echo of a write it made while the page was away.
+        var (visits, updateVisits) = UseReducer(0);
+        UseNavigationLifecycle(onNavigatedTo: _ => updateVisits(v => v + 1));
 
         var connected = state.Status == ConnectionStatus.Connected;
         var runningOnly = settings.ContainerList.RunningOnly;
@@ -69,7 +70,8 @@ internal sealed class ContainersPage : EngineStateComponent
             Send,
             (ids, value) => updateChecked(current => value ? current.Union(ids) : current.Except(ids)),
             project => updateCollapsed(current => current.Contains(project) ? current.Remove(project) : current.Add(project)),
-            rows => setDeleteRequest(new DeleteRequest([.. rows.Select(r => r.Id)], BulkSelection.DeleteText(rows))));
+            rows => setDeleteRequest(DeleteRequest.For(rows)),
+            row => nav.Navigate(new AppRoute.ContainerDetail(row.Id), new NavigateOptions { Transition = NavigationTransition.DrillIn() }));
 
         var shownIds = visibleRows.Select(r => r.Id).ToArray();
         var deleteRows = DeleteRows(visibleRows, checkedIds, connected);
@@ -112,10 +114,10 @@ internal sealed class ContainersPage : EngineStateComponent
         var page = (FlexColumn(
                 Widgets.PageTitle("Containers").Flex(shrink: 0),
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
-                Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused),
+                Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused, visits),
                 BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
                 Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
-                DeleteDialog(deleteRequest, () => setDeleteRequest(null)))
+                DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
             with
             {
                 RowGap = 16,
@@ -142,12 +144,10 @@ internal sealed class ContainersPage : EngineStateComponent
     }
 
     /// <summary>Sends <paramref name="action"/> for <paramref name="ids"/> to the session current at the time of the click.</summary>
-    private static void Send(IReadOnlyList<string> ids, ContainerAction action) => Send(ids, action, force: false);
-
-    private static void Send(IReadOnlyList<string> ids, ContainerAction action, bool force)
+    private static void Send(IReadOnlyList<string> ids, ContainerAction action)
     {
         if (ids.Count > 0)
-            AppServices.Current.Session.Dispatch(new ActionRequested([.. ids], action, force));
+            AppServices.Current.Session.Dispatch(new ActionRequested([.. ids], action));
     }
 
     private static void SetRunningOnly(bool value) =>
@@ -181,7 +181,7 @@ internal sealed class ContainersPage : EngineStateComponent
         return items;
     }
 
-    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
+    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused, int visit) =>
         (FlexRow(
                 TextBox(search, setSearch, placeholderText: "Search")
                     .Ref(searchBox)
@@ -190,7 +190,8 @@ internal sealed class ContainersPage : EngineStateComponent
                     .ToolTip("Search by name, image or ID (Ctrl+F)")
                     .OnGotFocus((_, _) => setSearchFocused(true))
                     .OnLostFocus((_, _) => setSearchFocused(false))
-                    .Width(320),
+                    .Width(320)
+                    .WithKey("search-" + visit),
                 ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
                     .AutomationName("Only show running containers"))
             with
@@ -299,35 +300,5 @@ internal sealed class ContainersPage : EngineStateComponent
         }
 
         return on == 0 ? false : on == all ? true : null;
-    }
-
-    /// <summary>The confirmation before a delete; it is always in the tree and opens while there is a request.</summary>
-    private static Element DeleteDialog(DeleteRequest? request, Action onDone)
-    {
-        return ContentDialog("Delete container?", Body(request?.Text ?? "").TextWrapping(), "Delete") with
-        {
-            IsOpen = request is not null,
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            OnClosed = result =>
-            {
-                if (result == ContentDialogResult.Primary && request is not null)
-                    ConfirmDelete(request.Ids);
-                onDone();
-            },
-        };
-    }
-
-    /// <summary>
-    /// Removes the confirmed containers as they are now, read from the current session when the user confirms: rows that are gone
-    /// or became pending while the dialog was open are skipped, running ones are stopped first (force), and nothing is sent when
-    /// the connection was lost meanwhile.
-    /// </summary>
-    private static void ConfirmDelete(ImmutableArray<string> ids)
-    {
-        var state = AppServices.Current.Session.State;
-        var rows = ComposeGrouping.Build(state.Containers, state.Pending, NoFilter).SelectMany(g => g.Rows);
-        var removal = BulkSelection.Removal(rows, ids, state.Status == ConnectionStatus.Connected);
-        Send(removal.Ids, ContainerAction.Remove, removal.Force);
     }
 }

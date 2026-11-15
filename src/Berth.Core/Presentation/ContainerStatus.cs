@@ -1,4 +1,5 @@
 using System.Globalization;
+using Berth.Engine.Models;
 
 namespace Berth.Presentation;
 
@@ -15,7 +16,7 @@ public enum StateShape
     Ring,
 }
 
-/// <summary>What the containers table shows about a container's state besides its text.</summary>
+/// <summary>What the containers table and a container's detail page show about its state.</summary>
 public static class ContainerStatus
 {
     private const string ExitedPrefix = "Exited (";
@@ -53,4 +54,18 @@ public static class ContainerStatus
 
         return states.All(s => s == RowState.Running) ? StateShape.Filled : StateShape.Half;
     }
+
+    /// <summary>
+    /// The state line of a container's detail page. The state is the list's, which follows the engine's events; a running container
+    /// adds since when it runs from its last read ("Running (52 minutes ago)"), when that read also found it running. A stopped one
+    /// says what the list says ("Exited (137) 3 hours ago", "Created"), or "Stopped" when the list says nothing.
+    /// </summary>
+    public static string Headline(RowState state, string listStatus, ContainerStateDetails? inspected, DateTimeOffset now) => state switch
+    {
+        RowState.Running when inspected is { Running: true, StartedAt: { } startedAt } => $"Running ({AgeFormat.Ago(now, startedAt)})",
+        RowState.Running => "Running",
+        RowState.Paused => "Paused",
+        RowState.Restarting => "Restarting",
+        _ => string.IsNullOrWhiteSpace(listStatus) ? "Stopped" : listStatus,
+    };
 }

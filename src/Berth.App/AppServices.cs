@@ -5,7 +5,8 @@ using Berth.Settings;
 namespace Berth;
 
 /// <summary>
-/// What the app owns besides its window: the settings and the engine session for the active connection. Created once by the entry
+/// What the app owns besides its window: the settings, the engine session for the active connection and the detail session of the
+/// container whose page is open. Created once by the entry
 /// point (<see cref="Create"/>); the components reach it through <see cref="Current"/>. Changes are made on the UI thread; the events
 /// are raised on the thread that made the change.
 /// </summary>
@@ -16,6 +17,7 @@ internal sealed class AppServices
     private readonly SettingsStore _store;
     private AppSettings _settings;
     private EngineSession _session;
+    private ContainerDetailSession? _detail;
 
     private AppServices(SettingsStore store)
     {
@@ -53,6 +55,29 @@ internal sealed class AppServices
     public EngineSession Session => Volatile.Read(ref _session);
 
     public event Action? SessionChanged;
+
+    /// <summary>
+    /// The detail session of the container whose page is open, on the current connection; null while none is. Replaced, and
+    /// <see cref="DetailChanged"/> raised, by <see cref="OpenDetail"/> and <see cref="CloseDetail"/>; closed when the connection is switched.
+    /// </summary>
+    public ContainerDetailSession? Detail => Volatile.Read(ref _detail);
+
+    public event Action? DetailChanged;
+
+    /// <summary>
+    /// Opens a detail session for <paramref name="containerId"/> on the current connection and starts reading it, in place of the one
+    /// open (which is disposed). While not connected none can open: the one open is closed and false is returned.
+    /// </summary>
+    public bool OpenDetail(string containerId)
+    {
+        var next = Session.OpenDetail(containerId);
+        next?.Open();
+        ReplaceDetail(next);
+        return next is not null;
+    }
+
+    /// <summary>Closes the open detail session, if any: the page left, or its connection was lost.</summary>
+    public void CloseDetail() => ReplaceDetail(null);
 
     /// <summary>
     /// Applies <paramref name="change"/> and saves the result. When the active connection, or any field of it, is different afterwards,
@@ -107,8 +132,20 @@ internal sealed class AppServices
     private static EngineSession CreateSession(ConnectionProfile connection) =>
         new(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error);
 
+    private void ReplaceDetail(ContainerDetailSession? next)
+    {
+        var old = Interlocked.Exchange(ref _detail, next);
+        if (old is null && next is null)
+            return;
+        DetailChanged?.Invoke();
+        if (old is not null)
+            _ = Task.Run(() => DisposeAsync(old));
+    }
+
     private void ReplaceSession(ConnectionProfile connection)
     {
+        // The detail session runs on the old connection; the page goes back to the list (App follows SessionChanged).
+        CloseDetail();
         var next = CreateSession(connection);
         var old = Interlocked.Exchange(ref _session, next);
         AppLog.Write("connection switched");
@@ -117,7 +154,7 @@ internal sealed class AppServices
         _ = Task.Run(() => DisposeAsync(old));
     }
 
-    private static async Task DisposeAsync(EngineSession session)
+    private static async Task DisposeAsync(IAsyncDisposable session)
     {
         try
         {
@@ -125,7 +162,7 @@ internal sealed class AppServices
         }
         catch (Exception ex)
         {
-            AppLog.Error("closing the previous session failed", ex);
+            AppLog.Error(session is ContainerDetailSession ? "closing a detail session failed" : "closing the previous session failed", ex);
         }
     }
 }
