@@ -17,8 +17,17 @@ public sealed class EngineSession : IAsyncDisposable
 {
     private const string EngineClosedConnection = "The engine closed the connection.";
 
+    // What failed, as told to the error sink. Fixed wording: the exception carries the rest.
+    private const string ConnectFailedReport = "connecting to the engine failed";
+    private const string LoadFailedReport = "loading the containers failed";
+    private const string StreamFailedReport = "the engine event stream failed";
+    private const string ActionFailedReport = "a container action failed";
+    private const string HandlerFailedReport = "a state change handler failed";
+    private const string LoopFailedReport = "handling a session event failed";
+
     private readonly Func<IEngineApi> _createApi;
     private readonly TimeProvider _time;
+    private readonly Action<string, Exception>? _onError;
     private readonly Channel<Envelope> _events = Channel.CreateUnbounded<Envelope>(new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource _lifetime = new();
     private readonly Task _loop;
@@ -33,11 +42,22 @@ public sealed class EngineSession : IAsyncDisposable
     private readonly List<Task> _retiring = [];
 
     public EngineSession(Func<IEngineApi> createApi, TimeProvider time)
+        : this(createApi, time, onError: null)
+    {
+    }
+
+    /// <param name="onError">
+    /// Told what failed, in fixed wording, and the exception: a failed connect, list load, event stream or action, a throwing
+    /// <see cref="StateChanged"/> handler, or an event the loop could not handle. Never told of a cancellation the session caused.
+    /// Called on a thread-pool thread; an exception it throws is ignored.
+    /// </param>
+    public EngineSession(Func<IEngineApi> createApi, TimeProvider time, Action<string, Exception>? onError)
     {
         ArgumentNullException.ThrowIfNull(createApi);
         ArgumentNullException.ThrowIfNull(time);
         _createApi = createApi;
         _time = time;
+        _onError = onError;
         _loop = Task.Run(RunAsync);
     }
 
@@ -86,16 +106,15 @@ public sealed class EngineSession : IAsyncDisposable
                     continue;
                 }
 
-                var (next, effects) = SessionReducer.Reduce(_state, e);
-                var changed = !ReferenceEquals(next, _state);
-                Volatile.Write(ref _state, next);
-
-                // Effects start before observers hear of the state, so a timer the state implies already exists.
-                foreach (var effect in effects)
-                    Start(effect);
-
-                if (changed)
-                    Raise(StateChanged, next);
+                try
+                {
+                    Handle(e);
+                }
+                catch (Exception ex)
+                {
+                    // A throwing reducer or effect start must not end the loop: the UI would freeze on its last state.
+                    Report(LoopFailedReport, ex);
+                }
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
@@ -103,11 +122,31 @@ public sealed class EngineSession : IAsyncDisposable
         }
     }
 
+    /// <summary>Runs one event through the reducer, starts its effects, then tells observers of the new state.</summary>
+    private void Handle(SessionEvent e)
+    {
+        var (next, effects) = SessionReducer.Reduce(_state, e);
+        var changed = !ReferenceEquals(next, _state);
+        Volatile.Write(ref _state, next);
+
+        try
+        {
+            // Effects start before observers hear of the state, so a timer the state implies already exists.
+            foreach (var effect in effects)
+                Start(effect);
+        }
+        finally
+        {
+            if (changed)
+                Raise(StateChanged, next);
+        }
+    }
+
     /// <summary>
-    /// Invokes each handler, ignoring exceptions: a throwing observer must not stop the loop or keep later observers
-    /// from hearing of the change.
+    /// Invokes each handler, reporting and otherwise ignoring exceptions: a throwing observer must not stop the loop or keep
+    /// later observers from hearing of the change.
     /// </summary>
-    private static void Raise<T>(Action<T>? handlers, T value)
+    private void Raise<T>(Action<T>? handlers, T value)
     {
         if (handlers is null)
             return;
@@ -117,10 +156,23 @@ public sealed class EngineSession : IAsyncDisposable
             {
                 handler(value);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Nothing to report to: the session has no log, and rethrowing would end the loop.
+                Report(HandlerFailedReport, ex);
             }
+        }
+    }
+
+    /// <summary>Tells the error sink, if any. A throwing sink is ignored: reporting must not break what it reports on.</summary>
+    private void Report(string what, Exception ex)
+    {
+        try
+        {
+            _onError?.Invoke(what, ex);
+        }
+        catch (Exception)
+        {
+            // Nowhere left to report to.
         }
     }
 
@@ -199,6 +251,7 @@ public sealed class EngineSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Report(ConnectFailedReport, ex);
             result = new ConnectFailed(ex.Message);
         }
 
@@ -221,6 +274,7 @@ public sealed class EngineSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Report(LoadFailedReport, ex);
             result = new LoadFailed(generation, ex.Message, IsUnreachable(ex));
         }
 
@@ -242,6 +296,7 @@ public sealed class EngineSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Report(StreamFailedReport, ex);
             message = ex.Message;
         }
 
@@ -273,6 +328,7 @@ public sealed class EngineSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Report(ActionFailedReport, ex);
             result = new ActionFailed(action.Id, ex.Message, IsUnreachable(ex));
         }
 

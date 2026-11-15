@@ -94,8 +94,9 @@ internal sealed class AppServices
     private static ConnectionProfile ActiveConnection(AppSettings settings) =>
         settings.Connections.FirstOrDefault(connection => connection.Id == settings.ActiveConnectionId) ?? settings.Connections[0];
 
+    /// <summary>A session for <paramref name="connection"/> whose failures go to the log (fixed wording and exception type names only).</summary>
     private static EngineSession CreateSession(ConnectionProfile connection) =>
-        new(() => EngineConnection.Open(connection), TimeProvider.System);
+        new(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error);
 
     private void ReplaceSession(ConnectionProfile connection)
     {

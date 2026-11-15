@@ -284,13 +284,149 @@ public sealed class EngineSessionTests
         Assert.Equal(Enumerable.Range(1, ids.Length), seen);
     }
 
+    [Fact]
+    public async Task A_failed_connect_is_reported_with_its_exception()
+    {
+        var refused = new EngineException(0, "connection refused");
+        var api = new FakeEngineApi();
+        api.Fail("Connect", refused);
+        await using var h = Harness.With(api);
+
+        h.Session.Dispatch(new ConnectRequested());
+        var error = await h.WaitForError();
+
+        Assert.Equal("connecting to the engine failed", error.What);
+        Assert.Same(refused, error.Exception);
+    }
+
+    [Fact]
+    public async Task A_failed_action_is_reported_with_its_exception()
+    {
+        var conflict = new EngineException(409, "container a is not running");
+        var api = new FakeEngineApi();
+        api.Fail("Stop", conflict);
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+
+        h.Session.Dispatch(new ActionRequested(["a"], ContainerAction.Stop));
+        var error = await h.WaitForError();
+
+        Assert.Equal("a container action failed", error.What);
+        Assert.Same(conflict, error.Exception);
+    }
+
+    [Fact]
+    public async Task A_failed_load_is_reported_with_its_exception()
+    {
+        var broken = new InvalidOperationException("list broke");
+        var api = new FakeEngineApi();
+        api.Fail("List", broken);
+        await using var h = Harness.With(api);
+
+        h.Session.Dispatch(new ConnectRequested());
+        var error = await h.WaitForError();
+
+        Assert.Equal("loading the containers failed", error.What);
+        Assert.Same(broken, error.Exception);
+    }
+
+    [Fact]
+    public async Task A_failed_event_stream_is_reported_with_its_exception()
+    {
+        var reset = new EngineException(0, "connection reset by peer");
+        var api = new FakeEngineApi();
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        await api.StreamStarted.WaitAsync(Patience);
+
+        api.EndStream(reset);
+        var error = await h.WaitForError();
+
+        Assert.Equal("the engine event stream failed", error.What);
+        Assert.Same(reset, error.Exception);
+    }
+
+    [Fact]
+    public async Task A_throwing_state_handler_is_reported_and_later_states_still_arrive()
+    {
+        var api = new FakeEngineApi();
+        await using var h = Harness.With(api);
+        var thrown = new InvalidOperationException("handler broke");
+        h.Session.StateChanged += _ => throw thrown;
+
+        h.Session.Dispatch(new ConnectRequested());
+        var error = await h.WaitForError();
+        var state = await h.WaitFor(s => s.Status == ConnectionStatus.Connected && s.Containers.Length == 2);
+
+        Assert.Equal("a state change handler failed", error.What);
+        Assert.Same(thrown, error.Exception);
+        Assert.Equal(["a", "b"], state.Containers.Select(c => c.Id));
+    }
+
+    [Fact]
+    public async Task An_effect_that_cannot_start_is_reported_and_the_loop_keeps_running()
+    {
+        var api = new FakeEngineApi();
+        api.Fail("Connect", new EngineException(0, "connection refused"));
+        var time = new BrokenTimerTimeProvider();
+        await using var h = new Harness(() => api, time);
+
+        h.Session.Dispatch(new ConnectRequested());
+        await h.WaitFor(s => s.Status == ConnectionStatus.Disconnected && s.RetryAttempt == 1);
+        var error = await h.WaitForError(e => e.What == "handling a session event failed");
+        Assert.IsType<InvalidOperationException>(error.Exception);
+
+        var raised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Session.StateChanged += s =>
+        {
+            if (s.Status == ConnectionStatus.Connecting)
+                raised.TrySetResult();
+        };
+        h.Session.Dispatch(new ConnectRequested());
+        await raised.Task.WaitAsync(Patience);
+    }
+
+    [Fact]
+    public async Task Cancellation_caused_by_the_session_is_not_reported()
+    {
+        var first = new FakeEngineApi();
+        var stop = first.Hold("Stop");
+        var h = Harness.With(first);
+        await h.ConnectAsync();
+        await first.StreamStarted.WaitAsync(Patience);
+        h.Session.Dispatch(new ActionRequested(["a"], ContainerAction.Stop));
+        await stop.Entered.WaitAsync(Patience);
+
+        // Starting over cancels the held action and the stream; disposing cancels the new connection's calls.
+        h.Session.Dispatch(new ConnectRequested());
+        await h.WaitFor(s => s.Status == ConnectionStatus.Connected && h.Created.Count == 2);
+        await h.DisposeAsync();
+
+        Assert.Contains("Stop a", first.Cancelled);
+        Assert.Empty(h.Errors);
+    }
+
+    /// <summary>A fake clock whose first timer cannot be created, so starting the effect that needs it throws.</summary>
+    private sealed class BrokenTimerTimeProvider : FakeTimeProvider
+    {
+        private int _created;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            Interlocked.Increment(ref _created) == 1
+                ? throw new InvalidOperationException("no timer")
+                : base.CreateTimer(callback, state, dueTime, period);
+    }
+
     /// <summary>A session over fake engines, with a fake clock.</summary>
     private sealed class Harness : IAsyncDisposable
     {
         private readonly ConcurrentQueue<IEngineApi> _created = new();
+        private readonly ConcurrentQueue<(string What, Exception Exception)> _errors = new();
+        private readonly SemaphoreSlim _errorArrived = new(0);
 
-        public Harness(Func<IEngineApi> createApi)
+        public Harness(Func<IEngineApi> createApi, FakeTimeProvider? time = null)
         {
+            Time = time ?? new FakeTimeProvider();
             Session = new EngineSession(
                 () =>
                 {
@@ -298,14 +434,40 @@ public sealed class EngineSessionTests
                     _created.Enqueue(api);
                     return api;
                 },
-                Time);
+                Time,
+                (what, ex) =>
+                {
+                    _errors.Enqueue((what, ex));
+                    _errorArrived.Release();
+                });
         }
 
-        public FakeTimeProvider Time { get; } = new();
+        public FakeTimeProvider Time { get; }
 
         public EngineSession Session { get; }
 
         public IReadOnlyCollection<IEngineApi> Created => _created;
+
+        /// <summary>Everything the session reported to its error sink, in order.</summary>
+        public IReadOnlyCollection<(string What, Exception Exception)> Errors => _errors;
+
+        /// <summary>Completes with the first reported error, earlier or later, that matches <paramref name="match"/> (any when null).</summary>
+        public async Task<(string What, Exception Exception)> WaitForError(Func<(string What, Exception Exception), bool>? match = null)
+        {
+            var deadline = DateTime.UtcNow + Patience;
+            while (true)
+            {
+                foreach (var error in _errors)
+                {
+                    if (match is null || match(error))
+                        return error;
+                }
+
+                var left = deadline - DateTime.UtcNow;
+                if (left <= TimeSpan.Zero || !await _errorArrived.WaitAsync(left))
+                    throw new TimeoutException("No matching error was reported.");
+            }
+        }
 
         /// <summary>Hands out <paramref name="apis"/> in order, then fresh default fakes.</summary>
         public static Harness With(params FakeEngineApi[] apis)
