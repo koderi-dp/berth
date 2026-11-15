@@ -19,9 +19,20 @@ public sealed class SettingsStoreTests : IDisposable
         var settings = new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load().Settings;
 
         var connection = Assert.Single(settings.Connections);
-        Assert.Equal("Docker (tcp://127.0.0.1:2375)", connection.Name);
+        Assert.Equal("Local engine", connection.Name);
         Assert.Equal(connection.Id, settings.ActiveConnectionId);
         Assert.False(settings.ContainerList.RunningOnly);
+    }
+
+    [Fact]
+    public void A_saved_connection_keeps_the_name_an_older_first_run_gave_it()
+    {
+        var old = new ConnectionProfile("one", "Docker (tcp://127.0.0.1:2375)", TransportKind.Tcp, "127.0.0.1", 2375, "", null);
+        new SettingsStore(_directory, null).Save(new AppSettings([old], "one", new ContainerListOptions(RunningOnly: false)));
+
+        var settings = new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load().Settings;
+
+        Assert.Equal("Docker (tcp://127.0.0.1:2375)", Assert.Single(settings.Connections).Name);
     }
 
     [Fact]
