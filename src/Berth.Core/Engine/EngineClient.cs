@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.CompilerServices;
 using System.Security.Authentication;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -91,8 +92,24 @@ public sealed class EngineClient : IEngineApi
     public Task RemoveContainerAsync(string id, bool force, CancellationToken ct) =>
         ActAsync(HttpMethod.Delete, ContainerPath(id, force ? "?force=true" : ""), PlainTimeout, ct);
 
-    public IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct) =>
-        throw new NotSupportedException("The event stream is not implemented yet.");
+    /// <summary>
+    /// Reads the engine's events as they happen, with no deadline. A line that is not an event is skipped. The enumeration ends when
+    /// the engine closes the stream; a dropped connection throws <see cref="EngineException"/> with status 0.
+    /// </summary>
+    public async IAsyncEnumerable<EngineEventMessage> StreamEventsAsync([EnumeratorCancellation] CancellationToken ct)
+    {
+        using var response = await OpenStreamAsync(Versioned("/events"), ct).ConfigureAwait(false);
+        var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var lines = JsonLines.ReadAsync(stream, ct).GetAsyncEnumerator();
+
+        while (await NextLineAsync(lines, ct).ConfigureAwait(false))
+        {
+            if (ToEvent(lines.Current) is { } message)
+            {
+                yield return message;
+            }
+        }
+    }
 
     public ValueTask DisposeAsync()
     {
@@ -111,6 +128,79 @@ public sealed class EngineClient : IEngineApi
         c.Status ?? "",
         c.Ports?.ConvertAll(p => new PortMapping(p.Ip, p.PrivatePort, p.PublicPort, p.Type ?? "")) ?? [],
         c.Labels ?? new Dictionary<string, string>());
+
+    private static EngineEventMessage? ToEvent(ReadOnlyMemory<byte> line)
+    {
+        WireEvent? wire;
+        try
+        {
+            wire = JsonSerializer.Deserialize(line.Span, EngineJson.Default.WireEvent);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return wire is null
+            ? null
+            : new EngineEventMessage(
+                wire.Type ?? "",
+                wire.Action ?? "",
+                wire.Actor?.Id ?? "",
+                wire.Actor?.Attributes ?? new Dictionary<string, string>(),
+                wire.TimeNano);
+    }
+
+    /// <summary>Sends a GET whose answer is read as it arrives, with no deadline. A 2xx answer is returned; any other status throws.</summary>
+    private async Task<HttpResponseMessage> OpenStreamAsync(string path, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            ct.ThrowIfCancellationRequested();
+            throw new EngineException(0, TransportMessage(ex));
+        }
+        catch (Exception ex) when (IsTransportFailure(ex))
+        {
+            ct.ThrowIfCancellationRequested();
+            throw new EngineException(0, ex.Message);
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            return response;
+        }
+
+        using (response)
+        {
+            throw await ErrorAsync(response, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Moves to the next line of an open stream; a transport failure mid-read throws <see cref="EngineException"/> with status 0.</summary>
+    private static async Task<bool> NextLineAsync(IAsyncEnumerator<ReadOnlyMemory<byte>> lines, CancellationToken ct)
+    {
+        try
+        {
+            return await lines.MoveNextAsync().ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex)
+        {
+            ct.ThrowIfCancellationRequested();
+            throw new EngineException(0, TransportMessage(ex));
+        }
+        catch (Exception ex) when (IsTransportFailure(ex))
+        {
+            ct.ThrowIfCancellationRequested();
+            throw new EngineException(0, ex.Message);
+        }
+    }
 
     private string ContainerPath(string id, string rest) => Versioned($"/containers/{Uri.EscapeDataString(id)}{rest}");
 

@@ -9,6 +9,7 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(WireVersion))]
 [JsonSerializable(typeof(WireInfo))]
 [JsonSerializable(typeof(List<WireContainer>))]
+[JsonSerializable(typeof(WireEvent))]
 [JsonSerializable(typeof(WireError))]
 internal sealed partial class EngineJson : JsonSerializerContext;
 
@@ -46,6 +47,17 @@ internal sealed record WireContainer(
     [property: JsonPropertyName("Status")] string? Status,
     [property: JsonPropertyName("Ports")] List<WirePort>? Ports,
     [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels);
+
+internal sealed record WireActor(
+    [property: JsonPropertyName("ID")] string? Id,
+    [property: JsonPropertyName("Attributes")] Dictionary<string, string>? Attributes);
+
+/// <summary>One line of the event stream.</summary>
+internal sealed record WireEvent(
+    [property: JsonPropertyName("Type")] string? Type,
+    [property: JsonPropertyName("Action")] string? Action,
+    [property: JsonPropertyName("Actor")] WireActor? Actor,
+    [property: JsonPropertyName("timeNano")] long TimeNano);
 
 /// <summary>The body the engine sends with an error status.</summary>
 internal sealed record WireError([property: JsonPropertyName("message")] string? Message);
