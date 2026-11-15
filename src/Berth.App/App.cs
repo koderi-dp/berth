@@ -41,6 +41,7 @@ internal sealed class App : EngineStateComponent
                         ColumnGap = 12,
                     }),
             })
+            .NoIcon()
             .WithNavigation(nav)
             .PaneToggleButtonVisible(true)
             .PaneToggleRequested(() => setIsPaneOpen(!isPaneOpen))

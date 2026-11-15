@@ -7,8 +7,8 @@ namespace Berth.Components;
 /// <summary>Segoe Fluent Icons glyphs the app uses.</summary>
 internal static class Glyphs
 {
-    public const string Play = "";
-    public const string Stop = "";
+    public const string Play = ""; // PlaySolid
+    public const string Stop = ""; // StopSolid: the outline Stop reads as an empty checkbox next to the row checkboxes
     public const string More = "";
     public const string Delete = "";
     public const string Edit = "";
