@@ -9,21 +9,8 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Pages.Images;
 
-/// <summary>
-/// What the images table calls back. One instance per page, kept across renders, so the table's props stay equal while nothing it
-/// shows changed; the page points its members at its latest handlers on every render.
-/// </summary>
-internal sealed class ImageTableHandlers
-{
-    /// <summary>Checks (true) or unchecks the rows with these keys.</summary>
-    public Action<IEnumerable<string>, bool> SetChecked { get; set; } = (_, _) => { };
-
-    /// <summary>A click on a column title.</summary>
-    public Action<ImageColumn> SortBy { get; set; } = _ => { };
-
-    /// <summary>A row's action, from its buttons, its "more" menu or its right-click menu.</summary>
-    public Action<ImageRow, RowAction> Act { get; set; } = (_, _) => { };
-}
+/// <summary>What the images table calls back (see <see cref="TableHandlers{TRow, TSort}"/>).</summary>
+internal sealed class ImageTableHandlers : TableHandlers<ImageRow, ImageColumn>;
 
 /// <summary>
 /// What the images table shows: the rows the filter and search keep (a memoized list), the checked keys, the layout, whether the

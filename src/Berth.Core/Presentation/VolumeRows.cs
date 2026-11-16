@@ -125,6 +125,39 @@ public static partial class VolumeRows
             .ThenBy(u => u.Destination, StringComparer.Ordinal),
     ];
 
+    /// <summary>
+    /// The line above the volumes table: "1.2 GB in use of 1.5 GB · 13 volumes" (in use is the engine's total less what removing the
+    /// unused volumes would free), or "Calculating… · 13 volumes" until the disk use has been read.
+    /// </summary>
+    public static string UsageLine(EngineState state)
+    {
+        var count = state.Volumes.Items.Length;
+        var volumes = count == 1 ? "1 volume" : $"{count} volumes";
+        if (state.DiskUsage.Usage is not { } usage)
+            return $"Calculating… · {volumes}";
+
+        var totals = usage.VolumeTotals;
+        return $"{ByteFormat.Bytes(totals.TotalSize - totals.Reclaimable)} in use of {ByteFormat.Bytes(totals.TotalSize)} · {volumes}";
+    }
+
+    /// <summary>
+    /// What is wrong with <paramref name="name"/> for a new volume: null when it is empty (nothing to say yet) or good; otherwise that it
+    /// breaks the engine's rule for names (<c>[a-zA-Z0-9][a-zA-Z0-9_.-]*</c>), or that a listed volume already has it (the engine would
+    /// hand back that volume rather than refuse).
+    /// </summary>
+    public static string? NameError(string name, EngineState state) =>
+        name.Length == 0 ? null
+        : !RunDraft.IsName(name) ? RunDraft.NameError
+        : state.Volumes.Items.Any(v => v.Name == name) ? $"A volume named {name} already exists."
+        : null;
+
+    /// <summary>Whether Create can send <paramref name="name"/>: not empty, no <see cref="NameError"/>, connected, and not being created already.</summary>
+    public static bool CanCreate(string name, EngineState state) =>
+        name.Length > 0
+        && NameError(name, state) is null
+        && state.Status == ConnectionStatus.Connected
+        && !state.Volumes.Pending.ContainsKey(name);
+
     /// <summary>Why the table is empty: no volumes at all, nothing matching the search, or nothing the filter keeps.</summary>
     public static string EmptyText(bool engineHasVolumes, UsageFilter filter) => filter.EmptyText("volumes", engineHasVolumes);
 

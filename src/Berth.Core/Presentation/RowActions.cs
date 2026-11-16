@@ -60,7 +60,10 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
     /// </summary>
     private const string PowerShellNote = "For PowerShell 7. Windows PowerShell 5.1 drops double quotes inside values.";
 
-    /// <summary>Delete: always the last action, a button set apart from the others.</summary>
+    /// <summary>Whether the row has Delete (a built-in network has none).</summary>
+    public bool HasDelete => Sections.Count > 0 && Sections[^1].Any(a => a.Kind == RowActionKind.Delete);
+
+    /// <summary>Delete: the last action, a button set apart from the others. Only when <see cref="HasDelete"/>.</summary>
     public RowAction Delete => Sections[^1].Single(a => a.Kind == RowActionKind.Delete);
 
     /// <summary>The row's buttons before Delete, in order: those shown at every width, and in a wide window also the others that have one.</summary>
@@ -145,6 +148,40 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
                 [Action(RowActionKind.Delete, "Delete", canAct, ButtonWhen.Always)],
             ],
             BrowserUrl: null);
+    }
+
+    /// <summary>
+    /// A volume's row: View details (its page) in the "more" menu; then Copy name; then Delete, which acts while the row can act
+    /// (<see cref="RowSelection.CanAct"/>). Every action names the volume.
+    /// </summary>
+    /// <param name="viewDetails">False on the volume's own page, which has the same actions but View details.</param>
+    public static RowActions ForVolume(VolumeRow row, bool connected, bool viewDetails = true)
+    {
+        ImmutableArray<string> keys = [row.Key];
+        RowAction Action(RowActionKind kind, string label, bool enabled) =>
+            new(kind, label, enabled, ButtonWhen.Never, IsMain: false, EngineAction: null, keys);
+
+        IReadOnlyList<RowAction> copy = [Action(RowActionKind.CopyName, "Copy name", enabled: true)];
+        IReadOnlyList<RowAction> delete = [Action(RowActionKind.Delete, "Delete", RowSelection.CanAct(row, connected)) with { Button = ButtonWhen.Always }];
+        return viewDetails
+            ? new RowActions([[Action(RowActionKind.ViewDetails, "View details", enabled: true)], copy, delete], BrowserUrl: null)
+            : new RowActions([copy, delete], BrowserUrl: null);
+    }
+
+    /// <summary>
+    /// A network's row: Copy name and Copy ID in the "more" menu; then Delete, which acts while the row can act, and which a built-in
+    /// network (bridge, host, none) does not have. Every action names the network's ID.
+    /// </summary>
+    public static RowActions ForNetwork(NetworkRow row, bool connected)
+    {
+        ImmutableArray<string> keys = [row.Key];
+        RowAction Action(RowActionKind kind, string label, bool enabled, ButtonWhen button = ButtonWhen.Never) =>
+            new(kind, label, enabled, button, IsMain: false, EngineAction: null, keys);
+
+        IReadOnlyList<RowAction> copies = [Action(RowActionKind.CopyName, "Copy name", enabled: true), Action(RowActionKind.CopyId, "Copy ID", enabled: true)];
+        return row.IsBuiltIn
+            ? new RowActions([copies], BrowserUrl: null)
+            : new RowActions([copies, [Action(RowActionKind.Delete, "Delete", NetworkRows.CanRemove(row, connected), ButtonWhen.Always)]], BrowserUrl: null);
     }
 
     /// <summary>

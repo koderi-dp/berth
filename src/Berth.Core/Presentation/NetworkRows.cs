@@ -32,6 +32,9 @@ public sealed record NetworkRow(
     public bool InUse => Containers.Count > 0;
 }
 
+/// <summary>A container attached to a network: its ID (to open its page) and its name.</summary>
+public sealed record NetworkMember(string ContainerId, string ContainerName);
+
 /// <summary>Turns the engine's network list into the rows the Networks page shows.</summary>
 public static class NetworkRows
 {
@@ -65,6 +68,15 @@ public static class NetworkRows
                 state.Networks.Pending.TryGetValue(n.Id, out var action) ? action : null)),
         ];
     }
+
+    /// <summary>The containers attached to the network named <paramref name="name"/>, by container name, from the container list.</summary>
+    public static IReadOnlyList<NetworkMember> Members(EngineState state, string name) =>
+    [
+        .. state.Containers
+            .Where(c => c.Networks.Contains(name, StringComparer.Ordinal))
+            .Select(c => new NetworkMember(c.Id, ComposeGrouping.NameOf(c)))
+            .OrderBy(m => m.ContainerName, StringComparer.OrdinalIgnoreCase),
+    ];
 
     /// <summary>The rows <paramref name="filter"/> keeps (searching name, driver and ID), in <paramref name="sort"/>'s order.</summary>
     public static IReadOnlyList<NetworkRow> Shown(IEnumerable<NetworkRow> rows, UsageFilter filter, ListSort<NetworkColumn> sort) =>

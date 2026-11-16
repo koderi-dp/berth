@@ -52,7 +52,6 @@ internal sealed class ImagesPage : ListPageComponent
         var (filter, sort) = (view.Filter, view.Sort);
         var searchBox = UseListSearch();
         var nav = UseNavigation<AppRoute>();
-        var (checkedKeys, updateChecked) = UseReducer(NoKeys);
         var (dialog, setDialog) = UseState<Dialog?>(null);
         var (pullFocus, setPullFocus) = UseState(NoPullFocus);
         var handlers = UseMemo(() => new ImageTableHandlers(), Array.Empty<object>());
@@ -60,15 +59,7 @@ internal sealed class ImagesPage : ListPageComponent
         var connected = state.Status == ConnectionStatus.Connected;
         var all = UseMemo(() => ImageRows.From(state), state.Images, state.Containers);
         var rows = UseMemo(() => ImageRows.Shown(all, filter, sort), all, filter, sort);
-
-        // A row that is gone cannot stay checked.
-        UseEffect(
-            () =>
-            {
-                var existing = all.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
-                updateChecked(keys => keys.All(existing.Contains) ? keys : keys.Intersect(existing));
-            },
-            all);
+        var (checkedKeys, setChecked) = UseCheckedKeys(all);
 
         var deleteKeys = RowSelection.Checked(rows, checkedKeys, connected);
         var removal = state.Images.Removal;
@@ -93,7 +84,7 @@ internal sealed class ImagesPage : ListPageComponent
                 AppServices.Current.Session.Dispatch(new PullRequested(key));
         }
 
-        handlers.SetChecked = (keys, value) => updateChecked(current => value ? current.Union(keys) : current.Except(keys));
+        handlers.SetChecked = setChecked;
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });
         handlers.Act = (row, action) =>
         {
@@ -152,39 +143,15 @@ internal sealed class ImagesPage : ListPageComponent
                 .AutomationId("delete-selected")
                 .ToolTip("Delete the selected images (Delete)")
                 .IsEnabled(deleteKeys.Length > 0));
-        Element? bars = removalPanel is null && bulk is null
-            ? null
-            : (FlexColumn(removalPanel?.WithKey("removal"), bulk?.WithKey("selection")) with { RowGap = 12 }).Flex(shrink: 0);
-
         return ListPage.Render(
             "Images",
             state,
-            UsageLine(state, connected),
+            ListPage.UsageLine(ImageRows.UsageLine(state), "image-usage", state),
             toolbar,
-            bars,
+            ListPage.Bars(removalPanel, bulk),
             Table(state, rows, filter, checkedKeys, compact, connected, sort, pullFocus, handlers),
             DialogOf(dialog, () => setDialog(null), FocusPull, OpenContainer, view));
     }
-
-    /// <summary>"67 MB in use of 1.2 GB · 12 images" and a button that reads the disk use again; "Calculating…" until it is read.</summary>
-    private static Element UsageLine(EngineState state, bool connected) =>
-        (FlexRow(
-                Body(ImageRows.UsageLine(state)).Foreground(Theme.SecondaryText).AutomationId("image-usage"),
-                state.DiskUsage.Loading
-                    ? ProgressRing().Size(16, 16).AutomationName("Reading the disk use")
-                    : Widgets.IconButton(Glyphs.Restart, "Read the disk use again", () => AppServices.Current.Session.Dispatch(new DiskUsageRequested()), size: 12)
-                        .AutomationId("refresh-usage")
-                        .Padding(4)
-                        .MinWidth(24)
-                        .MinHeight(24)
-                        .IsEnabled(connected))
-            with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 8,
-            })
-            .MinHeight(24)
-            .Flex(shrink: 0);
 
     private static Element Table(
         EngineState state,
@@ -233,26 +200,10 @@ internal sealed class ImagesPage : ListPageComponent
         PullDialogOpen => Component<PullDialog, PullDialogProps>(new(focusPull, close)),
         RunDialogOpen run => Component<RunDialog, RunDialogProps>(new(run.Row.IsTagged ? run.Row.Key : run.Row.ImageId, run.Row.ImageId, openContainer)),
         InspectDialogOpen inspect => Component<InspectDialog, InspectDialogProps>(new(inspect.Row.DisplayName, inspect.Row.ImageId, close)),
-        DeleteDialogOpen delete => Confirm(delete.Plan.Title, delete.Plan.Text, canConfirm: true, () => ConfirmDelete(delete.Keys, view), close),
-        PruneDialogOpen prune => Confirm(prune.Plan.Title, prune.Plan.Text, !prune.Plan.IsEmpty, () => ConfirmPrune(prune.Plan), close),
+        DeleteDialogOpen delete => RemoveDialog.Render(delete.Plan.Title, delete.Plan.Text, canConfirm: true, () => ConfirmDelete(delete.Keys, view), close),
+        PruneDialogOpen prune => RemoveDialog.Render(prune.Plan.Title, prune.Plan.Text, !prune.Plan.IsEmpty, () => RemoveDialog.SendUnused(prune.Plan), close),
         _ => Empty(),
     };
-
-    /// <summary>A confirmation that names what will be removed. Cancel is the default button.</summary>
-    private static Element Confirm(string title, string text, bool canConfirm, Action onConfirm, Action onDone) =>
-        ContentDialog(title, Body(text).TextWrapping().IsTextSelectionEnabled().AutomationId("confirm-text"), "Remove") with
-        {
-            IsOpen = true,
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close,
-            IsPrimaryButtonEnabled = canConfirm,
-            OnClosed = result =>
-            {
-                if (result == ContentDialogResult.Primary)
-                    onConfirm();
-                onDone();
-            },
-        };
 
     /// <summary>
     /// Sends the confirmed delete as it stands now, from the current session: of the keys named, the rows the filter and search show,
@@ -260,20 +211,8 @@ internal sealed class ImagesPage : ListPageComponent
     /// </summary>
     private static void ConfirmDelete(ImmutableArray<string> keys, ResourceListView<ImageFilter, ImageColumn> view)
     {
-        var session = AppServices.Current.Session;
-        var state = session.State;
+        var state = AppServices.Current.Session.State;
         var all = ImageRows.From(state);
-        var plan = Confirmations.RemoveImages(ImageRows.Shown(all, view.Filter, view.Sort), all, keys, state.Status == ConnectionStatus.Connected, state.DiskUsage.Usage);
-        if (!plan.IsEmpty)
-            session.Dispatch(plan.ToEvent());
-    }
-
-    /// <summary>Sends what the "Remove unused images" dialog named that is still unused, listed and not pending.</summary>
-    private static void ConfirmPrune(PrunePlan named)
-    {
-        var session = AppServices.Current.Session;
-        var plan = Confirmations.ConfirmPrune(named, session.State);
-        if (!plan.IsEmpty)
-            session.Dispatch(plan.ToEvent());
+        RemoveDialog.Send(Confirmations.RemoveImages(ImageRows.Shown(all, view.Filter, view.Sort), all, keys, state.Status == ConnectionStatus.Connected, state.DiskUsage.Usage));
     }
 }

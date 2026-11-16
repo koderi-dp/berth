@@ -72,6 +72,24 @@ internal sealed class ListColumns<TSort> where TSort : struct, Enum
 /// </summary>
 internal sealed record ListSortView<TSort>(TSort Column, bool Descending, Func<TSort, string> AccessibleName, Action<TSort> OnSort) where TSort : struct, Enum;
 
+/// <summary>
+/// What a table component calls back. One instance per page, kept across renders, so the table's props stay equal while nothing it
+/// shows changed; the page points its members at its latest handlers on every render.
+/// </summary>
+/// <typeparam name="TRow">The table's row.</typeparam>
+/// <typeparam name="TSort">The table's sort columns.</typeparam>
+internal class TableHandlers<TRow, TSort> where TSort : struct, Enum
+{
+    /// <summary>Checks (true) or unchecks the rows with these keys.</summary>
+    public Action<IEnumerable<string>, bool> SetChecked { get; set; } = (_, _) => { };
+
+    /// <summary>A click on a column title.</summary>
+    public Action<TSort> SortBy { get; set; } = _ => { };
+
+    /// <summary>A row's action, from its buttons, its "more" menu or its right-click menu.</summary>
+    public Action<TRow, RowAction> Act { get; set; } = (_, _) => { };
+}
+
 internal static class ListSortView
 {
     /// <summary>The header's view of an images, volumes or networks sort; a click calls <paramref name="onSort"/> with the column.</summary>

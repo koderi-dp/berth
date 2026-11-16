@@ -31,6 +31,23 @@ internal abstract record AppRoute
     /// </summary>
     public sealed record ContainerDetail(string ContainerId, int Session) : AppRoute;
 
+    /// <summary>
+    /// The page of the volume <paramref name="Name"/> on the engine session <paramref name="Session"/>; opened from the volumes list,
+    /// which it returns to. The session number keeps a page from an earlier connection from being shown again.
+    /// </summary>
+    public sealed record VolumeDetail(string Name, int Session) : AppRoute;
+
+    /// <summary>Whether <paramref name="route"/> is a detail page (a container's or a volume's), which a switch of connection removes.</summary>
+    public static bool IsDetail(AppRoute route) => route is ContainerDetail or VolumeDetail;
+
+    /// <summary>The list a page belongs to: a detail page's list, or the page itself.</summary>
+    public static AppRoute ListOf(AppRoute route) => route switch
+    {
+        ContainerDetail => Containers,
+        VolumeDetail => Volumes,
+        _ => route,
+    };
+
     private sealed record Page(string Name) : AppRoute;
 }
 
@@ -73,28 +90,33 @@ internal sealed class App : EngineStateComponent
         var nav = UseNavigation(AppRoute.Containers);
         var (isPaneOpen, setIsPaneOpen) = UseState(true);
         var (settingsSetAside, setSettingsSetAside) = UseState(AppServices.Current.SettingsWereSetAside);
-        var (notice, setNotice) = UseState<string?>(null);
+        // A note for a list ("web-1 was removed."), shown while that list is the page shown.
+        var (notice, setNotice) = UseState<(AppRoute List, string Text)?>(null);
 
-        // Back to the list from a detail page, with an optional note for the list ("web-1 was removed."). The list is usually the page
-        // before; going back to it restores its search, sort and scroll.
+        // Back from a detail page, with an optional note for its list. The list is usually the page before; going back to it restores its
+        // search, sort and scroll. A container opened from a volume's page or the networks list goes back there, unless it was removed.
         void LeaveDetail(string? note)
         {
-            if (nav.CurrentRoute is not AppRoute.ContainerDetail)
+            var current = nav.CurrentRoute;
+            if (!AppRoute.IsDetail(current))
                 return;
-            setNotice(note);
-            if (nav.CanGoBack && nav.BackStack[^1] == AppRoute.Containers)
+            var list = AppRoute.ListOf(current);
+            setNotice(note is null ? null : (list, note));
+            var before = nav.CanGoBack ? nav.BackStack[^1] : null;
+            if (before == list || (note is null && current is AppRoute.ContainerDetail && (before is AppRoute.VolumeDetail || before == AppRoute.Networks)))
                 nav.GoBack();
             else
-                nav.Replace(AppRoute.Containers);
+                nav.Replace(list);
         }
 
-        // The detail session belongs to the detail page: none stays open on any other page. A note from the last one goes when the next opens.
+        // The detail session belongs to the container's page: none stays open on any other page. A note from the last detail page goes
+        // when the next opens.
         UseEffect(
             () =>
             {
-                if (nav.CurrentRoute is AppRoute.ContainerDetail)
+                if (AppRoute.IsDetail(nav.CurrentRoute))
                     setNotice(null);
-                else
+                if (nav.CurrentRoute is not AppRoute.ContainerDetail)
                     AppServices.Current.CloseDetail();
             },
             nav.CurrentRoute);
@@ -117,8 +139,9 @@ internal sealed class App : EngineStateComponent
             {
                 if (WantedEvent(nav.CurrentRoute) is { } wanted)
                     AppServices.Current.Session.Dispatch(wanted);
-                // The Images page's usage line: read again each time the page is shown (Remove unused names the space it frees from it).
-                if (nav.CurrentRoute == AppRoute.Images)
+                // The Images and Volumes pages' usage lines and the volumes' sizes: read again each time one is shown (Remove unused names
+                // the space it frees from it).
+                if (nav.CurrentRoute == AppRoute.Images || AppRoute.ListOf(nav.CurrentRoute) == AppRoute.Volumes)
                     AppServices.Current.Session.Dispatch(new DiskUsageRequested());
             },
             nav.CurrentRoute,
@@ -165,7 +188,7 @@ internal sealed class App : EngineStateComponent
         var content = FlexColumn(
             SetAsideBar(settingsSetAside, () => setSettingsSetAside(false))?.WithKey("set-aside"),
             ErrorBar.Render(state.ActionError, () => AppServices.Current.Session.Dispatch(new ActionErrorDismissed()))?.WithKey("error"),
-            NoticeBar(nav.CurrentRoute == AppRoute.Containers ? notice : null, () => setNotice(null))?.WithKey("notice"),
+            NoticeBar(notice is { } shownNotice && nav.CurrentRoute == shownNotice.List ? shownNotice.Text : null, () => setNotice(null))?.WithKey("notice"),
             (NavigationHost(nav, route => RouteToPage(route, state, LeaveDetail)) with
                 {
                     // A page left stays mounted, so a list keeps its search, sort and scroll while another page shows. The cache holds
@@ -188,7 +211,7 @@ internal sealed class App : EngineStateComponent
                 OnSelectedTagChanged = tag =>
                 {
                     var target = tag is not null && RoutesByTag.TryGetValue(tag, out var list) ? list : AppRoute.Settings;
-                    var shown = nav.CurrentRoute is AppRoute.ContainerDetail ? AppRoute.Containers : nav.CurrentRoute;
+                    var shown = AppRoute.ListOf(nav.CurrentRoute);
                     if (target != shown)
                         nav.Navigate(target);
                 },
@@ -207,8 +230,7 @@ internal sealed class App : EngineStateComponent
     /// <summary>The sidebar item of <paramref name="route"/>: a container's detail page is under Containers.</summary>
     private static string SelectedTag(AppRoute route)
     {
-        if (route is AppRoute.ContainerDetail)
-            return ContainersTag;
+        route = AppRoute.ListOf(route);
         foreach (var (tag, list) in RoutesByTag)
         {
             if (list == route)
@@ -220,8 +242,8 @@ internal sealed class App : EngineStateComponent
 
     /// <summary>What the session is told when <paramref name="route"/> becomes the page shown: that its list is wanted; null for the others.</summary>
     private static SessionEvent? WantedEvent(AppRoute route) =>
-        route == AppRoute.Images ? new ImagesWanted()
-        : route == AppRoute.Volumes ? new VolumesWanted()
+        AppRoute.ListOf(route) == AppRoute.Volumes ? new VolumesWanted()
+        : route == AppRoute.Images ? new ImagesWanted()
         : route == AppRoute.Networks ? new NetworksWanted()
         : null;
 
@@ -286,11 +308,11 @@ internal sealed class App : EngineStateComponent
     /// </summary>
     private static NavigationState<AppRoute>? WithoutDetailPages(NavigationState<AppRoute> history)
     {
-        static bool IsDetail(AppRoute route) => route is AppRoute.ContainerDetail;
+        static bool IsDetail(AppRoute route) => AppRoute.IsDetail(route);
         if (!IsDetail(history.Current) && !history.BackStack.Any(IsDetail) && !history.ForwardStack.Any(IsDetail))
             return null;
 
-        var current = IsDetail(history.Current) ? AppRoute.Containers : history.Current;
+        var current = AppRoute.ListOf(history.Current);
         var back = new List<AppRoute>();
         foreach (var route in history.BackStack.Where(r => !IsDetail(r)))
         {
@@ -336,6 +358,12 @@ internal sealed class App : EngineStateComponent
     {
         if (route is AppRoute.ContainerDetail detail)
             return Component<ContainerDetailPage, DetailPageProps>(new(detail, leaveDetail));
+        if (route is AppRoute.VolumeDetail volume)
+        {
+            return state.Status != ConnectionStatus.Connected && state.Volumes.Items.IsEmpty
+                ? DisconnectedView.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))
+                : Component<VolumeDetailPage, VolumeDetailProps>(new(volume, leaveDetail));
+        }
         if (route == AppRoute.Settings)
             return Component<SettingsPage>();
 

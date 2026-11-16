@@ -52,7 +52,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
-                            RowActions (a container's or an image's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
+                            RowActions (a container's, image's, volume's or network's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
                             Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text), PullFigure (a pull's progress
@@ -70,7 +70,7 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             set-aside settings file to the log
   EngineConnection.cs       an EngineClient plus the transport it runs on, disposed together
   App.cs                    the window component: title bar, navigation (AppRoute: Containers, Images, Volumes, Networks,
-                            ContainerDetail, Settings), status bar; switches list stats on and off (see below) and tells the
+                            ContainerDetail, VolumeDetail, Settings), status bar; switches list stats on and off (see below) and tells the
                             session which of the images, volumes and networks lists is wanted when its page is shown
   Hooks/                    EngineStateHook.cs (EngineStateComponent and EngineStateComponent<TProps>, the base classes
                             for components that show the engine state), DetailStateHook.cs (the open detail session's state as an external store),
@@ -82,21 +82,24 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
                             above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
-                            row and the detail header), ListPage (a list page's sections, toolbar, search box, bulk bar
+                            row and the detail header), ListPage (a list page's sections, usage line, toolbar, search box, bars
                             and its shortcuts) and ListTable (columns with wide and compact widths, header with sortable
-                            titles, rows, the virtualized table, loading, failed-load and empty states), shared by the four lists;
+                            titles, rows, the virtualized table, loading, failed-load and empty states, TableHandlers for a
+                            table component's callbacks), shared by the four lists;
                             ShellKeys (the app's shortcuts at the window root, Ctrl+F, F5, Delete, Escape, Alt+Left,
                             acting for the page shown through the PageKeys it registers), RemovalPanel (a list's batch of removes:
-                            progress, then what was removed, refused or skipped), DialogParts (a primary button that keeps
+                            progress, then what was removed, refused or skipped), RemoveDialog (the confirmation of a delete
+                            or "Remove unused …" of images, volumes or networks, and what a confirmed one sends), DialogParts (a primary button that keeps
                             its dialog open, a wider dialog, stacks, field errors and hints), DeleteDialog, DetailHeader
                             (breadcrumb, name, ID, image, ports, status, actions), StatsStrip (total CPU and memory
                             above the list)
   Pages/                    ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage,
                             ConnectionEditor, ContainerDetailPage (header, tab strip, keeps a detail session open while
-                            shown)
+                            shown), VolumeDetailPage (header and the containers that mount it, from the session's lists)
     Images/                 ImageTable (the images table, a component with record props so a pull's progress does not
                             build it again), PullRows (the pulls under way, at the top of the table), PullDialog, RunDialog
                             (run a container from an image), InspectDialog (an image's raw JSON)
+    Volumes/                VolumeTable (the volumes table, a component with record props), CreateVolumeDialog
     Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi

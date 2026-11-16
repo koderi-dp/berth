@@ -39,12 +39,21 @@ internal static class ContainerParts
                 .WithFlyout(MenuItems(MenuEntries(menu, run)))
                 .IsEnabled(menu.Any(s => s.Any(a => a.IsEnabled)));
 
-        var delete = actions.Delete;
-        var deleteButton = Widgets.IconButton(Glyphs.Delete, delete.Label, () => run(delete), color: delete.IsEnabled ? Theme.SystemCritical : null)
-            .AutomationId("delete-" + name)
-            .IsEnabled(delete.IsEnabled);
+        // A row without Delete (a built-in network) has neither the button nor the divider before it.
+        Element?[] delete = [];
+        if (actions.HasDelete)
+        {
+            var action = actions.Delete;
+            delete =
+            [
+                ActionDivider(),
+                Widgets.IconButton(Glyphs.Delete, action.Label, () => run(action), color: action.IsEnabled ? Theme.SystemCritical : null)
+                    .AutomationId("delete-" + name)
+                    .IsEnabled(action.IsEnabled),
+            ];
+        }
 
-        return (FlexRow([.. buttons, more, ActionDivider(), deleteButton]) with
+        return (FlexRow([.. buttons, more, .. delete]) with
             {
                 AlignItems = FlexAlign.Center,
                 JustifyContent = FlexJustify.FlexEnd,

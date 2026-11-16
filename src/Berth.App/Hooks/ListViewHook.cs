@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using Berth.Presentation;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Hooks;
 using Microsoft.UI.Reactor.Input;
@@ -42,6 +44,24 @@ internal abstract class ListPageComponent : EngineStateComponent
         var (view, update) = UseReducer(ListViewStore.Get(route, initial));
         UseEffect(() => ListViewStore.Set(route, view), view);
         return (view, update);
+    }
+
+    /// <summary>
+    /// The checked rows of a list (view state, not kept by route) and the action that checks (true) or unchecks keys. A row that is no
+    /// longer in <paramref name="all"/> (the whole list, a memoized instance) cannot stay checked.
+    /// </summary>
+    protected (ImmutableHashSet<string> Checked, Action<IEnumerable<string>, bool> SetChecked) UseCheckedKeys<TRow>(IReadOnlyList<TRow> all)
+        where TRow : ISelectableRow
+    {
+        var (checkedKeys, updateChecked) = UseReducer(ImmutableHashSet<string>.Empty);
+        UseEffect(
+            () =>
+            {
+                var existing = all.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
+                updateChecked(keys => keys.All(existing.Contains) ? keys : keys.Intersect(existing));
+            },
+            all);
+        return (checkedKeys, (keys, value) => updateChecked(current => value ? current.Union(keys) : current.Except(keys)));
     }
 
     /// <summary>The page's search box reference and whether the box has the focus.</summary>

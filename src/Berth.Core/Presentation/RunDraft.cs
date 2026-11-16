@@ -158,6 +158,9 @@ public sealed partial record RunDraft(string Image, string Name, ImmutableArray<
         return publishedPorts?.Contains(port) == true ? $"Port {port} is already published by another container." : null;
     }
 
+    /// <summary>Whether <paramref name="name"/> keeps the engine's rule for container and volume names (<c>[a-zA-Z0-9][a-zA-Z0-9_.-]*</c>).</summary>
+    internal static bool IsName(string name) => ValidName().IsMatch(name);
+
     [GeneratedRegex("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")]
     private static partial Regex ValidName();
 }

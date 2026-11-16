@@ -124,6 +124,38 @@ internal static class ListPage
     }
 
     /// <summary>
+    /// The usage line under the title (<paramref name="text"/>: "67 MB in use of 1.2 GB · 12 images", AutomationId
+    /// <paramref name="automationId"/>) and a button that reads the disk use again; a ring while it is read.
+    /// </summary>
+    public static Element UsageLine(string text, string automationId, EngineState state) =>
+        (FlexRow(
+                Body(text).Foreground(Theme.SecondaryText).AutomationId(automationId),
+                state.DiskUsage.Loading
+                    ? ProgressRing().Size(16, 16).AutomationName("Reading the disk use")
+                    : Widgets.IconButton(Glyphs.Restart, "Read the disk use again", () => AppServices.Current.Session.Dispatch(new DiskUsageRequested()), size: 12)
+                        .AutomationId("refresh-usage")
+                        .Padding(4)
+                        .MinWidth(24)
+                        .MinHeight(24)
+                        .IsEnabled(state.Status == ConnectionStatus.Connected))
+            with
+            {
+                AlignItems = FlexAlign.Center,
+                ColumnGap = 8,
+            })
+            .MinHeight(24)
+            .Flex(shrink: 0);
+
+    /// <summary>
+    /// The bars above the table: the batch of removes (<see cref="RemovalPanel"/>) above the bulk bar, each keyed; null when neither is
+    /// there.
+    /// </summary>
+    public static Element? Bars(Element? removalPanel, Element? bulkBar) =>
+        removalPanel is null && bulkBar is null
+            ? null
+            : (FlexColumn(removalPanel?.WithKey("removal"), bulkBar?.WithKey("selection")) with { RowGap = 12 }).Flex(shrink: 0);
+
+    /// <summary>
     /// What a list page does with the app's shortcuts: Ctrl+F focuses its search box with the text selected, F5 reloads every list
     /// shown (while <paramref name="connected"/>), and Delete calls <paramref name="deleteSelected"/> (null while nothing checked can
     /// be deleted). None of them while one of its dialogs is open (<paramref name="dialogOpen"/>). Escape in the search box empties it
