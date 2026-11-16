@@ -60,12 +60,22 @@ public sealed partial class EngineSession : IAsyncDisposable
     /// Called on a thread-pool thread; an exception it throws is ignored.
     /// </param>
     public EngineSession(Func<IEngineApi> createApi, TimeProvider time, Action<string, Exception>? onError)
+        : this(createApi, time, onError, engineControl: null)
+    {
+    }
+
+    /// <param name="engineControl">Runs the connection's start and stop commands, or null when it has none.</param>
+    /// <inheritdoc cref="EngineSession(Func{IEngineApi}, TimeProvider, Action{string, Exception})"/>
+    public EngineSession(Func<IEngineApi> createApi, TimeProvider time, Action<string, Exception>? onError, IEngineControl? engineControl)
     {
         ArgumentNullException.ThrowIfNull(createApi);
         ArgumentNullException.ThrowIfNull(time);
         _createApi = createApi;
         _time = time;
         _onError = onError;
+        _engineControl = engineControl;
+        if (engineControl is not null)
+            _state = _state with { EngineControl = EngineControlState.Ready };
         _loop = Task.Run(RunAsync);
     }
 
@@ -114,7 +124,7 @@ public sealed partial class EngineSession : IAsyncDisposable
 
         _retryTimer?.Dispose();
         Retire();
-        await Task.WhenAll(_retiring).ConfigureAwait(false);
+        await Task.WhenAll(_retiring.Append(EndEngineCommandAsync())).ConfigureAwait(false);
         _lifetime.Dispose();
     }
 
@@ -231,6 +241,10 @@ public sealed partial class EngineSession : IAsyncDisposable
 
             case InspectForRunCommandEffect inspect when _connection is { } connection:
                 connection.Run(ct => InspectForRunCommandAsync(connection, inspect, ct));
+                break;
+
+            case RunEngineCommandEffect run:
+                StartEngineCommand(run.Command);
                 break;
 
             case CopyTextEffect copy:

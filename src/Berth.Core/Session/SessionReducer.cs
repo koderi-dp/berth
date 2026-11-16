@@ -32,7 +32,13 @@ public static partial class SessionReducer
         {
             case ConnectRequested when state.Status == ConnectionStatus.Disconnected:
                 return (
-                    ForgetUnderWay(state, startingOver: true) with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false },
+                    ForgetUnderWay(state, startingOver: true) with
+                    {
+                        Status = ConnectionStatus.Connecting,
+                        RetryAttempt = 0,
+                        ListLoaded = false,
+                        EngineControl = state.EngineControl with { StoppedByBerth = false },
+                    },
                     [new ConnectEffect()]);
 
             case ConnectRequested:
@@ -47,10 +53,12 @@ public static partial class SessionReducer
                         ReloadScheduled = false,
                         ListLoaded = false,
                         Stats = state.Stats.Clear(),
+                        EngineControl = state.EngineControl with { StoppedByBerth = false },
                     },
                     [new StopStreamsEffect(), new ConnectEffect()]);
 
-            case RetryDue when state.Status == ConnectionStatus.Disconnected:
+            // Not while the engine is stopped on purpose: a connect could start a socket-activated engine again.
+            case RetryDue when state.Status == ConnectionStatus.Disconnected && !state.EngineControl.StoppedByBerth:
                 return (state with { Status = ConnectionStatus.Connecting }, [new ConnectEffect()]);
 
             case ConnectSucceeded success when connecting:
@@ -67,10 +75,22 @@ public static partial class SessionReducer
                         LoadGeneration = generation,
                         ListLoaded = false,
                         ContainersLoadError = null,
+                        EngineControl = state.EngineControl.StartWaitsLeft == 0 ? state.EngineControl : state.EngineControl with { StartWaitsLeft = 0 },
                     },
                     ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation), new StartEventStreamEffect()))
                     .Then(LoadWanted);
             }
+
+            // Just after a start the engine needs a few seconds: retry each second instead of backing off.
+            case ConnectFailed failure when connecting && state.EngineControl.StartWaitsLeft > 0:
+                return (
+                    state with
+                    {
+                        Status = ConnectionStatus.Disconnected,
+                        ConnectionError = failure.Message,
+                        EngineControl = state.EngineControl with { StartWaitsLeft = state.EngineControl.StartWaitsLeft - 1 },
+                    },
+                    [new ScheduleRetryEffect(StartWaitDelay)]);
 
             case ConnectFailed failure when connecting:
                 return (
@@ -178,7 +198,7 @@ public static partial class SessionReducer
             }
 
             default:
-                return ReduceResources(state, e, connected);
+                return ReduceEngineControl(state, e) ?? ReduceResources(state, e, connected);
         }
     }
 

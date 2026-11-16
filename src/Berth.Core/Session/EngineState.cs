@@ -61,6 +61,9 @@ public sealed record EngineState(
     ImageInspect? ImageInspect = null,
     VolumeCreate? VolumeCreate = null)
 {
+    /// <summary>Starting and stopping the engine with the connection's commands; <see cref="EngineControlState.None"/> when it has none.</summary>
+    public EngineControlState EngineControl { get; init; } = EngineControlState.None;
+
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
         Version: null,
