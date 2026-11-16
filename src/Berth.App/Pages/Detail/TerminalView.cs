@@ -7,6 +7,8 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -130,6 +132,23 @@ internal sealed class TerminalHandle
             return;
         _control.Focus(FocusState.Programmatic);
         Post(TerminalProtocol.Focus());
+    }
+
+    /// <summary>Whether the keyboard focus is in the terminal: the window's focused element is the WebView or inside it.</summary>
+    public bool HasFocus
+    {
+        get
+        {
+            if (_closed || _control is not { XamlRoot: { } root } control)
+                return false;
+            for (var node = FocusManager.GetFocusedElement(root) as DependencyObject; node is not null; node = VisualTreeHelper.GetParent(node))
+            {
+                if (ReferenceEquals(node, control))
+                    return true;
+            }
+
+            return false;
+        }
     }
 
     /// <summary>Whether the WebView is drawn dark (its ActualTheme): follows Windows switching between light and dark while the app runs.</summary>

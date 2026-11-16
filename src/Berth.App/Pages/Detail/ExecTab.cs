@@ -201,6 +201,18 @@ internal sealed class ExecTab : Component<ExecTabProps>
 
         UseEffect(() => link.Handle?.Post(TerminalProtocol.Theme(colors)), colors);
 
+        // Back in the window after Alt+Tab: the terminal takes the keyboard again when it had it as the window was left.
+        var window = UseWindow();
+        UseEffect(
+            () =>
+            {
+                if (window?.NativeWindow is not { } native)
+                    return () => { };
+                native.Activated += link.WindowActivated;
+                return () => native.Activated -= link.WindowActivated;
+            },
+            (object?)window ?? link);
+
         // Whether docker and Windows Terminal are installed: looked up once, off the UI thread.
         UseEffect(
             () =>
@@ -276,6 +288,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
                 .BorderBrush(Theme.CardStroke)
                 .BorderThickness(1)
                 .CornerRadius(8)
+                .OnPointerPressed(link.TerminalPressed)
                 .Padding(8);
 
         var noteText = ExecInputNotes.Shown(note, exec);

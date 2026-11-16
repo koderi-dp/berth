@@ -10,8 +10,10 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 
 namespace Berth.Pages.Detail;
 
@@ -29,11 +31,40 @@ internal sealed class ExecLink
         OnFailed = message => SetWebViewError(message);
         PageLost = () => OnPageLost();
         OpenExternal = StartExternal;
+        TerminalPressed = (_, _) => FocusTerminal();
+        WindowActivated = (_, args) =>
+        {
+            if (args.WindowActivationState == WindowActivationState.Deactivated)
+                _terminalHadFocus = Handle?.HasFocus == true;
+            else if (_terminalHadFocus)
+                FocusTerminal();
+        };
         CopyCommand = () =>
         {
             if (External?.CopyText is { } text)
                 ContainerParts.CopyToClipboard(text);
         };
+    }
+
+    /// <summary>
+    /// A press in the terminal's area outside the page (its padding; the page takes its own presses): the keyboard goes to the
+    /// terminal.
+    /// </summary>
+    public Action<object, PointerRoutedEventArgs> TerminalPressed { get; }
+
+    /// <summary>
+    /// The window is activated or deactivated: when the terminal had the keyboard as the window was left, it takes it back on return;
+    /// otherwise the focus stays where it was (the picker, the custom command).
+    /// </summary>
+    public TypedEventHandler<object, WindowActivatedEventArgs> WindowActivated { get; }
+
+    private bool _terminalHadFocus;
+
+    /// <summary>The keyboard goes to the terminal, while it takes typing.</summary>
+    public void FocusTerminal()
+    {
+        if (AcceptsInput)
+            Handle?.Focus();
     }
 
     /// <summary>"Open in external terminal": starts what <see cref="External"/> plans.</summary>
