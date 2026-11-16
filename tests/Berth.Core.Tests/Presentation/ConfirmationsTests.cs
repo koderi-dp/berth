@@ -10,6 +10,9 @@ public sealed class ConfirmationsTests
 {
     private static IReadOnlyList<ImageRow> ImageRowsOf(params ImageSummary[] images) => ImageRows.From(StateWith(images: images));
 
+    /// <summary>A "Remove unused" item: skipped if a container uses it by its turn.</summary>
+    private static RemovalItem Unused(string id, params string[] keys) => new(id, keys.Length == 0 ? [id] : [.. keys], OnlyIfUnused: true);
+
     private static RemovalPlan RemoveImages(IReadOnlyList<ImageRow> rows, params string[] keys) =>
         Confirmations.RemoveImages(rows, rows, keys, connected: true, usage: null);
 
@@ -22,7 +25,7 @@ public sealed class ConfirmationsTests
 
         var plan = RemoveImages(rows, "nginx:1.27");
 
-        Assert.Equal<RemovalItem>([new RemovalItem("nginx:1.27")], plan.Items);
+        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a", ["nginx:1.27"])], plan.Items);
         Assert.Equal("Remove tag?", plan.Title);
         Assert.Equal("The tag nginx:1.27 will be removed. The image keeps its other tags.", plan.Text);
     }
@@ -53,7 +56,7 @@ public sealed class ConfirmationsTests
 
         var plan = RemoveImages(rows, "redis:7", "nginx:1.27", "nginx:latest");
 
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:b"), new RemovalItem("nginx:latest", "nginx:1.27")], plan.Items);
+        Assert.Equal<RemovalItem>([new RemovalItem("sha256:b"), new RemovalItem("sha256:a", ["nginx:latest", "nginx:1.27"])], plan.Items);
         var sent = Assert.IsType<RemoveRequested>(plan.ToEvent());
         Assert.Equal(ResourceKind.Images, sent.Kind);
         Assert.Equal<RemovalItem>(plan.Items, sent.Items);
@@ -70,7 +73,7 @@ public sealed class ConfirmationsTests
 
         var plan = Confirmations.RemoveImages(shown, all, ["nginx:1.27"], connected: true, usage: null);
 
-        Assert.Equal<RemovalItem>([new RemovalItem("nginx:1.27")], plan.Items);
+        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a", ["nginx:1.27"])], plan.Items);
         Assert.Equal("The tag nginx:1.27 will be removed. The image keeps its other tags.", plan.Text);
     }
 
@@ -98,7 +101,7 @@ public sealed class ConfirmationsTests
         var plan = Confirmations.RemoveImages(rows, rows, ["a:1", "b:1"], connected: true, usage);
 
         // b keeps its tag b:2, so only a is deleted.
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a"), new RemovalItem("b:1")], plan.Items);
+        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a"), new RemovalItem("sha256:b", ["b:1"])], plan.Items);
         Assert.Equal("These will be removed:\na:1\nb:1\nImages that keep other tags lose only the tag.\n3 KB will be freed.", plan.Text);
     }
 
@@ -184,10 +187,26 @@ public sealed class ConfirmationsTests
         Assert.Equal(ResourceKind.Networks, Assert.IsType<RemoveRequested>(plan.ToEvent()).Kind);
     }
 
+    [Fact]
+    public void Removing_a_network_containers_are_attached_to_warns_and_names_them()
+    {
+        var containers = Enumerable.Range(1, 12).Select(i => User($"c{i:00}", networks: ["app"])).Append(User("db", networks: ["data"]));
+        var rows = NetworkRows.From(StateWith(networks: [Network("id-app", "app"), Network("id-data", "data")], containers: containers));
+
+        var one = Confirmations.RemoveNetworks(rows, ["id-data"], connected: true);
+        var both = Confirmations.RemoveNetworks(rows, ["id-app", "id-data"], connected: true);
+
+        Assert.Equal("data will be removed.\nThese containers are attached and will lose this network:\ndb", one.Text);
+        var lines = both.Text.Split('\n');
+        Assert.Equal("These containers are attached and will lose these networks:", lines[3]);
+        Assert.Equal([.. Enumerable.Range(1, 10).Select(i => $"c{i:00}")], lines[4..14]);
+        Assert.Equal("and 3 more", lines[14]);
+    }
+
     // Remove unused
 
     [Fact]
-    public void Removing_unused_images_names_each_and_sends_its_tags_in_order_or_its_id_when_untagged()
+    public void Removing_unused_images_sends_a_multi_tag_image_as_its_tags_in_order_and_any_other_by_id()
     {
         var state = StateWith(
             images: [Image("sha256:a", ["nginx:latest", "nginx:1"], containers: 1), Image("sha256:b", ["redis:7", "redis:latest"]), Image("sha256:cccccccccccccc")],
@@ -198,10 +217,10 @@ public sealed class ConfirmationsTests
 
         Assert.Equal("Remove unused images?", plan.Title);
         Assert.Equal("2 images that no container uses will be removed:\nredis:7, redis:latest\n<none>:<none> (cccccccccccc)\n5 MB will be freed.", plan.Text);
-        Assert.Equal<RemovalItem>([new RemovalItem("redis:7", "redis:latest"), new RemovalItem("sha256:cccccccccccccc")], [.. plan.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([Unused("sha256:b", "redis:7", "redis:latest"), Unused("sha256:cccccccccccccc")], [.. plan.Items.Select(i => i.Item)]);
         var sent = Assert.IsType<RemoveRequested>(plan.ToEvent());
         Assert.Equal(ResourceKind.Images, sent.Kind);
-        Assert.Equal<RemovalItem>([new RemovalItem("redis:7", "redis:latest"), new RemovalItem("sha256:cccccccccccccc")], sent.Items);
+        Assert.Equal<RemovalItem>([Unused("sha256:b", "redis:7", "redis:latest"), Unused("sha256:cccccccccccccc")], sent.Items);
     }
 
     [Fact]
@@ -213,7 +232,7 @@ public sealed class ConfirmationsTests
 
         Assert.Equal("Remove dangling images?", plan.Title);
         Assert.Equal("1 untagged image that no container uses will be removed:\n<none>:<none> (cccccccccccc)", plan.Text);
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:cccccccccccccc")], [.. plan.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([Unused("sha256:cccccccccccccc")], [.. plan.Items.Select(i => i.Item)]);
     }
 
     [Fact]
@@ -228,7 +247,7 @@ public sealed class ConfirmationsTests
 
         Assert.Equal("Remove unused volumes?", plan.Title);
         Assert.Equal("2 volumes that no container uses will be removed:\nold\n0123456789ab\nThe data in them is lost for good.\n2 KB will be freed.", plan.Text);
-        Assert.Equal<RemovalItem>([new RemovalItem("old"), new RemovalItem(AnonymousName)], [.. plan.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([Unused("old"), Unused(AnonymousName)], [.. plan.Items.Select(i => i.Item)]);
     }
 
     [Fact]
@@ -243,7 +262,7 @@ public sealed class ConfirmationsTests
         Assert.Equal("Remove unused networks?", plan.Title);
         Assert.Equal("1 network that no container uses will be removed:\nold", plan.Text);
         Assert.Equal<string>(["old"], plan.Names);
-        Assert.Equal<RemovalItem>([new RemovalItem("4")], [.. plan.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([Unused("4")], [.. plan.Items.Select(i => i.Item)]);
     }
 
     [Fact]
@@ -260,7 +279,7 @@ public sealed class ConfirmationsTests
 
         var confirmed = Confirmations.ConfirmPrune(named, now);
 
-        Assert.Equal<RemovalItem>([new RemovalItem("b")], [.. confirmed.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([Unused("b")], [.. confirmed.Items.Select(i => i.Item)]);
         Assert.Equal("1 volume that no container uses will be removed:\nb\nThe data in it is lost for good.", confirmed.Text);
         Assert.True(Confirmations.ConfirmPrune(named, before with { Status = ConnectionStatus.Disconnected }).IsEmpty);
     }
@@ -269,10 +288,11 @@ public sealed class ConfirmationsTests
     public void Removing_unused_images_at_confirm_keeps_an_image_by_id_and_its_tags_as_they_are_now()
     {
         var named = Confirmations.PruneImages(StateWith(images: [Image("sha256:a", ["a:1", "a:2"]), Image("sha256:b", ["b:1"])]), danglingOnly: false);
+        Assert.Equal<RemovalItem>([Unused("sha256:a", "a:1", "a:2"), Unused("sha256:b")], [.. named.Items.Select(i => i.Item)]);
 
         var confirmed = Confirmations.ConfirmPrune(named, StateWith(images: [Image("sha256:a", ["a:2"]), Image("sha256:b", ["b:1"], containers: 1)]));
 
-        Assert.Equal<RemovalItem>([new RemovalItem("a:2")], [.. confirmed.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([Unused("sha256:a")], [.. confirmed.Items.Select(i => i.Item)]);
     }
 
     [Fact]

@@ -97,11 +97,12 @@ public sealed partial class EngineSessionTests
     [Fact]
     public async Task Removes_and_creates_reach_the_engine_and_an_images_tags_go_in_order_never_forced()
     {
-        var api = new FakeEngineApi();
+        var api = new FakeEngineApi { Images = [Image("sha256:a", "a:1", "a:2", "a:3")], Volumes = [Volume("data")], Networks = [Network("n1")] };
         await using var h = Harness.With(api);
         await h.ConnectAsync();
+        await AllWantedAsync(h);
 
-        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("a:1", "a:2", "a:3")]));
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:a", ["a:1", "a:2", "a:3"])]));
         h.Session.Dispatch(new RemoveRequested(ResourceKind.Volumes, [new RemovalItem("data")]));
         h.Session.Dispatch(new RemoveRequested(ResourceKind.Networks, [new RemovalItem("n1")]));
         h.Session.Dispatch(new CreateVolumeRequested("berth-it-v"));
@@ -121,12 +122,13 @@ public sealed partial class EngineSessionTests
     [Fact]
     public async Task An_image_item_stops_at_the_first_tag_the_engine_refuses()
     {
-        var api = new FakeEngineApi();
+        var api = new FakeEngineApi { Images = [Image("sha256:a", "a:1", "a:2")] };
         api.Fail("RemoveImage", new EngineException(409, "conflict: unable to remove repository reference \"a:1\" (must force) - container c1 is using its referenced image"));
         await using var h = Harness.With(api);
         await h.ConnectAsync();
 
-        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("a:1", "a:2")]));
+        await AllWantedAsync(h);
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:a", ["a:1", "a:2"])]));
         var state = await h.WaitFor(s => s.Images.Removal is { IsRunning: false });
 
         Assert.Equal(["RemoveImage a:1 force=False"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
@@ -141,6 +143,7 @@ public sealed partial class EngineSessionTests
         var api = new FakeEngineApi { Volumes = [.. Enumerable.Range(1, 6).Select(i => Volume($"v{i}"))] };
         await using var h = Harness.With(api);
         await h.ConnectAsync();
+        await AllWantedAsync(h);
         h.Session.Dispatch(new DiskUsageRequested());
         await h.WaitFor(s => s.DiskUsage.Usage is not null && !s.DiskUsage.Loading);
         var held = api.Hold("RemoveVolume");
@@ -155,6 +158,32 @@ public sealed partial class EngineSessionTests
 
         Assert.Equal(6, api.Calls.Count(c => c.StartsWith("RemoveVolume", StringComparison.Ordinal)));
         Assert.Equal(2, api.Calls.Count(c => c == "DiskUsage"));
+    }
+
+    [Fact]
+    public async Task A_remove_that_outlasts_its_deadline_is_that_items_failure_and_the_batch_and_connection_go_on()
+    {
+        var api = new FakeEngineApi { Volumes = [Volume("big"), Volume("small")] };
+        api.Fail("RemoveVolume", new EngineException(0, "The engine did not answer within 90 seconds.") { TimedOut = true });
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        await AllWantedAsync(h);
+
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Volumes, [new RemovalItem("big"), new RemovalItem("small")]));
+        var state = await h.WaitFor(s => s.Volumes.Removal is { IsRunning: false });
+
+        Assert.Equal(ConnectionStatus.Connected, state.Status);
+        Assert.Equal(2, state.Volumes.Removal!.Refusals.Length);
+        Assert.Equal("The engine did not answer within 90 seconds.", state.Volumes.Removal.Refusals[0].Message);
+        Assert.False(state.Volumes.Removal.Interrupted);
+    }
+
+    private static async Task AllWantedAsync(Harness h)
+    {
+        h.Session.Dispatch(new ImagesWanted());
+        h.Session.Dispatch(new VolumesWanted());
+        h.Session.Dispatch(new NetworksWanted());
+        await h.WaitFor(s => s.Images.Loaded && s.Volumes.Loaded && s.Networks.Loaded);
     }
 
     [Fact]

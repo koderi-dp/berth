@@ -139,7 +139,8 @@ public sealed partial class EngineSession
             {
                 Report(report, ex);
                 refusal = new RemovalRefusal(key, ex.Message);
-                unreachable = IsUnreachable(ex);
+                // A remove that outlasts its deadline (a large image) failed; the engine is still there.
+                unreachable = IsUnreachable(ex) && ex is not EngineException { TimedOut: true };
                 break;
             }
         }

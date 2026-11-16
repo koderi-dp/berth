@@ -66,6 +66,7 @@ public static partial class SessionReducer
                         RetryAttempt = 0,
                         LoadGeneration = generation,
                         ListLoaded = false,
+                        ContainersLoadError = null,
                     },
                     ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation), new StartEventStreamEffect()))
                     .Then(LoadWanted);
@@ -94,6 +95,7 @@ public static partial class SessionReducer
                     Info = loaded.Info,
                     Pending = state.Pending.RemoveRange(gone),
                     ListLoaded = true,
+                    ContainersLoadError = null,
                 };
                 return next.StatsWanted ? Watch(next) : (next, None);
             }
@@ -101,7 +103,7 @@ public static partial class SessionReducer
             case LoadFailed failure when connected && failure.Generation == state.LoadGeneration:
                 return failure.EngineUnreachable
                     ? Lose(state, failure.Message)
-                    : (state with { ActionError = failure.Message }, None);
+                    : (state with { ActionError = failure.Message, ContainersLoadError = failure.Message }, None);
 
             case EngineEventReceived received when connected:
                 return (CausesReload(received.Message) ? RequestReload(state) : (state, None)).Then(s => ReloadListsFor(s, received.Message));
@@ -113,14 +115,14 @@ public static partial class SessionReducer
                 if (!connected)
                     return (cleared, None);
                 var generation = state.LoadGeneration + 1;
-                return (cleared with { LoadGeneration = generation }, [new LoadContainersEffect(generation)]);
+                return (cleared with { LoadGeneration = generation, ContainersLoadError = null }, [new LoadContainersEffect(generation)]);
             }
 
             case ReloadRequested when connected:
             {
                 // At once, not debounced: the user is waiting. A load still in flight is superseded by the new generation.
                 var generation = state.LoadGeneration + 1;
-                return (state with { LoadGeneration = generation }, ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation)))
+                return (state with { LoadGeneration = generation, ContainersLoadError = null }, ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation)))
                     .Then(ReloadWantedLists);
             }
 

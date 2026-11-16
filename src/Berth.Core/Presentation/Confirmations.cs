@@ -76,7 +76,7 @@ public static class Confirmations
                 continue;
             }
 
-            items.Add(new RemovalItem(chosenTags.ToImmutableArray()));
+            items.Add(new RemovalItem(imageId, chosenTags.ToImmutableArray()));
             if (chosenTags.Count == tags.Count)
                 deleted.Add(imageId);
             else
@@ -115,7 +115,10 @@ public static class Confirmations
         return new RemovalPlan(ResourceKind.Volumes, [.. confirmed.Select(r => new RemovalItem(r.Name))], title, WithFreed(text, freed));
     }
 
-    /// <summary>Deleting the networks <paramref name="keys"/> among <paramref name="shown"/>; a built-in network is never sent.</summary>
+    /// <summary>
+    /// Deleting the networks <paramref name="keys"/> among <paramref name="shown"/>; a built-in network is never sent. Names the containers
+    /// attached to them, which lose the network (the engine does not refuse when they are stopped).
+    /// </summary>
     public static RemovalPlan RemoveNetworks(IReadOnlyList<NetworkRow> shown, IEnumerable<string> keys, bool connected)
     {
         var confirmed = RowSelection.Confirmed(shown, keys, connected, r => !r.IsBuiltIn);
@@ -123,12 +126,23 @@ public static class Confirmations
         var text = confirmed.Count == 1
             ? $"{confirmed[0].Name} will be removed."
             : Listed($"{confirmed.Count} networks will be removed:", confirmed.Select(r => r.Name));
+
+        // The engine removes a network whose containers are stopped without a word: say who loses it.
+        var attached = confirmed.SelectMany(r => r.Containers).Distinct(StringComparer.Ordinal).ToList();
+        if (attached.Count > 0)
+        {
+            var heading = confirmed.Count == 1
+                ? "These containers are attached and will lose this network:"
+                : "These containers are attached and will lose these networks:";
+            text += "\n" + Listed(heading, attached);
+        }
+
         return new RemovalPlan(ResourceKind.Networks, [.. confirmed.Select(r => new RemovalItem(r.Id))], title, text);
     }
 
     /// <summary>
     /// "Remove unused images": every image no container uses, or with <paramref name="danglingOnly"/> only the untagged ones, each named by
-    /// its tags and sent as its tags in order (the last deletes it), or its ID when untagged. Pending images are left out. The space freed
+    /// its tags. An image with several tags is sent as its tags in order (the last deletes it), any other by its ID, as a delete does. Pending images are left out. The space freed
     /// is the engine's reclaimable figure for all unused images, or the sum of the dangling images' own sizes.
     /// </summary>
     public static PrunePlan PruneImages(EngineState state, bool danglingOnly) => PruneImages(state, danglingOnly, only: null);
@@ -169,7 +183,7 @@ public static class Confirmations
             .Select(rows => new PlannedRemoval(
                 rows[0].ImageId,
                 string.Join(", ", rows.Select(r => r.DisplayName)),
-                rows[0].IsTagged ? new RemovalItem(rows.Select(r => r.Key).ToImmutableArray()) : new RemovalItem(rows[0].ImageId)))
+                Unused(rows[0].ImageId, rows.Count > 1 ? [.. rows.Select(r => r.Key)] : [rows[0].ImageId])))
             .OrderBy(i => only?.IndexOf(i.Id) ?? 0)
             .ToImmutableArray();
         var usage = state.DiskUsage.Usage;
@@ -188,7 +202,7 @@ public static class Confirmations
             .Where(r => connected && !r.InUse && !r.IsPending && (only?.Has(r.Name) ?? true))
             .OrderBy(r => only?.IndexOf(r.Name) ?? 0)
             .ToList();
-        var items = rows.Select(r => new PlannedRemoval(r.Name, r.ShownName, new RemovalItem(r.Name))).ToImmutableArray();
+        var items = rows.Select(r => new PlannedRemoval(r.Name, r.ShownName, Unused(r.Name, [r.Name]))).ToImmutableArray();
         var usage = state.DiskUsage.Usage;
         var freed = usage is null ? null : only is null ? usage.VolumeTotals.Reclaimable : Freed(rows, r => r.Size);
         return Prune(ResourceKind.Volumes, false, items, freed, "Remove unused volumes?", "volume", "No volume is unused.", warning: true);
@@ -200,7 +214,7 @@ public static class Confirmations
         var items = NetworkRows.From(state)
             .Where(r => connected && !r.InUse && !r.IsBuiltIn && !r.IsPending && (only?.Has(r.Id) ?? true))
             .OrderBy(r => only?.IndexOf(r.Id) ?? 0)
-            .Select(r => new PlannedRemoval(r.Id, r.Name, new RemovalItem(r.Id)))
+            .Select(r => new PlannedRemoval(r.Id, r.Name, Unused(r.Id, [r.Id])))
             .ToImmutableArray();
         return Prune(ResourceKind.Networks, false, items, null, "Remove unused networks?", "network", "No network is unused.", warning: false);
     }
@@ -228,6 +242,9 @@ public static class Confirmations
 
         public int IndexOf(string id) => _index[id];
     }
+
+    /// <summary>A "Remove unused" item: the session skips it if a container uses it by the time its turn comes.</summary>
+    private static RemovalItem Unused(string id, ImmutableArray<string> keys) => new(id, keys, OnlyIfUnused: true);
 
     private static string Listed(string heading, IEnumerable<string> names) =>
         string.Join("\n", [heading, .. RowSelection.NameLines([.. names])]);

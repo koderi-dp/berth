@@ -18,6 +18,9 @@ public sealed partial class SessionReducerTests
 
     private static ContainerCreateRequest RunRequest => new("alpine", "berth-it-x", [], [], []);
 
+    /// <summary>An image item: the image it was confirmed for and the tags (or ID) it sends, in order.</summary>
+    private static RemovalItem Tags(string imageId, params string[] keys) => new(imageId, [.. keys]);
+
     /// <summary>Connected, with the images list wanted and loaded: sha256:a tagged nginx:latest and nginx:1, and sha256:b untagged.</summary>
     private static EngineState WithImages()
     {
@@ -277,7 +280,7 @@ public sealed partial class SessionReducerTests
     [Fact]
     public void Losing_the_connection_keeps_the_lists_and_forgets_what_was_under_way()
     {
-        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:1")]));
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [Tags("sha256:a", "nginx:1")]));
         var (scheduled, _) = Reduce(removing, new EngineEventReceived(Event("image", "tag")));
 
         var (state, _) = Reduce(scheduled, new ConnectionLost("connection reset"));
@@ -331,11 +334,11 @@ public sealed partial class SessionReducerTests
     [Fact]
     public void An_image_is_one_item_whose_tags_go_in_order_in_one_effect()
     {
-        var (next, effects) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:latest", "nginx:1"), new RemovalItem("sha256:b")]));
+        var (next, effects) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [Tags("sha256:a", "nginx:latest", "nginx:1"), new RemovalItem("sha256:b")]));
 
         Assert.Equal(
             [
-                new RemoveItemEffect(ResourceKind.Images, new RemovalItem("nginx:latest", "nginx:1")),
+                new RemoveItemEffect(ResourceKind.Images, Tags("sha256:a", "nginx:latest", "nginx:1")),
                 new RemoveItemEffect(ResourceKind.Images, new RemovalItem("sha256:b")),
             ],
             effects);
@@ -345,9 +348,9 @@ public sealed partial class SessionReducerTests
     [Fact]
     public void An_item_with_a_key_already_pending_is_left_out()
     {
-        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:1")]));
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [Tags("sha256:a", "nginx:1")]));
 
-        var (again, effects) = Reduce(removing, new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:latest", "nginx:1")]));
+        var (again, effects) = Reduce(removing, new RemoveRequested(ResourceKind.Images, [Tags("sha256:a", "nginx:latest", "nginx:1")]));
 
         Assert.Same(removing, again);
         Assert.Empty(effects);
@@ -460,23 +463,178 @@ public sealed partial class SessionReducerTests
         Assert.Equal(ConnectionStatus.Disconnected, state.Status);
         Assert.Equal("connection reset", state.ConnectionError);
         Assert.Empty(state.Volumes.Pending);
-        Assert.False(state.Volumes.Removal!.IsRunning);
-        Assert.Empty(state.Volumes.Removal.Queued);
+        var batch = state.Volumes.Removal!;
+        Assert.False(batch.IsRunning);
+        Assert.True(batch.Interrupted);
+        Assert.Equal((6, 0, 2, 4), (batch.Total, batch.Finished, batch.NotSent, batch.Unanswered));
 
         var (late, _) = Reduce(state, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v2"), null));
         Assert.Same(state, late);
     }
 
     [Fact]
-    public void A_pending_remove_of_an_item_no_longer_listed_is_forgotten_on_reload()
+    public void A_key_stays_pending_while_its_item_is_under_way_even_when_a_reload_no_longer_lists_it()
     {
-        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:1"), new RemovalItem("sha256:b")]));
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [Tags("sha256:a", "nginx:1"), new RemovalItem("sha256:b")]));
         var (reloading, effects) = Reduce(removing, new ReloadRequested());
         var load = effects.OfType<LoadResourceEffect>().Single();
 
         var (state, _) = Reduce(reloading, new ImagesLoaded(load.Generation, [Image("sha256:a", "nginx:latest", "nginx:1")]));
 
-        Assert.Equal(["nginx:1"], state.Images.Pending.Keys);
+        Assert.Equal(["nginx:1", "sha256:b"], state.Images.Pending.Keys.Order());
+    }
+
+    [Fact]
+    public void Starting_the_connection_over_interrupts_a_batch_and_says_what_was_not_sent()
+    {
+        var (removing, _) = Reduce(WithManyVolumes(6), RemoveVolumes("v1", "v2", "v3", "v4", "v5", "v6"));
+        var (one, _) = Reduce(removing, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v1"), null));
+
+        var (state, _) = Reduce(one, new ConnectRequested());
+
+        var batch = state.Volumes.Removal!;
+        Assert.True(batch.Interrupted);
+        Assert.False(batch.IsRunning);
+        Assert.Equal((6, 1, 1, 1, 4), (batch.Total, batch.Finished, batch.Removed, batch.NotSent, batch.Unanswered));
+        Assert.Null(Reduce(state, new RemovalDismissed(ResourceKind.Volumes)).State.Volumes.Removal);
+    }
+
+    private static EngineState WithManyImages(int count)
+    {
+        var (wanted, effects) = Reduce(Connected(), new ImagesWanted());
+        var load = Assert.IsType<LoadResourceEffect>(Assert.Single(effects));
+        return Reduce(wanted, new ImagesLoaded(load.Generation, [.. Enumerable.Range(1, count).Select(i => Image($"sha256:{i}", $"app{i}:1"))])).State;
+    }
+
+    [Fact]
+    public void A_queued_image_item_whose_tag_now_names_another_image_is_skipped_not_sent()
+    {
+        var (removing, _) = Reduce(WithManyImages(6), new RemoveRequested(ResourceKind.Images, [.. Enumerable.Range(1, 6).Select(i => Tags($"sha256:{i}", $"app{i}:1"))]));
+        // app6:1 was built again: the tag now names sha256:new, and sha256:6 is left untagged.
+        var (reloading, reloadEffects) = Reduce(removing, new ReloadRequested());
+        var load = reloadEffects.OfType<LoadResourceEffect>().Single();
+        var (moved, _) = Reduce(reloading, new ImagesLoaded(load.Generation,
+            [.. Enumerable.Range(1, 5).Select(i => Image($"sha256:{i}", $"app{i}:1")), Image("sha256:6"), Image("sha256:new", "app6:1")]));
+
+        var (one, oneEffects) = Reduce(moved, new RemoveItemFinished(ResourceKind.Images, Tags("sha256:1", "app1:1"), null));
+        Assert.Equal([new RemoveItemEffect(ResourceKind.Images, Tags("sha256:5", "app5:1"))], oneEffects);
+        Assert.True(one.Images.Pending.ContainsKey("app6:1"));
+
+        var (two, twoEffects) = Reduce(one, new RemoveItemFinished(ResourceKind.Images, Tags("sha256:2", "app2:1"), null));
+
+        Assert.Empty(twoEffects);
+        Assert.Equal<RemovalSkip>([new RemovalSkip("sha256:6", SkipReason.TagMoved)], two.Images.Removal!.Skips);
+        Assert.False(two.Images.Pending.ContainsKey("app6:1"));
+        Assert.Equal(3, two.Images.Removal.Finished);
+    }
+
+    [Fact]
+    public void A_queued_volume_that_is_no_longer_listed_is_skipped_as_gone()
+    {
+        var (removing, _) = Reduce(WithManyVolumes(5), RemoveVolumes("v1", "v2", "v3", "v4", "v5"));
+        var (reloading, reloadEffects) = Reduce(removing, new ReloadRequested());
+        var load = reloadEffects.OfType<LoadResourceEffect>().Single();
+        var (gone, _) = Reduce(reloading, new VolumesLoaded(load.Generation, [Volume("v1"), Volume("v2"), Volume("v3"), Volume("v4")]));
+        Assert.True(gone.Volumes.Pending.ContainsKey("v5"));
+
+        var (state, effects) = Reduce(gone, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v1"), null));
+
+        Assert.Empty(effects);
+        Assert.Equal<RemovalSkip>([new RemovalSkip("v5", SkipReason.Gone)], state.Volumes.Removal!.Skips);
+        Assert.False(state.Volumes.Pending.ContainsKey("v5"));
+    }
+
+    [Fact]
+    public void An_unused_item_a_container_uses_by_its_turn_is_skipped_as_in_use()
+    {
+        var volumes = WithManyVolumes(5);
+        var items = Enumerable.Range(1, 5).Select(i => new RemovalItem($"v{i}", [$"v{i}"], OnlyIfUnused: true)).ToImmutableArray();
+        var (removing, _) = Reduce(volumes, new RemoveRequested(ResourceKind.Volumes, items));
+        var (reloading, reloadEffects) = Reduce(removing, new ReloadRequested());
+        var load = reloadEffects.OfType<LoadContainersEffect>().Single();
+        var user = Container("web") with { Mounts = [new MountDetails("volume", "/v/v5", "/data", "", true, "v5")] };
+        var (used, _) = Reduce(reloading, new ContainersLoaded(load.Generation, [user], Info));
+
+        var (state, _) = Reduce(used, new RemoveItemFinished(ResourceKind.Volumes, items[0], null));
+
+        Assert.Equal<RemovalSkip>([new RemovalSkip("v5", SkipReason.InUse)], state.Volumes.Removal!.Skips);
+    }
+
+    [Fact]
+    public void An_unused_image_or_network_a_container_uses_is_skipped_but_a_plain_delete_of_it_is_sent()
+    {
+        var state = AllListsLoaded() with
+        {
+            Containers = [Container("web") with { ImageId = "sha256:b", Networks = ["n1"] }],
+        };
+
+        var (images, imageEffects) = Reduce(state, new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:b", ["sha256:b"], OnlyIfUnused: true)]));
+        Assert.Empty(imageEffects.OfType<RemoveItemEffect>());
+        Assert.Equal<RemovalSkip>([new RemovalSkip("sha256:b", SkipReason.InUse)], images.Images.Removal!.Skips);
+        Assert.False(images.Images.Removal.IsRunning);
+        Assert.Contains(new ScheduleResourceReloadEffect(ResourceKind.Images, SessionReducer.ReloadDebounce), imageEffects);
+
+        var (networks, networkEffects) = Reduce(state, new RemoveRequested(ResourceKind.Networks, [new RemovalItem("n1", ["n1"], OnlyIfUnused: true)]));
+        Assert.Empty(networkEffects.OfType<RemoveItemEffect>());
+        Assert.Equal<RemovalSkip>([new RemovalSkip("n1", SkipReason.InUse)], networks.Networks.Removal!.Skips);
+
+        var (_, deleteEffects) = Reduce(state, new RemoveRequested(ResourceKind.Networks, [new RemovalItem("n1")]));
+        Assert.Single(deleteEffects.OfType<RemoveItemEffect>());
+    }
+
+    [Fact]
+    public void An_item_for_an_image_no_longer_listed_is_skipped_when_it_is_asked_for()
+    {
+        var (state, effects) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [Tags("sha256:zzz", "gone:1")]));
+
+        Assert.Empty(effects.OfType<RemoveItemEffect>());
+        Assert.Equal<RemovalSkip>([new RemovalSkip("sha256:zzz", SkipReason.Gone)], state.Images.Removal!.Skips);
+        Assert.Empty(state.Images.Pending);
+    }
+
+    // Load errors
+
+    [Fact]
+    public void A_failed_list_read_is_kept_on_the_list_until_a_read_starts_again()
+    {
+        var (wanted, effects) = Reduce(Connected(), new VolumesWanted());
+        var load = Assert.IsType<LoadResourceEffect>(Assert.Single(effects));
+
+        var (failed, _) = Reduce(wanted, new ResourceLoadFailed(ResourceKind.Volumes, load.Generation, "volumes broke", EngineUnreachable: false));
+        Assert.Equal("volumes broke", failed.Volumes.LoadError);
+        Assert.False(failed.Volumes.Loaded);
+
+        var (retrying, retryEffects) = Reduce(failed, new VolumesWanted());
+        var retry = Assert.IsType<LoadResourceEffect>(Assert.Single(retryEffects));
+        Assert.Null(retrying.Volumes.LoadError);
+
+        var (failedAgain, _) = Reduce(retrying, new ResourceLoadFailed(ResourceKind.Volumes, retry.Generation, "still broken", EngineUnreachable: false));
+        var (reloading, reloadEffects) = Reduce(failedAgain, new ReloadRequested());
+        Assert.Null(reloading.Volumes.LoadError);
+        var again = reloadEffects.OfType<LoadResourceEffect>().Single();
+
+        var (loaded, _) = Reduce(reloading, new VolumesLoaded(again.Generation, [Volume("data")]));
+        Assert.Null(loaded.Volumes.LoadError);
+        Assert.True(loaded.Volumes.Loaded);
+    }
+
+    [Fact]
+    public void A_failed_container_list_read_is_kept_until_a_read_starts_again()
+    {
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+        var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
+
+        var (failed, _) = Reduce(connected, new LoadFailed(connected.LoadGeneration, "list broke", EngineUnreachable: false));
+        Assert.Equal("list broke", failed.ContainersLoadError);
+        Assert.False(failed.ListLoaded);
+
+        var (reloading, effects) = Reduce(failed, new ReloadRequested());
+        Assert.Null(reloading.ContainersLoadError);
+        var load = effects.OfType<LoadContainersEffect>().Single();
+
+        var (failedAgain, _) = Reduce(reloading, new LoadFailed(load.Generation, "list broke", EngineUnreachable: false));
+        var (loaded, _) = Reduce(failedAgain, new ContainersLoaded(load.Generation, [Container("a")], Info));
+        Assert.Null(loaded.ContainersLoadError);
     }
 
     [Fact]

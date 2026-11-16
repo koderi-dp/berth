@@ -39,20 +39,21 @@ public static partial class SessionReducer
 
             case ImagesLoaded loaded when connected && loaded.Generation == state.Images.Status.Generation:
             {
-                var keys = loaded.Images.SelectMany(i => i.RepoTags.Prepend(i.Id));
-                var next = state with { Images = new(loaded.Images, Arrived(state.Images.Status, keys)) };
+                var next = state with { Images = new(loaded.Images, Arrived(state.Images.Status)) };
                 var shown = next.Pulls.Values.Where(p => p.Status == PullStatus.Done && loaded.Generation > p.FinishedAtLoad).Select(p => p.Reference);
                 return (next with { Pulls = next.Pulls.RemoveRange(shown) }, None);
             }
 
             case VolumesLoaded loaded when connected && loaded.Generation == state.Volumes.Status.Generation:
-                return (state with { Volumes = new(loaded.Volumes, Arrived(state.Volumes.Status, loaded.Volumes.Select(v => v.Name))) }, None);
+                return (state with { Volumes = new(loaded.Volumes, Arrived(state.Volumes.Status)) }, None);
 
             case NetworksLoaded loaded when connected && loaded.Generation == state.Networks.Status.Generation:
-                return (state with { Networks = new(loaded.Networks, Arrived(state.Networks.Status, loaded.Networks.Select(n => n.Id))) }, None);
+                return (state with { Networks = new(loaded.Networks, Arrived(state.Networks.Status)) }, None);
 
             case ResourceLoadFailed failure when connected && failure.Generation == StatusOf(state, failure.Kind).Generation:
-                return failure.EngineUnreachable ? Lose(state, failure.Message) : (state with { ActionError = failure.Message }, None);
+                return failure.EngineUnreachable
+                    ? Lose(state, failure.Message)
+                    : (WithStatus(state, failure.Kind, StatusOf(state, failure.Kind) with { LoadError = failure.Message }) with { ActionError = failure.Message }, None);
 
             case ResourceReloadDue due:
             {
@@ -174,8 +175,10 @@ public static partial class SessionReducer
                 Loaded = !startingOver && status.Loaded,
                 ReloadScheduled = false,
                 Pending = status.Pending.Clear(),
-                // What was not sent is not sent; what was sent and not answered is not counted.
-                Removal = status.Removal is { IsRunning: true } batch ? batch with { Total = batch.Finished, Running = 0, Queued = [] } : status.Removal,
+                // The batch ends here: what waited is not sent, and what was being sent got no answer.
+                Removal = status.Removal is { IsRunning: true } batch
+                    ? batch with { Running = 0, Queued = [], Interrupted = true, NotSent = batch.Queued.Length, Unanswered = batch.Running }
+                    : status.Removal,
             });
         }
 
@@ -227,7 +230,8 @@ public static partial class SessionReducer
     private static (EngineState, ImmutableArray<SessionEffect>) Want(EngineState state, ResourceKind kind, bool connected)
     {
         var status = StatusOf(state, kind);
-        if (status.Wanted)
+        // Shown again after its read failed: read it again.
+        if (status.Wanted && (status.LoadError is null || !connected))
             return (state, None);
         var wanted = WithStatus(state, kind, status with { Wanted = true });
         return connected ? Load(wanted, kind) : (wanted, None);
@@ -238,7 +242,7 @@ public static partial class SessionReducer
     {
         var ticket = state.Ticket + 1;
         return (
-            WithStatus(state with { Ticket = ticket }, kind, StatusOf(state, kind) with { Generation = ticket }),
+            WithStatus(state with { Ticket = ticket }, kind, StatusOf(state, kind) with { Generation = ticket, LoadError = null }),
             [new LoadResourceEffect(kind, ticket)]);
     }
 
@@ -252,10 +256,10 @@ public static partial class SessionReducer
     }
 
     /// <summary>The list arrived: it is loaded, and pending keys it no longer holds are forgotten.</summary>
-    private static ListStatus Arrived(ListStatus status, IEnumerable<string> keys)
+    private static ListStatus Arrived(ListStatus status)
     {
-        var listed = keys.ToHashSet(StringComparer.Ordinal);
-        return status with { Loaded = true, Pending = status.Pending.RemoveRange(status.Pending.Keys.Where(k => !listed.Contains(k))) };
+        // Pending keys stay: an item waiting its turn keeps its keys until it is sent or skipped, even when they have left the list.
+        return status with { Loaded = true, LoadError = null };
     }
 
     /// <summary>
@@ -281,7 +285,7 @@ public static partial class SessionReducer
 
         var batch = status.Removal is { IsRunning: true } running ? running : RemovalBatch.Empty;
         batch = batch with { Total = batch.Total + accepted.Count, Queued = batch.Queued.AddRange(accepted) };
-        return SendQueued(WithStatus(state, kind, status with { Pending = pending.ToImmutable(), Removal = batch }), kind);
+        return Advance(WithStatus(state, kind, status with { Pending = pending.ToImmutable(), Removal = batch }), kind);
     }
 
     /// <summary>
@@ -302,34 +306,81 @@ public static partial class SessionReducer
             Refusals = finished.Refusal is { } refusal ? batch.Refusals.Add(refusal) : batch.Refusals,
         };
         var next = WithStatus(state, finished.Kind, status with { Pending = status.Pending.RemoveRange(finished.Item.Keys), Removal = batch });
-        var sent = SendQueued(next, finished.Kind);
-        if (batch.IsRunning)
-            return sent;
-
-        var reloaded = sent.Then(s => RequestListReload(s, finished.Kind));
-        return finished.Kind == ResourceKind.Networks ? reloaded : reloaded.Then(ReloadAskedDiskUsage);
+        return Advance(next, finished.Kind);
     }
 
-    /// <summary>Sends waiting items of the list's batch while fewer than <see cref="RemovalConcurrency"/> are being sent.</summary>
-    private static (EngineState, ImmutableArray<SessionEffect>) SendQueued(EngineState state, ResourceKind kind)
+    /// <summary>
+    /// Sends waiting items of the list's batch while fewer than <see cref="RemovalConcurrency"/> are being sent, skipping (and counting as
+    /// ended) any that no longer holds (<see cref="SkipReasonOf"/>). When that ends the batch, the list is read again and, once it has
+    /// been asked for and the list is one it covers, the disk use once.
+    /// </summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) Advance(EngineState state, ResourceKind kind)
     {
         var status = StatusOf(state, kind);
         if (status.Removal is not { } batch)
             return (state, None);
 
         var effects = ImmutableArray.CreateBuilder<SessionEffect>();
-        var queued = batch.Queued;
-        var running = batch.Running;
-        while (running < RemovalConcurrency && !queued.IsEmpty)
+        var pending = status.Pending;
+        while (batch.IsRunning && batch.Running < RemovalConcurrency && !batch.Queued.IsEmpty)
         {
-            effects.Add(new RemoveItemEffect(kind, queued[0]));
-            queued = queued.RemoveAt(0);
-            running++;
+            var item = batch.Queued[0];
+            batch = batch with { Queued = batch.Queued.RemoveAt(0) };
+            if (SkipReasonOf(state, kind, item) is { } reason)
+            {
+                batch = batch with { Finished = batch.Finished + 1, Skips = batch.Skips.Add(new RemovalSkip(item.Id, reason)) };
+                pending = pending.RemoveRange(item.Keys);
+                continue;
+            }
+
+            effects.Add(new RemoveItemEffect(kind, item));
+            batch = batch with { Running = batch.Running + 1 };
         }
 
-        return effects.Count == 0
-            ? (state, None)
-            : (WithStatus(state, kind, status with { Removal = batch with { Queued = queued, Running = running } }), effects.ToImmutable());
+        var next = (WithStatus(state, kind, status with { Pending = pending, Removal = batch }), effects.ToImmutable());
+        if (batch.IsRunning)
+            return next;
+
+        var reloaded = next.Then(s => RequestListReload(s, kind));
+        return kind == ResourceKind.Networks ? reloaded : reloaded.Then(ReloadAskedDiskUsage);
+    }
+
+    /// <summary>
+    /// Why <paramref name="item"/> must not be sent now, from the lists as they are: it is no longer listed; for an image, a tag among its
+    /// keys now names another image (it was built again or moved); for "Remove unused", a container of any state uses it now. Null to send.
+    /// </summary>
+    private static SkipReason? SkipReasonOf(EngineState state, ResourceKind kind, RemovalItem item)
+    {
+        switch (kind)
+        {
+            case ResourceKind.Images:
+            {
+                var image = state.Images.Items.FirstOrDefault(i => i.Id == item.Id);
+                if (image is null)
+                    return SkipReason.Gone;
+                if (item.Keys.Any(k => k != image.Id && !image.RepoTags.Contains(k)))
+                    return SkipReason.TagMoved;
+                var used = (image.Containers ?? 0) > 0 || state.Containers.Any(c => c.ImageId == image.Id);
+                return item.OnlyIfUnused && used ? SkipReason.InUse : null;
+            }
+
+            case ResourceKind.Volumes:
+            {
+                if (!state.Volumes.Items.Any(v => v.Name == item.Id))
+                    return SkipReason.Gone;
+                var used = state.Containers.Any(c => c.Mounts.Any(m => m.Type == "volume" && m.Name == item.Id));
+                return item.OnlyIfUnused && used ? SkipReason.InUse : null;
+            }
+
+            default:
+            {
+                var network = state.Networks.Items.FirstOrDefault(n => n.Id == item.Id);
+                if (network is null)
+                    return SkipReason.Gone;
+                var used = state.Containers.Any(c => c.Networks.Contains(network.Name));
+                return item.OnlyIfUnused && used ? SkipReason.InUse : null;
+            }
+        }
     }
 
     /// <summary>Reads the disk use now, or once more after the read that is running (however often it is asked meanwhile).</summary>

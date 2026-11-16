@@ -29,6 +29,10 @@ public enum ContainerAction { Start, Stop, Restart, Pause, Unpause, Remove }
 /// <param name="DiskUsage">The engine's disk use of images and volumes, read when asked for (<see cref="DiskUsageRequested"/>).</param>
 /// <param name="Pulls">The image pulls the user started, by the reference they run under (<see cref="ImagePull.KeyOf"/>).</param>
 /// <param name="Run">The container the run dialog asked for, until dismissed; null when none.</param>
+/// <param name="ContainersLoadError">
+/// Why the last read of the container list failed, as the engine said it; null once a read starts or succeeds. With
+/// <see cref="ListLoaded"/> false it tells the page the list failed rather than is loading; F5 reads it again.
+/// </param>
 /// <param name="Ticket">The last generation handed to an image, volume, network or disk use read or a pull.</param>
 public sealed record EngineState(
     ConnectionStatus Status,
@@ -50,7 +54,8 @@ public sealed record EngineState(
     DiskUsageState DiskUsage,
     ImmutableDictionary<string, ImagePull> Pulls,
     ContainerRun? Run,
-    int Ticket)
+    int Ticket,
+    string? ContainersLoadError = null)
 {
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
