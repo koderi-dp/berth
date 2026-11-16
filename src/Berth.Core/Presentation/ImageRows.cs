@@ -26,7 +26,7 @@ public sealed record ImageFilter(string Search, ImageShow Show)
 /// <param name="TagCount">How many tags the image has; a tag removed from an image with others leaves the image.</param>
 /// <param name="UsedByCount">How many containers, in any state, use the image.</param>
 /// <param name="UsedBy">The names of the containers that use the image, from the container list, by name.</param>
-/// <param name="Pending">The action in progress on this tag or on the whole image, if any.</param>
+/// <param name="Pending">The action in progress on the image or on any of its tags, if any.</param>
 public sealed record ImageRow(
     string Key,
     string ImageId,
@@ -107,7 +107,8 @@ public static class ImageRows
         var shortId = ComposeGrouping.ShortId(image.Id);
         var created = DateTimeOffset.FromUnixTimeSeconds(image.Created);
         var usedBy = Math.Max(image.Containers ?? 0, users.Count);
-        var imagePending = pending.TryGetValue(image.Id, out var action) ? action : (ItemAction?)null;
+        // A remove of any of its tags, or of the image, changes every row of it: none is sent another while one runs.
+        var imagePending = image.RepoTags.Prepend(image.Id).Select(k => pending.TryGetValue(k, out var a) ? a : (ItemAction?)null).FirstOrDefault(a => a is not null);
 
         if (image.RepoTags.Count == 0)
         {
@@ -119,8 +120,7 @@ public static class ImageRows
         foreach (var tag in image.RepoTags)
         {
             var (name, tagName) = Split(tag);
-            var rowPending = pending.TryGetValue(tag, out var tagAction) ? tagAction : imagePending;
-            yield return new ImageRow(tag, image.Id, shortId, name, tagName, IsTagged: true, image.RepoTags.Count, created, image.Size, usedBy, users, rowPending);
+            yield return new ImageRow(tag, image.Id, shortId, name, tagName, IsTagged: true, image.RepoTags.Count, created, image.Size, usedBy, users, imagePending);
         }
     }
 

@@ -26,34 +26,25 @@ public sealed record ResourceLoadFailed(ResourceKind Kind, int Generation, strin
 public sealed record ResourceReloadDue(ResourceKind Kind) : SessionEvent;
 
 /// <summary>
-/// Remove each of <paramref name="References"/>: an image ID removes the image, a tag ("nginx:latest") removes that tag (and the image
-/// with it when it was the last). <paramref name="Force"/> is the engine's force flag.
+/// Remove <paramref name="Items"/> of one list, a few at a time, each item's keys in order (a confirmed delete or "Remove unused …",
+/// as Presentation's plans make them; never forced). An item with a key already pending is left out. Joins a batch that is running.
 /// </summary>
-public sealed record RemoveImagesRequested(ImmutableArray<string> References, bool Force = false) : SessionEvent;
+public sealed record RemoveRequested(ResourceKind Kind, ImmutableArray<RemovalItem> Items) : SessionEvent;
 
-public sealed record RemoveVolumesRequested(ImmutableArray<string> Names) : SessionEvent;
+/// <summary>An item of a remove ended: every key removed, or stopped at the key the engine refused (<paramref name="Refusal"/>).</summary>
+/// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
+public sealed record RemoveItemFinished(ResourceKind Kind, RemovalItem Item, RemovalRefusal? Refusal, bool EngineUnreachable = false) : SessionEvent;
 
-public sealed record RemoveNetworksRequested(ImmutableArray<string> Ids) : SessionEvent;
-
-/// <summary>
-/// Remove what no container uses, of one kind: every unused image (or with <paramref name="DanglingImagesOnly"/> only the untagged
-/// ones), every unused volume (named or anonymous), or every unused network.
-/// </summary>
-public sealed record PruneRequested(ResourceKind Kind, bool DanglingImagesOnly = false) : SessionEvent;
+/// <summary>Forget the ended batch of removes of one list and its refusals.</summary>
+public sealed record RemovalDismissed(ResourceKind Kind) : SessionEvent;
 
 /// <summary>Create a volume named <paramref name="Name"/>.</summary>
 public sealed record CreateVolumeRequested(string Name) : SessionEvent;
 
-/// <summary>A remove of <paramref name="Key"/>, or the create of a volume of that name, went through.</summary>
-public sealed record ItemActionSucceeded(ResourceKind Kind, string Key) : SessionEvent;
+public sealed record VolumeCreated(string Name) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record ItemActionFailed(ResourceKind Kind, string Key, string Message, bool EngineUnreachable) : SessionEvent;
-
-public sealed record PruneSucceeded(ResourceKind Kind, PruneResult Result) : SessionEvent;
-
-/// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record PruneFailed(ResourceKind Kind, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record VolumeCreateFailed(string Name, string Message, bool EngineUnreachable) : SessionEvent;
 
 /// <summary>Read the engine's disk use of images and volumes now (the page asked, or the user refreshed it).</summary>
 public sealed record DiskUsageRequested : SessionEvent;

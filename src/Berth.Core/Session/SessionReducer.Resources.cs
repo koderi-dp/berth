@@ -21,6 +21,9 @@ public static partial class SessionReducer
 
     private static readonly ResourceKind[] Kinds = [ResourceKind.Images, ResourceKind.Volumes, ResourceKind.Networks];
 
+    /// <summary>How many items of a batch of removes are sent at once.</summary>
+    public const int RemovalConcurrency = 4;
+
     private static (EngineState State, ImmutableArray<SessionEffect> Effects) ReduceResources(EngineState state, SessionEvent e, bool connected)
     {
         switch (e)
@@ -58,50 +61,31 @@ public static partial class SessionReducer
                 return connected ? Load(cleared, due.Kind) : (cleared, None);
             }
 
-            case RemoveImagesRequested request when connected:
-                return RequestItems(state, ResourceKind.Images, request.References, ItemAction.Remove, request.Force);
+            case RemoveRequested request when connected:
+                return RequestRemoval(state, request.Kind, request.Items);
 
-            case RemoveVolumesRequested request when connected:
-                return RequestItems(state, ResourceKind.Volumes, request.Names, ItemAction.Remove, force: false);
+            case RemoveItemFinished finished when connected && StatusOf(state, finished.Kind).Removal is { Running: > 0 }:
+                return FinishRemovalItem(state, finished);
 
-            case RemoveNetworksRequested request when connected:
-                return RequestItems(state, ResourceKind.Networks, request.Ids, ItemAction.Remove, force: false);
+            case RemovalDismissed dismissed when StatusOf(state, dismissed.Kind).Removal is { IsRunning: false }:
+                return (WithStatus(state, dismissed.Kind, StatusOf(state, dismissed.Kind) with { Removal = null }), None);
 
-            case CreateVolumeRequested request when connected:
-                return RequestItems(state, ResourceKind.Volumes, [request.Name], ItemAction.Create, force: false);
+            case CreateVolumeRequested request when connected && !state.Volumes.Pending.ContainsKey(request.Name):
+                return (
+                    WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.SetItem(request.Name, ItemAction.Create) }),
+                    [new CreateVolumeEffect(request.Name)]);
 
-            case ItemActionSucceeded success when connected:
-            {
-                var status = StatusOf(state, success.Kind);
-                var removed = !status.Pending.TryGetValue(success.Key, out var action) || action == ItemAction.Remove;
-                var next = WithStatus(state, success.Kind, status with { Pending = status.Pending.Remove(success.Key) });
-                return removed ? RequestListReload(next, success.Kind).Then(ReloadAskedDiskUsage) : RequestListReload(next, success.Kind);
-            }
+            case VolumeCreated created when connected:
+                return RequestListReload(
+                    WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.Remove(created.Name) }),
+                    ResourceKind.Volumes);
 
-            case ItemActionFailed failure when connected:
+            case VolumeCreateFailed failure when connected:
             {
                 if (failure.EngineUnreachable)
                     return Lose(state, failure.Message);
-                var status = StatusOf(state, failure.Kind);
-                var next = WithStatus(state, failure.Kind, status with { Pending = status.Pending.Remove(failure.Key) });
-                return RequestListReload(next with { ActionError = failure.Message }, failure.Kind);
-            }
-
-            case PruneRequested request when connected && !StatusOf(state, request.Kind).Pruning:
-                return (
-                    WithStatus(state, request.Kind, StatusOf(state, request.Kind) with { Pruning = true, Pruned = null }),
-                    [new PruneEffect(request.Kind, request.DanglingImagesOnly)]);
-
-            case PruneSucceeded success when connected && StatusOf(state, success.Kind).Pruning:
-            {
-                var next = WithStatus(state, success.Kind, StatusOf(state, success.Kind) with { Pruning = false, Pruned = success.Result });
-                return RequestListReload(next, success.Kind).Then(ReloadAskedDiskUsage);
-            }
-
-            case PruneFailed failure when connected && StatusOf(state, failure.Kind).Pruning:
-            {
-                var next = WithStatus(state, failure.Kind, StatusOf(state, failure.Kind) with { Pruning = false });
-                return failure.EngineUnreachable ? Lose(next, failure.Message) : (next with { ActionError = failure.Message }, None);
+                var next = WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.Remove(failure.Name) });
+                return RequestListReload(next with { ActionError = failure.Message }, ResourceKind.Volumes);
             }
 
             case DiskUsageRequested when connected:
@@ -175,8 +159,8 @@ public static partial class SessionReducer
     }
 
     /// <summary>
-    /// What is under way on the connection is over, lost or started over: pending item actions, prunes, reloads and the disk use read
-    /// are forgotten, and running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created). When
+    /// What is under way on the connection is over, lost or started over: pending item actions, reloads and the disk use read are
+    /// forgotten, a batch of removes ends where it is (keeping its refusals), and running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created). When
     /// the session starts over (<paramref name="startingOver"/>) every list also counts as not loaded until it is read again.
     /// </summary>
     private static EngineState ForgetUnderWay(EngineState state, bool startingOver)
@@ -190,7 +174,8 @@ public static partial class SessionReducer
                 Loaded = !startingOver && status.Loaded,
                 ReloadScheduled = false,
                 Pending = status.Pending.Clear(),
-                Pruning = false,
+                // What was not sent is not sent; what was sent and not answered is not counted.
+                Removal = status.Removal is { IsRunning: true } batch ? batch with { Total = batch.Finished, Running = 0, Queued = [] } : status.Removal,
             });
         }
 
@@ -273,21 +258,78 @@ public static partial class SessionReducer
         return status with { Loaded = true, Pending = status.Pending.RemoveRange(status.Pending.Keys.Where(k => !listed.Contains(k))) };
     }
 
-    private static (EngineState, ImmutableArray<SessionEffect>) RequestItems(
-        EngineState state, ResourceKind kind, IEnumerable<string> keys, ItemAction action, bool force)
+    /// <summary>
+    /// Adds <paramref name="items"/> to the list's batch of removes (starting a new batch when none runs), leaving out an item with a key
+    /// already pending, and marks every key pending. Then sends as many as <see cref="RemovalConcurrency"/> allows.
+    /// </summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) RequestRemoval(EngineState state, ResourceKind kind, IEnumerable<RemovalItem> items)
     {
         var status = StatusOf(state, kind);
         var pending = status.Pending.ToBuilder();
-        var effects = ImmutableArray.CreateBuilder<SessionEffect>();
-        foreach (var key in keys)
+        var accepted = ImmutableArray.CreateBuilder<RemovalItem>();
+        foreach (var item in items)
         {
-            if (pending.TryAdd(key, action))
-                effects.Add(new ItemActionEffect(kind, key, action, force));
+            if (item.Keys.IsEmpty || item.Keys.Any(pending.ContainsKey) || item.Keys.Distinct(StringComparer.Ordinal).Count() != item.Keys.Length)
+                continue;
+            foreach (var key in item.Keys)
+                pending[key] = ItemAction.Remove;
+            accepted.Add(item);
+        }
+
+        if (accepted.Count == 0)
+            return (state, None);
+
+        var batch = status.Removal is { IsRunning: true } running ? running : RemovalBatch.Empty;
+        batch = batch with { Total = batch.Total + accepted.Count, Queued = batch.Queued.AddRange(accepted) };
+        return SendQueued(WithStatus(state, kind, status with { Pending = pending.ToImmutable(), Removal = batch }), kind);
+    }
+
+    /// <summary>
+    /// An item ended: its keys are no longer pending, a refusal is kept, the next waiting item is sent, and when the batch has ended the
+    /// list is read again and, once it has been asked for and the list is one it covers, the disk use once.
+    /// </summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) FinishRemovalItem(EngineState state, RemoveItemFinished finished)
+    {
+        if (finished.EngineUnreachable)
+            return Lose(state, finished.Refusal?.Message ?? "");
+
+        var status = StatusOf(state, finished.Kind);
+        var batch = status.Removal!;
+        batch = batch with
+        {
+            Finished = batch.Finished + 1,
+            Running = batch.Running - 1,
+            Refusals = finished.Refusal is { } refusal ? batch.Refusals.Add(refusal) : batch.Refusals,
+        };
+        var next = WithStatus(state, finished.Kind, status with { Pending = status.Pending.RemoveRange(finished.Item.Keys), Removal = batch });
+        var sent = SendQueued(next, finished.Kind);
+        if (batch.IsRunning)
+            return sent;
+
+        var reloaded = sent.Then(s => RequestListReload(s, finished.Kind));
+        return finished.Kind == ResourceKind.Networks ? reloaded : reloaded.Then(ReloadAskedDiskUsage);
+    }
+
+    /// <summary>Sends waiting items of the list's batch while fewer than <see cref="RemovalConcurrency"/> are being sent.</summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) SendQueued(EngineState state, ResourceKind kind)
+    {
+        var status = StatusOf(state, kind);
+        if (status.Removal is not { } batch)
+            return (state, None);
+
+        var effects = ImmutableArray.CreateBuilder<SessionEffect>();
+        var queued = batch.Queued;
+        var running = batch.Running;
+        while (running < RemovalConcurrency && !queued.IsEmpty)
+        {
+            effects.Add(new RemoveItemEffect(kind, queued[0]));
+            queued = queued.RemoveAt(0);
+            running++;
         }
 
         return effects.Count == 0
             ? (state, None)
-            : (WithStatus(state, kind, status with { Pending = pending.ToImmutable() }), effects.ToImmutable());
+            : (WithStatus(state, kind, status with { Removal = batch with { Queued = queued, Running = running } }), effects.ToImmutable());
     }
 
     /// <summary>Reads the disk use now, or once more after the read that is running (however often it is asked meanwhile).</summary>
@@ -310,7 +352,7 @@ public static partial class SessionReducer
         return again ? LoadDiskUsage(ended) : (ended, None);
     }
 
-    /// <summary>After a remove or prune: reads the disk use again if something asked for it before; never otherwise.</summary>
+    /// <summary>After a batch of removes: reads the disk use again if something asked for it before; never otherwise.</summary>
     private static (EngineState, ImmutableArray<SessionEffect>) ReloadAskedDiskUsage(EngineState state) =>
         state.DiskUsage.Asked ? LoadDiskUsage(state) : (state, None);
 

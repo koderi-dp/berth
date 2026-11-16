@@ -40,8 +40,9 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             command of an inspected container, PowerShell or bash quoting; ShellKind)
   State/                    value types that more than one layer holds or reads: LogBuffer (last 10,000 lines),
                             StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
-                            ResourceList/ListStatus (the images, volumes and networks lists), ImagePull (a pull's layers),
-                            DiskUsageState, ContainerRun (the run dialog's result)
+                            ResourceList/ListStatus/RemovalBatch (the images, volumes and networks lists and their
+                            batches of removes), ImagePull (a pull's layers), DiskUsageState, ContainerRun (the run
+                            dialog's result)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
                             stats), with ResourceEvents, ResourceEffects and SessionReducer.Resources for images, volumes,
                             networks, disk use, pulls and running a container; EngineSession (runs the reducer and its
@@ -54,7 +55,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
-                            Confirmations (what a remove or prune sends and its dialog text), PullFigure (a pull's progress
+                            Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text), PullFigure (a pull's progress
                             line), RunDraft (the run dialog's fields, checks and create request); detail page: LogView, LogSearch,
                             InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
                             and CPU column texts), DetailPage (the detail page's lifecycle: when it opens, closes, refreshes
@@ -110,8 +111,9 @@ the table or a file's namespace is not its folder's.
 | `Storage` | nothing |
 
 Text the engine client needs itself (`AnsiText`) lives in `Engine`, since `Engine` may not use
-`Text`. `Presentation` reads only `Session`'s state records (`EngineState`, `DetailState` and
-what they hold); the test cannot tell those from the runtime, so a review must. A type that a
+`Text`. `Presentation` uses only `Session`'s plain records: the state (`EngineState`, `DetailState`
+and what they hold) and the events it builds for the app to dispatch (a confirmed remove's
+`RemoveRequested`); never the runtime. The test cannot tell those apart, so a review must. A type that a
 lower folder needs moves down (to `Engine`, `Text` or `State`), never the reference up: the
 saved sort choice is `State.ContainerSort`, and how the table sorts by it is
 `Presentation.ContainerSorting`.

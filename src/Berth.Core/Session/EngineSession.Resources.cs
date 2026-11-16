@@ -13,7 +13,6 @@ public sealed partial class EngineSession
     private const string ImageActionFailedReport = "an image action failed";
     private const string VolumeActionFailedReport = "a volume action failed";
     private const string NetworkActionFailedReport = "a network action failed";
-    private const string PruneFailedReport = "a prune failed";
     private const string DiskUsageFailedReport = "reading the disk use failed";
     private const string RunFailedReport = "running a container failed";
 
@@ -36,16 +35,20 @@ public sealed partial class EngineSession
                 _listReloadTimers[reload.Kind] = StartTimer(reload.Delay, new ResourceReloadDue(reload.Kind), _connection);
                 break;
 
-            case ItemActionEffect action when _connection is { } connection:
-                connection.Run(ct => RunItemActionAsync(connection, action, ct));
+            case RemoveItemEffect remove when _connection is { } connection:
+                connection.Run(ct => RemoveItemAsync(connection, remove, ct));
                 break;
 
-            case PruneEffect prune when _connection is { } connection:
+            case CreateVolumeEffect create when _connection is { } connection:
                 connection.Run(ct => CallAsync(
                     connection,
-                    PruneFailedReport,
-                    async (api, token) => new PruneSucceeded(prune.Kind, await PruneAsync(api, prune, token).ConfigureAwait(false)),
-                    ex => new PruneFailed(prune.Kind, ex.Message, IsUnreachable(ex)),
+                    VolumeActionFailedReport,
+                    async (api, token) =>
+                    {
+                        await api.CreateVolumeAsync(create.Name, token).ConfigureAwait(false);
+                        return new VolumeCreated(create.Name);
+                    },
+                    ex => new VolumeCreateFailed(create.Name, ex.Message, IsUnreachable(ex)),
                     ct));
                 break;
 
@@ -105,40 +108,44 @@ public sealed partial class EngineSession
             ct),
     };
 
-    private Task RunItemActionAsync(Connection connection, ItemActionEffect action, CancellationToken ct)
+    /// <summary>Removes the item's keys one after another, never forced, and stops at the first the engine refuses.</summary>
+    private async Task RemoveItemAsync(Connection connection, RemoveItemEffect remove, CancellationToken ct)
     {
-        var report = action.Kind switch
+        var report = remove.Kind switch
         {
             ResourceKind.Images => ImageActionFailedReport,
             ResourceKind.Volumes => VolumeActionFailedReport,
             _ => NetworkActionFailedReport,
         };
-        return CallAsync(
-            connection,
-            report,
-            async (api, token) =>
+        var api = connection.Api!;
+        RemovalRefusal? refusal = null;
+        var unreachable = false;
+        foreach (var key in remove.Item.Keys)
+        {
+            try
             {
-                var call = (action.Kind, action.Action) switch
+                await (remove.Kind switch
                 {
-                    (ResourceKind.Images, ItemAction.Remove) => api.RemoveImageAsync(action.Key, action.Force, token),
-                    (ResourceKind.Volumes, ItemAction.Remove) => api.RemoveVolumeAsync(action.Key, force: false, token),
-                    (ResourceKind.Volumes, ItemAction.Create) => api.CreateVolumeAsync(action.Key, token),
-                    (ResourceKind.Networks, ItemAction.Remove) => api.RemoveNetworkAsync(action.Key, token),
-                    _ => throw new ArgumentOutOfRangeException(nameof(action), action, "No such action on this kind."),
-                };
-                await call.ConfigureAwait(false);
-                return new ItemActionSucceeded(action.Kind, action.Key);
-            },
-            ex => new ItemActionFailed(action.Kind, action.Key, ex.Message, IsUnreachable(ex)),
-            ct);
-    }
+                    ResourceKind.Images => api.RemoveImageAsync(key, force: false, ct),
+                    ResourceKind.Volumes => api.RemoveVolumeAsync(key, force: false, ct),
+                    _ => api.RemoveNetworkAsync(key, ct),
+                }).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Report(report, ex);
+                refusal = new RemovalRefusal(key, ex.Message);
+                unreachable = IsUnreachable(ex);
+                break;
+            }
+        }
 
-    private static Task<Engine.Models.PruneResult> PruneAsync(IEngineApi api, PruneEffect prune, CancellationToken ct) => prune.Kind switch
-    {
-        ResourceKind.Images => api.PruneImagesAsync(prune.DanglingImagesOnly, ct),
-        ResourceKind.Volumes => api.PruneVolumesAsync(ct),
-        _ => api.PruneNetworksAsync(ct),
-    };
+        Post(new RemoveItemFinished(remove.Kind, remove.Item, refusal, unreachable), connection);
+    }
 
     /// <summary>Creates the container, then starts it. A start that fails says which container was created.</summary>
     private async Task RunContainerAsync(Connection connection, RunContainerEffect run, CancellationToken ct)

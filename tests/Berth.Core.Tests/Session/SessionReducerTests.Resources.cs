@@ -277,7 +277,7 @@ public sealed partial class SessionReducerTests
     [Fact]
     public void Losing_the_connection_keeps_the_lists_and_forgets_what_was_under_way()
     {
-        var (removing, _) = Reduce(WithImages(), new RemoveImagesRequested(["nginx:1"]));
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:1")]));
         var (scheduled, _) = Reduce(removing, new EngineEventReceived(Event("image", "tag")));
 
         var (state, _) = Reduce(scheduled, new ConnectionLost("connection reset"));
@@ -301,39 +301,74 @@ public sealed partial class SessionReducerTests
         Assert.Contains(new LoadResourceEffect(ResourceKind.Images, connected.Images.Status.Generation), effects);
     }
 
-    // Remove, prune and create
+    // Removes ("Delete" and "Remove unused …" alike), and create
 
-    [Fact]
-    public void Remove_images_marks_each_pending_and_sends_each_once_with_force()
+    private static RemoveRequested RemoveVolumes(params string[] names) => new(ResourceKind.Volumes, [.. names.Select(n => new RemovalItem(n))]);
+
+    private static EngineState WithManyVolumes(int count)
     {
-        var state = WithImages();
-
-        var (next, effects) = Reduce(state, new RemoveImagesRequested(["nginx:1", "sha256:b"], Force: true));
-
-        Assert.Equal(ItemAction.Remove, next.Images.Pending["nginx:1"]);
-        Assert.Equal(ItemAction.Remove, next.Images.Pending["sha256:b"]);
-        Assert.Equal(
-            [
-                new ItemActionEffect(ResourceKind.Images, "nginx:1", ItemAction.Remove, Force: true),
-                new ItemActionEffect(ResourceKind.Images, "sha256:b", ItemAction.Remove, Force: true),
-            ],
-            effects);
-
-        var (again, againEffects) = Reduce(next, new RemoveImagesRequested(["nginx:1"]));
-        Assert.Same(next, again);
-        Assert.Empty(againEffects);
+        var (wanted, effects) = Reduce(Connected(), new VolumesWanted());
+        var load = Assert.IsType<LoadResourceEffect>(Assert.Single(effects));
+        return Reduce(wanted, new VolumesLoaded(load.Generation, [.. Enumerable.Range(1, count).Select(i => Volume($"v{i}"))])).State;
     }
 
     [Fact]
-    public void Remove_volumes_and_networks_send_one_remove_each()
+    public void A_remove_marks_every_key_pending_and_sends_at_most_four_items_at_once()
     {
-        var (volumes, volumeEffects) = Reduce(WithVolumes(), new RemoveVolumesRequested(["data"]));
-        Assert.Equal([new ItemActionEffect(ResourceKind.Volumes, "data", ItemAction.Remove)], volumeEffects);
-        Assert.Equal(ItemAction.Remove, volumes.Volumes.Pending["data"]);
+        var state = WithManyVolumes(6);
 
-        var (networks, networkEffects) = Reduce(WithNetworks(), new RemoveNetworksRequested(["n1"]));
-        Assert.Equal([new ItemActionEffect(ResourceKind.Networks, "n1", ItemAction.Remove)], networkEffects);
-        Assert.Equal(ItemAction.Remove, networks.Networks.Pending["n1"]);
+        var (next, effects) = Reduce(state, RemoveVolumes("v1", "v2", "v3", "v4", "v5", "v6"));
+
+        Assert.Equal(
+            [.. new[] { "v1", "v2", "v3", "v4" }.Select(n => (SessionEffect)new RemoveItemEffect(ResourceKind.Volumes, new RemovalItem(n)))],
+            effects);
+        Assert.Equal(6, next.Volumes.Pending.Count);
+        Assert.Equal((6, 0, 4), (next.Volumes.Removal!.Total, next.Volumes.Removal.Finished, next.Volumes.Removal.Running));
+        Assert.Equal<RemovalItem>([new RemovalItem("v5"), new RemovalItem("v6")], next.Volumes.Removal!.Queued);
+        Assert.Equal(4, SessionReducer.RemovalConcurrency);
+    }
+
+    [Fact]
+    public void An_image_is_one_item_whose_tags_go_in_order_in_one_effect()
+    {
+        var (next, effects) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:latest", "nginx:1"), new RemovalItem("sha256:b")]));
+
+        Assert.Equal(
+            [
+                new RemoveItemEffect(ResourceKind.Images, new RemovalItem("nginx:latest", "nginx:1")),
+                new RemoveItemEffect(ResourceKind.Images, new RemovalItem("sha256:b")),
+            ],
+            effects);
+        Assert.Equal(["nginx:1", "nginx:latest", "sha256:b"], next.Images.Pending.Keys.Order());
+    }
+
+    [Fact]
+    public void An_item_with_a_key_already_pending_is_left_out()
+    {
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:1")]));
+
+        var (again, effects) = Reduce(removing, new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:latest", "nginx:1")]));
+
+        Assert.Same(removing, again);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void An_item_that_ends_frees_its_keys_sends_the_next_one_and_keeps_a_refusal()
+    {
+        var (removing, _) = Reduce(WithManyVolumes(6), RemoveVolumes("v1", "v2", "v3", "v4", "v5", "v6"));
+
+        var (one, oneEffects) = Reduce(removing, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v1"), null));
+        Assert.Equal([new RemoveItemEffect(ResourceKind.Volumes, new RemovalItem("v5"))], oneEffects);
+        Assert.False(one.Volumes.Pending.ContainsKey("v1"));
+        Assert.Equal((1, 4), (one.Volumes.Removal!.Finished, one.Volumes.Removal.Running));
+
+        var refusal = new RemovalRefusal("v2", "remove v2: volume is in use - [c1]");
+        var (two, _) = Reduce(one, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v2"), refusal));
+        Assert.Equal<RemovalRefusal>([refusal], two.Volumes.Removal!.Refusals);
+        Assert.False(two.Volumes.Pending.ContainsKey("v2"));
+        Assert.Null(two.ActionError);
+        Assert.True(two.Volumes.Removal.IsRunning);
     }
 
     [Theory]
@@ -343,17 +378,11 @@ public sealed partial class SessionReducerTests
     public void A_refused_remove_shows_the_engine_message_as_is_and_the_row_stays(ResourceKind kind, string key, string message)
     {
         var loaded = AllListsLoaded();
-        SessionEvent remove = kind switch
-        {
-            ResourceKind.Images => new RemoveImagesRequested([key]),
-            ResourceKind.Volumes => new RemoveVolumesRequested([key]),
-            _ => new RemoveNetworksRequested([key]),
-        };
-        var (removing, _) = Reduce(loaded, remove);
+        var (removing, _) = Reduce(loaded, new RemoveRequested(kind, [new RemovalItem(key)]));
 
-        var (state, effects) = Reduce(removing, new ItemActionFailed(kind, key, message, EngineUnreachable: false));
+        var (state, effects) = Reduce(removing, new RemoveItemFinished(kind, new RemovalItem(key), new RemovalRefusal(key, message)));
 
-        Assert.Equal(message, state.ActionError);
+        Assert.Equal<RemovalRefusal>([new RemovalRefusal(key, message)], StatusOf(state, kind).Removal!.Refusals);
         Assert.Empty(StatusOf(state, kind).Pending);
         Assert.Equal(loaded.Images.Items, state.Images.Items);
         Assert.Equal(loaded.Volumes.Items, state.Volumes.Items);
@@ -362,45 +391,86 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
-    public void A_remove_that_cannot_reach_the_engine_moves_to_disconnected()
+    public void A_batch_reads_the_list_and_the_asked_disk_use_once_when_its_last_item_ends()
     {
-        var (removing, _) = Reduce(WithVolumes(), new RemoveVolumesRequested(["data"]));
+        var (asked, askEffects) = Reduce(WithManyVolumes(3), new DiskUsageRequested());
+        var (withUsage, _) = Reduce(asked, new DiskUsageLoaded(Assert.IsType<LoadDiskUsageEffect>(Assert.Single(askEffects)).Generation, Usage));
+        var (removing, _) = Reduce(withUsage, RemoveVolumes("v1", "v2", "v3"));
 
-        var (state, _) = Reduce(removing, new ItemActionFailed(ResourceKind.Volumes, "data", "connection reset", EngineUnreachable: true));
+        var (one, oneEffects) = Reduce(removing, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v1"), null));
+        var (two, twoEffects) = Reduce(one, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v2"), null));
+        var (state, lastEffects) = Reduce(two, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v3"), null));
+
+        Assert.Empty(oneEffects);
+        Assert.Empty(twoEffects);
+        Assert.Equal(
+            [new ScheduleResourceReloadEffect(ResourceKind.Volumes, SessionReducer.ReloadDebounce), new LoadDiskUsageEffect(state.DiskUsage.Generation)],
+            lastEffects);
+        Assert.False(state.Volumes.Removal!.IsRunning);
+        Assert.Equal(3, state.Volumes.Removal.Finished);
+    }
+
+    [Fact]
+    public void A_batch_never_reads_the_disk_use_nobody_asked_for_nor_for_networks()
+    {
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:b")]));
+        var (_, effects) = Reduce(removing, new RemoveItemFinished(ResourceKind.Images, new RemovalItem("sha256:b"), null));
+        Assert.Equal([new ScheduleResourceReloadEffect(ResourceKind.Images, SessionReducer.ReloadDebounce)], effects);
+
+        var (asked, _) = Reduce(WithNetworks(), new DiskUsageRequested());
+        var (removingNetwork, _) = Reduce(asked, new RemoveRequested(ResourceKind.Networks, [new RemovalItem("n1")]));
+        var (_, networkEffects) = Reduce(removingNetwork, new RemoveItemFinished(ResourceKind.Networks, new RemovalItem("n1"), null));
+        Assert.DoesNotContain(networkEffects, e => e is LoadDiskUsageEffect);
+    }
+
+    [Fact]
+    public void A_remove_asked_for_while_a_batch_runs_joins_it()
+    {
+        var (removing, _) = Reduce(WithManyVolumes(6), RemoveVolumes("v1", "v2", "v3", "v4", "v5"));
+
+        var (joined, effects) = Reduce(removing, RemoveVolumes("v6"));
+
+        Assert.Empty(effects);
+        Assert.Equal(6, joined.Volumes.Removal!.Total);
+        Assert.Equal(2, joined.Volumes.Removal.Queued.Length);
+    }
+
+    [Fact]
+    public void An_ended_batch_stays_until_dismissed_and_the_next_remove_starts_a_new_one()
+    {
+        var (removing, _) = Reduce(WithManyVolumes(2), RemoveVolumes("v1"));
+        Assert.Same(removing, Reduce(removing, new RemovalDismissed(ResourceKind.Volumes)).State);
+        var (ended, _) = Reduce(removing, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v1"), new RemovalRefusal("v1", "in use")));
+
+        var (dismissed, _) = Reduce(ended, new RemovalDismissed(ResourceKind.Volumes));
+        Assert.Null(dismissed.Volumes.Removal);
+
+        var (fresh, _) = Reduce(ended, RemoveVolumes("v2"));
+        Assert.Equal((1, 0, 1), (fresh.Volumes.Removal!.Total, fresh.Volumes.Removal.Finished, fresh.Volumes.Removal.Running));
+        Assert.Empty(fresh.Volumes.Removal.Refusals);
+    }
+
+    [Fact]
+    public void A_remove_that_cannot_reach_the_engine_moves_to_disconnected_and_ends_the_batch()
+    {
+        var (removing, _) = Reduce(WithManyVolumes(6), RemoveVolumes("v1", "v2", "v3", "v4", "v5", "v6"));
+
+        var (state, _) = Reduce(removing, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v1"), new RemovalRefusal("v1", "connection reset"), EngineUnreachable: true));
 
         Assert.Equal(ConnectionStatus.Disconnected, state.Status);
-        Assert.Null(state.ActionError);
-    }
+        Assert.Equal("connection reset", state.ConnectionError);
+        Assert.Empty(state.Volumes.Pending);
+        Assert.False(state.Volumes.Removal!.IsRunning);
+        Assert.Empty(state.Volumes.Removal.Queued);
 
-    [Fact]
-    public void A_remove_that_went_through_reloads_the_list_and_not_the_disk_use_nobody_asked_for()
-    {
-        var (removing, _) = Reduce(WithImages(), new RemoveImagesRequested(["sha256:b"]));
-
-        var (state, effects) = Reduce(removing, new ItemActionSucceeded(ResourceKind.Images, "sha256:b"));
-
-        Assert.Empty(state.Images.Pending);
-        Assert.Equal([new ScheduleResourceReloadEffect(ResourceKind.Images, SessionReducer.ReloadDebounce)], effects);
-        Assert.False(state.DiskUsage.Asked);
-    }
-
-    [Fact]
-    public void A_remove_that_went_through_reads_the_disk_use_again_once_it_was_asked_for()
-    {
-        var (asked, askEffects) = Reduce(WithImages(), new DiskUsageRequested());
-        var (withUsage, _) = Reduce(asked, new DiskUsageLoaded(Assert.IsType<LoadDiskUsageEffect>(Assert.Single(askEffects)).Generation, Usage));
-        var (removing, _) = Reduce(withUsage, new RemoveImagesRequested(["sha256:b"]));
-
-        var (state, effects) = Reduce(removing, new ItemActionSucceeded(ResourceKind.Images, "sha256:b"));
-
-        Assert.True(state.DiskUsage.Loading);
-        Assert.Contains(new LoadDiskUsageEffect(state.DiskUsage.Generation), effects);
+        var (late, _) = Reduce(state, new RemoveItemFinished(ResourceKind.Volumes, new RemovalItem("v2"), null));
+        Assert.Same(state, late);
     }
 
     [Fact]
     public void A_pending_remove_of_an_item_no_longer_listed_is_forgotten_on_reload()
     {
-        var (removing, _) = Reduce(WithImages(), new RemoveImagesRequested(["nginx:1", "sha256:b"]));
+        var (removing, _) = Reduce(WithImages(), new RemoveRequested(ResourceKind.Images, [new RemovalItem("nginx:1"), new RemovalItem("sha256:b")]));
         var (reloading, effects) = Reduce(removing, new ReloadRequested());
         var load = effects.OfType<LoadResourceEffect>().Single();
 
@@ -414,59 +484,11 @@ public sealed partial class SessionReducerTests
     {
         var disconnected = WithImages() with { Status = ConnectionStatus.Disconnected };
 
-        Assert.Same(disconnected, Reduce(disconnected, new RemoveImagesRequested(["sha256:b"])).State);
-        Assert.Same(disconnected, Reduce(disconnected, new PruneRequested(ResourceKind.Volumes)).State);
+        Assert.Same(disconnected, Reduce(disconnected, new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:b")])).State);
         Assert.Same(disconnected, Reduce(disconnected, new CreateVolumeRequested("v")).State);
         Assert.Same(disconnected, Reduce(disconnected, new PullRequested("nginx")).State);
         Assert.Same(disconnected, Reduce(disconnected, new RunContainerRequested(RunRequest)).State);
         Assert.Same(disconnected, Reduce(disconnected, new DiskUsageRequested()).State);
-    }
-
-    [Theory]
-    [InlineData(ResourceKind.Images, true)]
-    [InlineData(ResourceKind.Images, false)]
-    [InlineData(ResourceKind.Volumes, false)]
-    [InlineData(ResourceKind.Networks, false)]
-    public void A_prune_runs_once_at_a_time(ResourceKind kind, bool danglingOnly)
-    {
-        var state = AllListsLoaded();
-
-        var (pruning, effects) = Reduce(state, new PruneRequested(kind, danglingOnly));
-
-        Assert.True(StatusOf(pruning, kind).Pruning);
-        Assert.Equal([new PruneEffect(kind, danglingOnly)], effects);
-        var (again, againEffects) = Reduce(pruning, new PruneRequested(kind, danglingOnly));
-        Assert.Same(pruning, again);
-        Assert.Empty(againEffects);
-    }
-
-    [Fact]
-    public void A_prune_that_went_through_keeps_its_result_and_reloads_the_list_and_the_asked_disk_use()
-    {
-        var (asked, _) = Reduce(WithVolumes(), new DiskUsageRequested());
-        var (pruning, _) = Reduce(asked, new PruneRequested(ResourceKind.Volumes));
-        var result = new PruneResult(["logs"], 2048);
-
-        var (state, effects) = Reduce(pruning, new PruneSucceeded(ResourceKind.Volumes, result));
-
-        Assert.False(state.Volumes.Pruning);
-        Assert.Same(result, state.Volumes.Status.Pruned);
-        Assert.Contains(new ScheduleResourceReloadEffect(ResourceKind.Volumes, SessionReducer.ReloadDebounce), effects);
-        Assert.True(state.DiskUsage.Loading && state.DiskUsage.Again);
-
-        var (next, _) = Reduce(state, new PruneRequested(ResourceKind.Volumes));
-        Assert.Null(next.Volumes.Status.Pruned);
-    }
-
-    [Fact]
-    public void A_failed_prune_shows_the_engine_message_as_is()
-    {
-        var (pruning, _) = Reduce(WithImages(), new PruneRequested(ResourceKind.Images));
-
-        var (state, _) = Reduce(pruning, new PruneFailed(ResourceKind.Images, "a prune operation is already running", EngineUnreachable: false));
-
-        Assert.False(state.Images.Pruning);
-        Assert.Equal("a prune operation is already running", state.ActionError);
     }
 
     [Fact]
@@ -475,9 +497,9 @@ public sealed partial class SessionReducerTests
         var (creating, effects) = Reduce(WithVolumes(), new CreateVolumeRequested("berth-check-vol"));
 
         Assert.Equal(ItemAction.Create, creating.Volumes.Pending["berth-check-vol"]);
-        Assert.Equal([new ItemActionEffect(ResourceKind.Volumes, "berth-check-vol", ItemAction.Create)], effects);
+        Assert.Equal([new CreateVolumeEffect("berth-check-vol")], effects);
 
-        var (state, doneEffects) = Reduce(creating, new ItemActionSucceeded(ResourceKind.Volumes, "berth-check-vol"));
+        var (state, doneEffects) = Reduce(creating, new VolumeCreated("berth-check-vol"));
         Assert.Empty(state.Volumes.Pending);
         Assert.Equal([new ScheduleResourceReloadEffect(ResourceKind.Volumes, SessionReducer.ReloadDebounce)], doneEffects);
     }
@@ -487,7 +509,7 @@ public sealed partial class SessionReducerTests
     {
         var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("data"));
 
-        var (state, _) = Reduce(creating, new ItemActionFailed(ResourceKind.Volumes, "data", "volume name is already in use", EngineUnreachable: false));
+        var (state, _) = Reduce(creating, new VolumeCreateFailed("data", "volume name is already in use", EngineUnreachable: false));
 
         Assert.Equal("volume name is already in use", state.ActionError);
         Assert.Empty(state.Volumes.Pending);

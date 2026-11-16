@@ -42,5 +42,8 @@ public static class AgeFormat
         return Units(Math.Max(1, days / 365), "year");
     }
 
+    /// <summary>As <see cref="Ago(DateTimeOffset, DateTimeOffset)"/>, or <see cref="ByteFormat.Unknown"/> when the time is not known.</summary>
+    public static string Ago(DateTimeOffset now, DateTimeOffset? then) => then is { } known ? Ago(now, known) : ByteFormat.Unknown;
+
     private static string Units(long count, string unit) => count == 1 ? $"1 {unit} ago" : $"{count} {unit}s ago";
 }

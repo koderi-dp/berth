@@ -3,7 +3,7 @@ using Berth.Engine.Models;
 namespace Berth.State;
 
 /// <summary>
-/// The engine's disk use of images and volumes, read only when asked for (it can be slow) and again after a remove or prune once it
+/// The engine's disk use of images and volumes, read only when asked for (it can be slow) and again after a batch of removes once it
 /// has been asked for.
 /// </summary>
 /// <param name="Usage">The last disk use read; null until one arrives. Kept while a new read runs.</param>

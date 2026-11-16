@@ -10,13 +10,12 @@ public sealed record LoadResourceEffect(ResourceKind Kind, int Generation) : Ses
 public sealed record ScheduleResourceReloadEffect(ResourceKind Kind, TimeSpan Delay) : SessionEffect;
 
 /// <summary>
-/// Remove the image, volume or network <see cref="Key"/> (an image by ID or tag; <see cref="Force"/> applies to images), or create the
-/// volume named <see cref="Key"/>; answers with ItemActionSucceeded or ItemActionFailed.
+/// Remove <see cref="Item"/>'s keys one after another, never forced, stopping at the first refusal; answers with RemoveItemFinished.
 /// </summary>
-public sealed record ItemActionEffect(ResourceKind Kind, string Key, ItemAction Action, bool Force = false) : SessionEffect;
+public sealed record RemoveItemEffect(ResourceKind Kind, RemovalItem Item) : SessionEffect;
 
-/// <summary>Prune one kind; answers with PruneSucceeded or PruneFailed.</summary>
-public sealed record PruneEffect(ResourceKind Kind, bool DanglingImagesOnly) : SessionEffect;
+/// <summary>Create the volume <see cref="Name"/>; answers with VolumeCreated or VolumeCreateFailed.</summary>
+public sealed record CreateVolumeEffect(string Name) : SessionEffect;
 
 /// <summary>Read the disk use; answers with DiskUsageLoaded or DiskUsageFailed carrying the same generation.</summary>
 public sealed record LoadDiskUsageEffect(int Generation) : SessionEffect;

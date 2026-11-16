@@ -79,8 +79,8 @@ public sealed partial class EngineSessionTests
         await h.ConnectAsync();
         h.Session.Dispatch(new ImagesWanted());
         await h.WaitFor(s => s.Images.Loaded);
-        h.Session.Dispatch(new RemoveImagesRequested(["sha256:a"]));
-        await h.WaitFor(s => s.Images.Pending.IsEmpty && s.Images.Status.ReloadScheduled);
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:a")]));
+        await h.WaitFor(s => s.Images.Removal is { IsRunning: false } && s.Images.Status.ReloadScheduled);
         h.Time.Advance(SessionReducer.ReloadDebounce);
         await h.WaitFor(s => !s.Images.Status.ReloadScheduled);
 
@@ -95,32 +95,66 @@ public sealed partial class EngineSessionTests
     }
 
     [Fact]
-    public async Task Removes_prunes_and_creates_reach_the_engine()
+    public async Task Removes_and_creates_reach_the_engine_and_an_images_tags_go_in_order_never_forced()
     {
-        var api = new FakeEngineApi { Prune = new PruneResult(["old"], 1024) };
+        var api = new FakeEngineApi();
         await using var h = Harness.With(api);
         await h.ConnectAsync();
 
-        h.Session.Dispatch(new RemoveImagesRequested(["nginx:1"], Force: true));
-        h.Session.Dispatch(new RemoveVolumesRequested(["data"]));
-        h.Session.Dispatch(new RemoveNetworksRequested(["n1"]));
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("a:1", "a:2", "a:3")]));
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Volumes, [new RemovalItem("data")]));
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Networks, [new RemovalItem("n1")]));
         h.Session.Dispatch(new CreateVolumeRequested("berth-it-v"));
-        h.Session.Dispatch(new PruneRequested(ResourceKind.Images, DanglingImagesOnly: true));
-        h.Session.Dispatch(new PruneRequested(ResourceKind.Volumes));
-        h.Session.Dispatch(new PruneRequested(ResourceKind.Networks));
         var state = await h.WaitFor(s =>
-            s.Images.Status.Pruned is not null && s.Volumes.Status.Pruned is not null && s.Networks.Status.Pruned is not null
-            && s.Images.Pending.IsEmpty && s.Volumes.Pending.IsEmpty && s.Networks.Pending.IsEmpty);
+            s.Images.Removal is { IsRunning: false } && s.Volumes.Removal is { IsRunning: false } && s.Networks.Removal is { IsRunning: false }
+            && s.Volumes.Pending.IsEmpty);
 
-        Assert.Contains("RemoveImage nginx:1 force=True", api.Calls);
+        Assert.Equal(["RemoveImage a:1 force=False", "RemoveImage a:2 force=False", "RemoveImage a:3 force=False"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
         Assert.Contains("RemoveVolume data force=False", api.Calls);
         Assert.Contains("RemoveNetwork n1", api.Calls);
         Assert.Contains("CreateVolume berth-it-v", api.Calls);
-        Assert.Contains("PruneImages danglingOnly=True", api.Calls);
-        Assert.Contains("PruneVolumes", api.Calls);
-        Assert.Contains("PruneNetworks", api.Calls);
-        Assert.Equal(1024, state.Volumes.Status.Pruned!.SpaceReclaimed);
+        Assert.DoesNotContain(api.Calls, c => c.StartsWith("Prune", StringComparison.Ordinal));
+        Assert.Empty(state.Images.Removal!.Refusals);
         Assert.Null(state.ActionError);
+    }
+
+    [Fact]
+    public async Task An_image_item_stops_at_the_first_tag_the_engine_refuses()
+    {
+        var api = new FakeEngineApi();
+        api.Fail("RemoveImage", new EngineException(409, "conflict: unable to remove repository reference \"a:1\" (must force) - container c1 is using its referenced image"));
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("a:1", "a:2")]));
+        var state = await h.WaitFor(s => s.Images.Removal is { IsRunning: false });
+
+        Assert.Equal(["RemoveImage a:1 force=False"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
+        var refusal = Assert.Single(state.Images.Removal!.Refusals);
+        Assert.Equal("a:1", refusal.Key);
+        Assert.Equal("conflict: unable to remove repository reference \"a:1\" (must force) - container c1 is using its referenced image", refusal.Message);
+    }
+
+    [Fact]
+    public async Task A_batch_sends_four_at_a_time_and_reads_the_disk_use_once_at_its_end()
+    {
+        var api = new FakeEngineApi { Volumes = [.. Enumerable.Range(1, 6).Select(i => Volume($"v{i}"))] };
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        h.Session.Dispatch(new DiskUsageRequested());
+        await h.WaitFor(s => s.DiskUsage.Usage is not null && !s.DiskUsage.Loading);
+        var held = api.Hold("RemoveVolume");
+
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Volumes, [.. Enumerable.Range(1, 6).Select(i => new RemovalItem($"v{i}"))]));
+        await held.Entered.WaitAsync(Patience);
+        var sending = await h.WaitFor(s => s.Volumes.Removal is { Running: 4 });
+        Assert.Equal(2, sending.Volumes.Removal!.Queued.Length);
+
+        held.Release();
+        await h.WaitFor(s => s.Volumes.Removal is { IsRunning: false } && !s.DiskUsage.Loading);
+
+        Assert.Equal(6, api.Calls.Count(c => c.StartsWith("RemoveVolume", StringComparison.Ordinal)));
+        Assert.Equal(2, api.Calls.Count(c => c == "DiskUsage"));
     }
 
     [Fact]
@@ -133,10 +167,10 @@ public sealed partial class EngineSessionTests
         h.Session.Dispatch(new VolumesWanted());
         await h.WaitFor(s => s.Volumes.Loaded);
 
-        h.Session.Dispatch(new RemoveVolumesRequested(["data"]));
-        var state = await h.WaitFor(s => s.ActionError is not null);
+        h.Session.Dispatch(new RemoveRequested(ResourceKind.Volumes, [new RemovalItem("data")]));
+        var state = await h.WaitFor(s => s.Volumes.Removal is { IsRunning: false });
 
-        Assert.Equal("remove data: volume is in use - [c1]", state.ActionError);
+        Assert.Equal<RemovalRefusal>([new RemovalRefusal("data", "remove data: volume is in use - [c1]")], state.Volumes.Removal!.Refusals);
         Assert.Equal(["data"], state.Volumes.Items.Select(v => v.Name));
         Assert.Empty(state.Volumes.Pending);
         Assert.Equal(ConnectionStatus.Connected, state.Status);

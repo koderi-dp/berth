@@ -84,7 +84,7 @@ public sealed class ImageRowsTests
     }
 
     [Fact]
-    public void A_row_is_pending_when_its_tag_or_its_image_is_being_removed()
+    public void Every_row_of_an_image_is_pending_while_any_of_its_tags_or_the_image_is_being_removed()
     {
         var images = new[] { Image("sha256:a", ["a:1", "a:2"]), Image("sha256:b", ["b:1"]) };
         var state = Pending(Pending(StateWith(images: images), ResourceKind.Images, "a:1"), ResourceKind.Images, "sha256:b");
@@ -92,7 +92,7 @@ public sealed class ImageRowsTests
         var rows = ImageRows.From(state).ToDictionary(r => r.Key);
 
         Assert.Equal(ItemAction.Remove, rows["a:1"].Pending);
-        Assert.Null(rows["a:2"].Pending);
+        Assert.Equal(ItemAction.Remove, rows["a:2"].Pending);
         Assert.Equal(ItemAction.Remove, rows["b:1"].Pending);
     }
 

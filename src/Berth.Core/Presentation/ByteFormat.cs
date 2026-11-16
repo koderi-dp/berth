@@ -14,6 +14,12 @@ public static class ByteFormat
     /// </summary>
     public static string Bytes(long bytes) => Format(bytes);
 
+    /// <summary>What a size or time that is not known reads.</summary>
+    public const string Unknown = "Unknown";
+
+    /// <summary>As <see cref="Bytes(long)"/>, or <see cref="Unknown"/> when the size is not known.</summary>
+    public static string Bytes(long? bytes) => bytes is { } known ? Format(known) : Unknown;
+
     /// <summary>A rate in bytes per second, as <see cref="Bytes"/> with "/s" ("1.5 KB/s"). Negative or NaN reads "0 B/s".</summary>
     public static string Rate(double bytesPerSecond) => Format(bytesPerSecond) + "/s";
 
