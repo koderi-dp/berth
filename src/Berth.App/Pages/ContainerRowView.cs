@@ -26,50 +26,33 @@ internal sealed record ContainerListCallbacks(
 
 /// <summary>
 /// The rows of the containers table: the header row, a container row and a compose project row. All of them lay out their cells in
-/// the same <see cref="WideColumns"/> or <see cref="CompactColumns"/>, so the columns line up.
+/// the same <see cref="Columns"/> (<see cref="ListTable.Row{TSort}"/>), so the columns line up.
 /// </summary>
 internal static class ContainerRowView
 {
     /// <summary>
     /// Checkbox, chevron (compose project rows only), state dot, name, image, status, ports, CPU, created, actions. The dot has its
-    /// own column so a project's dot and its containers' dots sit under each other, right of the chevron.
+    /// own column so a project's dot and its containers' dots sit under each other, right of the chevron. In a narrow window
+    /// Restart and Pause move into a menu, so the actions need less room, and the CPU column gives its room to the others (the
+    /// strip above the list still has the total).
     /// </summary>
-    private static readonly GridSize[] WideColumns =
-    [
-        GridSize.Px(40),
-        GridSize.Px(28),
-        GridSize.Px(24),
-        GridSize.Star(4), // the name: wider than the others, a project's containers are indented in it
-        GridSize.Star(3),
-        GridSize.Star(3),
-        GridSize.Px(120), // ports: wide enough for "65535:65535"
-        GridSize.Px(104), // CPU: its title "CPU (%)" or "1234.5%", and a gap before Created
-        GridSize.Px(120),
-        GridSize.Px(236), // four buttons, the menu, a divider and Delete
-    ];
-
-    /// <summary>
-    /// The same columns for a narrow window: Restart and Pause move into a menu, so the actions need less room, and the CPU column
-    /// gives its room to the others (the strip above the list still has the total).
-    /// </summary>
-    private static readonly GridSize[] CompactColumns =
-    [
-        GridSize.Px(40),
-        GridSize.Px(28),
-        GridSize.Px(24),
-        GridSize.Star(4), // the name: wider than the others, a project's containers are indented in it
-        GridSize.Star(3),
-        GridSize.Star(3),
-        GridSize.Px(120), // ports: wide enough for "65535:65535"
-        GridSize.Px(0), // no CPU column
-        GridSize.Px(120),
-        GridSize.Px(148), // one button, the menu, a divider and Delete
-    ];
+    private static readonly ListColumns<SortColumn> Columns = new(
+        ListColumn<SortColumn>.Select(),
+        ListColumn<SortColumn>.Of(GridSize.Px(28)),
+        ListColumn<SortColumn>.Of(GridSize.Px(24)),
+        // The name: wider than the others, a project's containers are indented in it.
+        ListColumn<SortColumn>.Of(GridSize.Star(4)) with { Title = ContainerSort.Title(SortColumn.Name), SortBy = SortColumn.Name },
+        ListColumn<SortColumn>.Of(GridSize.Star(3)) with { Title = ContainerSort.Title(SortColumn.Image), SortBy = SortColumn.Image },
+        ListColumn<SortColumn>.Of(GridSize.Star(3)) with { Title = ContainerSort.Title(SortColumn.Status), SortBy = SortColumn.Status },
+        ListColumn<SortColumn>.Of(GridSize.Px(120)) with { Title = "Ports" }, // wide enough for "65535:65535"
+        // CPU: its title "CPU (%)" or "1234.5%", and a gap before Created.
+        ListColumn<SortColumn>.InWideOnly(GridSize.Px(104)) with { Title = ContainerSort.Title(SortColumn.Cpu), SortBy = SortColumn.Cpu, AlignRight = true },
+        ListColumn<SortColumn>.Of(GridSize.Px(120)) with { Title = ContainerSort.Title(SortColumn.Created), SortBy = SortColumn.Created },
+        // Four buttons, the menu, a divider and Delete; in the compact layout one button, the menu, a divider and Delete.
+        new ListColumn<SortColumn>(GridSize.Px(236), GridSize.Px(148)));
 
     /// <summary>The window is at least this wide (in effective pixels) when every action gets its own button.</summary>
     public const double WideLayoutMinWidth = 1300;
-
-    private static readonly GridSize[] OneRow = [GridSize.Star()];
 
     /// <summary>Every row is this tall at least, so a project row and a container row (two lines) are the same height.</summary>
     private const double RowHeight = 52;
@@ -86,16 +69,7 @@ internal static class ContainerRowView
     /// button that sorts by its column (<paramref name="onSort"/>); the sorted one shows an arrow. CPU is there in the wide layout only.
     /// </summary>
     public static Element Header(bool? checkedState, bool connected, bool compact, Action<bool> onCheckAll, ContainerSort sort, Action<SortColumn> onSort) =>
-        Cells(
-            minHeight: 36,
-            compact,
-            SelectBox(checkedState, onCheckAll, "Select all").IsEnabled(connected).Grid(column: 0),
-            SortTitle(SortColumn.Name, sort, onSort).Grid(column: 3),
-            SortTitle(SortColumn.Image, sort, onSort).Grid(column: 4),
-            SortTitle(SortColumn.Status, sort, onSort).Grid(column: 5),
-            ColumnTitle("Ports").Grid(column: 6),
-            compact ? Empty() : SortTitle(SortColumn.Cpu, sort, onSort, alignRight: true).Grid(column: 7),
-            SortTitle(SortColumn.Created, sort, onSort).Grid(column: 8));
+        ListTable.Header(Columns, compact, checkedState, connected, onCheckAll, new ListSortView<SortColumn>(sort.Column, sort.Descending, sort.AccessibleName, onSort));
 
     /// <summary>
     /// One container. <paramref name="project"/> not null: it belongs to that compose project and sits under the project's row,
@@ -150,17 +124,18 @@ internal static class ContainerRowView
             })
             .Margin(indented ? Indent : 0, 0, 12, 0);
 
-        return Cells(
-            minHeight: RowHeight,
+        return ListTable.Row(
+            Columns,
             compact,
-            SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).IsEnabled(connected).Grid(column: 0),
+            RowHeight,
+            ListTable.SelectBox(isChecked, value => callbacks.SetChecked(ids, value), "Select " + row.Name).IsEnabled(connected).Grid(column: 0),
             ContainerParts.StateMark(ContainerStatus.Shape(row.State), ContainerParts.StateColor(row.State), row.State.ToString(), busy).Grid(column: 2),
             name.Grid(column: 3),
-            CellText(row.Image).Grid(column: 4),
-            CellText(row.Status, statusColor).Grid(column: 5),
+            ListTable.CellText(row.Image).Grid(column: 4),
+            ListTable.CellText(row.Status, statusColor).Grid(column: 5),
             ContainerParts.PortList(row.Ports, ShownPorts).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0).Grid(column: 6),
             compact ? Empty() : Component<CpuCell, CpuCellProps>(new(cpu)).Grid(column: 7),
-            CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 8),
+            ListTable.CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 8),
             ContainerParts.ActionButtons(actions, compact, row.Name, Run).Grid(column: 9))
             .WithContextFlyout(ContainerParts.ContextMenu(actions, Run));
     }
@@ -191,10 +166,11 @@ internal static class ContainerRowView
         var actions = RowActions.ForProject(rows, connected);
         void Run(RowAction action) => RunEngineAction(action, rows, callbacks);
 
-        return Cells(
-            minHeight: RowHeight,
+        return ListTable.Row(
+            Columns,
             compact,
-            SelectBox(checkedState, value => callbacks.SetChecked(all, value), "Select " + project).IsEnabled(connected).Grid(column: 0),
+            RowHeight,
+            ListTable.SelectBox(checkedState, value => callbacks.SetChecked(all, value), "Select " + project).IsEnabled(connected).Grid(column: 0),
             chevron.Grid(column: 1),
             ContainerParts.StateMark(ContainerStatus.GroupShape(rows.Select(r => r.State).ToArray()), ContainerParts.StateColor(group.State), group.State.ToString(), busy: false).Grid(column: 2),
             name.Grid(column: 3, columnSpan: 6),
@@ -210,53 +186,6 @@ internal static class ContainerRowView
         else if (action.EngineAction is { } engineAction)
             callbacks.Send(action.Ids, engineAction);
     }
-
-    private static Element Cells(double minHeight, bool compact, params Element[] cells) =>
-        Border(Grid(compact ? CompactColumns : WideColumns, OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0))
-            .BorderBrush(Theme.DividerStroke)
-            .BorderThickness(0, 0, 0, 1);
-
-    private static Element SelectBox(bool? checkedState, Action<bool> onChanged, string label) =>
-        CheckBox(checkedState, onChanged)
-            .AutomationName(label)
-            .MinWidth(0)
-            .VAlign(VerticalAlignment.Center);
-
-    private static Element ColumnTitle(string text) =>
-        Caption(text).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center);
-
-    /// <summary>
-    /// A column title as a borderless button: its text, and an arrow while the table is sorted by it (up ascending, down
-    /// descending). Its accessible name says the state ("Name, sorted ascending"). The negative margin keeps the text in line with
-    /// the column's cells while the button keeps its padding for the hover background.
-    /// </summary>
-    private static Element SortTitle(SortColumn column, ContainerSort sort, Action<SortColumn> onSort, bool alignRight = false)
-    {
-        var sorted = sort.Column == column;
-        // A stack, not a flex row: a flex row takes the whole width it is offered, which would stretch the button over the cell.
-        var content = HStack(
-            4,
-            Caption(ContainerSort.Title(column)).Foreground(sorted ? Theme.PrimaryText : Theme.SecondaryText).VAlign(VerticalAlignment.Center),
-            sorted ? Widgets.Glyph(sort.Descending ? Glyphs.ArrowDown : Glyphs.ArrowUp, size: 12, color: Theme.PrimaryText).VAlign(VerticalAlignment.Center) : Empty());
-
-        var button = Button(content, () => onSort(column))
-            .SubtleButton()
-            .AutomationId("sort-" + column.ToString().ToLowerInvariant())
-            .AutomationName(sort.AccessibleName(column))
-            .Padding(8, 4, 8, 4);
-
-        // A number column is right-aligned: the title's text ends where the cells' text ends, 28 from the column's edge (the
-        // button's padding is 8 of it), which leaves a gap before the next column's text.
-        return alignRight
-            ? button.Margin(0, 0, 20, 0).HAlign(HorizontalAlignment.Right).VAlign(VerticalAlignment.Center)
-            : button.Margin(-8, 0, 0, 0).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
-    }
-
-    private static Element CellText(string text, ThemeRef? color = null) =>
-        (color is { } drawn ? Widgets.OneLine(Body(text)).Foreground(drawn) : Widgets.OneLine(Body(text)))
-            .ToolTip(text)
-            .VAlign(VerticalAlignment.Center)
-            .Margin(0, 0, 12, 0);
 }
 
 /// <summary>A row's CPU figure: "12.4%", or empty.</summary>
@@ -273,5 +202,5 @@ internal sealed class CpuCell : Component<CpuCellProps>
             .TextWrapping(TextWrapping.NoWrap)
             .HAlign(HorizontalAlignment.Right)
             .VAlign(VerticalAlignment.Center)
-            .Margin(0, 0, 28, 0);
+            .Margin(0, 0, ListTable.NumberCellEndMargin, 0);
 }

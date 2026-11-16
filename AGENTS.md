@@ -68,8 +68,9 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             the open container page (OpenDetail, CloseDetail, DetailChanged); sends session failures and a
                             set-aside settings file to the log
   EngineConnection.cs       an EngineClient plus the transport it runs on, disposed together
-  App.cs                    the window component: title bar, navigation (AppRoute: Containers, ContainerDetail, Settings),
-                            status bar; switches list stats on and off (see below)
+  App.cs                    the window component: title bar, navigation (AppRoute: Containers, Images, Volumes, Networks,
+                            ContainerDetail, Settings), status bar; switches list stats on and off (see below) and tells the
+                            session which of the images, volumes and networks lists is wanted when its page is shown
   Hooks/                    EngineStateHook.cs (EngineStateComponent, the base class for components that show the
                             engine state), DetailStateHook.cs (the open detail session's state as an external store),
                             UiThreadSubscription.cs (shared by both: follows a replaceable source and coalesces its
@@ -78,9 +79,11 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
                             above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
-                            row and the detail header), DeleteDialog, DetailHeader (breadcrumb, name, ID,
+                            row and the detail header), ListPage (a list page's sections, toolbar, search box, bulk bar
+                            and shortcuts) and ListTable (columns with wide and compact widths, header with sortable
+                            titles, rows, the virtualized table, loading and empty states), shared by the four lists, DeleteDialog, DetailHeader (breadcrumb, name, ID,
                             image, ports, status, actions), StatsStrip (total CPU and memory above the list)
-  Pages/                    ContainersPage, ContainerRowView, SettingsPage, ConnectionEditor, ContainerDetailPage (header,
+  Pages/                    ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage, ConnectionEditor, ContainerDetailPage (header,
                             tab strip, keeps a detail session open while shown)
     Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)

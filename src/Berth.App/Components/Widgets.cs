@@ -37,6 +37,9 @@ internal static class Glyphs
     public const string Close = ""; // Cancel
     public const string CommandPrompt = "";
     public const string OpenFolder = ""; // OpenLocal
+    public const string Layers = ""; // MapLayers: an image is a stack of layers
+    public const string HardDrive = "";
+    public const string Network = "";
 }
 
 /// <summary>Small pieces shared by the shell and the pages.</summary>

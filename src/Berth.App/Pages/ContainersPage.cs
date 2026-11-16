@@ -9,11 +9,8 @@ using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Hooks;
 using Microsoft.UI.Reactor.Input;
-using Microsoft.UI.Reactor.Layout;
 using Microsoft.UI.Reactor.Navigation;
-using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Windows.System;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Pages;
@@ -79,51 +76,24 @@ internal sealed class ContainersPage : EngineStateComponent
         var shownIds = visibleRows.Select(r => r.Id).ToArray();
         var deleteRows = DeleteRows(visibleRows, checkedIds, connected);
 
-        // Keyboard shortcuts while the focus is on the page. None of them acts while the delete confirmation is open; Delete leaves
-        // the search box's own key alone (Delete there deletes text). Escape in the search box empties it (the box's own key).
-        var dialogOpen = deleteRequest is not null;
-        Command[] shortcuts =
-        [
-            new()
-            {
-                Label = "Search",
-                Execute = () => FocusSearch(searchBox.Current),
-                CanExecute = !dialogOpen,
-                Accelerator = Accelerator(VirtualKey.F, VirtualKeyModifiers.Control),
-            },
-            new()
-            {
-                Label = "Reload",
-                Execute = () => AppServices.Current.Session.Dispatch(new ReloadRequested()),
-                CanExecute = !dialogOpen && connected,
-                Accelerator = Accelerator(VirtualKey.F5),
-            },
-            new()
-            {
-                Label = "Delete selected",
-                Execute = () => callbacks.RequestDelete(deleteRows),
-                CanExecute = !dialogOpen && !searchFocused && deleteRows.Length > 0,
-                Accelerator = Accelerator(VirtualKey.Delete),
-            },
-        ];
+        // None of the shortcuts acts while the delete confirmation is open.
+        var shortcuts = ListPage.Shortcuts(
+            searchBox,
+            dialogOpen: deleteRequest is not null,
+            connected,
+            searchFocused,
+            canDelete: deleteRows.Length > 0,
+            () => callbacks.RequestDelete(deleteRows));
 
-        // Keyed: the connection bar and the bulk bar come and go, and unkeyed children are matched by position, so without keys the
-        // toolbar would be mounted again (with a new, empty search box) each time the connection drops or returns.
-        var page = (FlexColumn(
-                Widgets.PageTitle("Containers").Flex(shrink: 0).WithKey("title"),
-                ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
-                Strip(state)?.WithKey("stats"),
-                Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused).WithKey("toolbar"),
-                BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks)?.WithKey("bulk"),
-                Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks).WithKey("table"),
-                DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)).WithKey("delete-dialog"))
-            with
-            {
-                RowGap = 16,
-            })
-            .FlexPadding(24, 16, 24, 0);
-
-        return CommandHost(shortcuts, page).Flex(grow: 1, basis: 0);
+        return ListPage.Render(
+            "Containers",
+            state,
+            Strip(state),
+            Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused),
+            BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
+            Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
+            shortcuts,
+            DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)));
     }
 
     /// <summary>The running containers' CPU and memory in total, while connected; drawn again only when a figure changes.</summary>
@@ -140,15 +110,6 @@ internal sealed class ContainersPage : EngineStateComponent
     {
         var ids = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
         return [.. visibleRows.Where(r => ids.Contains(r.Id))];
-    }
-
-    /// <summary>Ctrl+F: the focus goes to the search box with its text selected, so typing replaces it.</summary>
-    private static void FocusSearch(TextBox? box)
-    {
-        if (box is null)
-            return;
-        box.Focus(FocusState.Keyboard);
-        box.SelectAll();
     }
 
     /// <summary>Sends <paramref name="action"/> for <paramref name="ids"/> to the session current at the time of the click.</summary>
@@ -198,20 +159,10 @@ internal sealed class ContainersPage : EngineStateComponent
     /// so the box and the filter cannot disagree.
     /// </summary>
     private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
-        (FlexRow(
-                Widgets.SearchBox(search, setSearch, "Search", searchBox, setSearchFocused, clearOnEscape: true)
-                    .AutomationId("search")
-                    .AutomationName("Search")
-                    .ToolTip("Search by name, image or ID (Ctrl+F)")
-                    .Width(320),
-                ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
-                    .AutomationName("Only show running containers"))
-            with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 24,
-            })
-            .Flex(shrink: 0);
+        ListPage.Toolbar(
+            ListPage.SearchBox(search, setSearch, searchBox, setSearchFocused, "Search by name, image or ID (Ctrl+F)"),
+            ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
+                .AutomationName("Only show running containers"));
 
     /// <summary>
     /// Shown while shown rows are checked: how many, and Start, Stop and Delete for them (rows with an action in progress are left
@@ -227,17 +178,11 @@ internal sealed class ContainersPage : EngineStateComponent
         var start = BulkSelection.StartIds(visibleRows, checkedIds, connected);
         var stop = BulkSelection.StopIds(visibleRows, checkedIds, connected);
 
-        return (FlexRow(
-                Body($"{count} selected").Foreground(Theme.PrimaryText),
-                Button("Start", () => callbacks.Send(start, ContainerAction.Start)).IsEnabled(!start.IsEmpty),
-                Button("Stop", () => callbacks.Send(stop, ContainerAction.Stop)).IsEnabled(!stop.IsEmpty),
-                Button("Delete", () => callbacks.RequestDelete(deleteRows)).ToolTip("Delete the selected containers (Delete)").IsEnabled(deleteRows.Length > 0))
-            with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 8,
-            })
-            .Flex(shrink: 0);
+        return ListPage.BulkBar(
+            count,
+            Button("Start", () => callbacks.Send(start, ContainerAction.Start)).IsEnabled(!start.IsEmpty),
+            Button("Stop", () => callbacks.Send(stop, ContainerAction.Stop)).IsEnabled(!stop.IsEmpty),
+            Button("Delete", () => callbacks.RequestDelete(deleteRows)).ToolTip("Delete the selected containers (Delete)").IsEnabled(deleteRows.Length > 0));
     }
 
     private static Element Table(
@@ -255,62 +200,19 @@ internal sealed class ContainersPage : EngineStateComponent
         if (groups.Count == 0 && !state.ListLoaded)
         {
             // The connection's first list has not arrived: an empty list here does not yet mean there are no containers.
-            return (FlexColumn(ProgressRing().Size(32, 32).AutomationName("Loading containers")) with { AlignItems = FlexAlign.Center })
-                .Margin(0, 24, 0, 0)
-                .Flex(grow: 1, basis: 0);
+            return ListTable.Loading("Loading containers");
         }
 
         if (groups.Count == 0)
+            return ListTable.EmptyState(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter));
+
+        var header = ContainerRowView.Header(ListTable.CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value), sort, column => SortBy(sort, column));
+
+        return ListTable.Table(header, items, item => item.Key, item => item switch
         {
-            return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
-        }
-
-        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value), sort, column => SortBy(sort, column));
-
-        var list = ListView(items, item => item.Key, (item, _) => item switch
-            {
-                GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, compact, callbacks).WithKey(g.Key),
-                RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, compact, StatsSummary.CpuCell(r.Row, state.Stats), callbacks).WithKey(r.Key),
-                _ => throw new InvalidOperationException("A new list item needs its row here: " + item.GetType().Name),
-            })
-            .Set(view =>
-            {
-                view.SelectionMode = ListViewSelectionMode.None;
-                view.ItemContainerStyle ??= RowContainerStyle();
-            });
-
-        return (FlexColumn(
-                header.Flex(shrink: 0),
-                list.Flex(grow: 1, basis: 0))
-            with
-            {
-                RowGap = 0,
-            })
-            .Flex(grow: 1, basis: 0);
-    }
-
-    /// <summary>The list item container stretches its row over the full width and adds no padding, so rows line up with the header.</summary>
-    private static Style RowContainerStyle()
-    {
-        var style = new Style(typeof(ListViewItem));
-        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
-        style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 0d));
-        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
-        style.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Stretch));
-        return style;
-    }
-
-    /// <summary>True when every one of <paramref name="ids"/> is checked, false when none is, null when some are.</summary>
-    private static bool? CheckedState(IEnumerable<string> ids, ImmutableHashSet<string> checkedIds)
-    {
-        int all = 0, on = 0;
-        foreach (var id in ids)
-        {
-            all++;
-            if (checkedIds.Contains(id))
-                on++;
-        }
-
-        return on == 0 ? false : on == all ? true : null;
+            GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, ListTable.CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, compact, callbacks),
+            RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, compact, StatsSummary.CpuCell(r.Row, state.Stats), callbacks),
+            _ => throw new InvalidOperationException("A new list item needs its row here: " + item.GetType().Name),
+        });
     }
 }
