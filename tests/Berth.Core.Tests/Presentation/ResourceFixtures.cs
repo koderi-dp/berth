@@ -46,6 +46,7 @@ internal static class ResourceFixtures
         {
             Status = connected ? ConnectionStatus.Connected : ConnectionStatus.Disconnected,
             Containers = [.. containers ?? []],
+            ListLoaded = connected,
             Images = new ResourceList<ImageSummary>([.. images ?? []], ListStatus.Initial with { Wanted = true, Loaded = true }),
             Volumes = new ResourceList<VolumeSummary>([.. volumes ?? []], ListStatus.Initial with { Wanted = true, Loaded = true }),
             Networks = new ResourceList<NetworkSummary>([.. networks ?? []], ListStatus.Initial with { Wanted = true, Loaded = true }),

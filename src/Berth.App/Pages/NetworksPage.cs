@@ -20,14 +20,6 @@ namespace Berth.Pages;
 /// </summary>
 internal sealed class NetworksPage : ListPageComponent
 {
-    /// <summary>The page's one dialog at a time.</summary>
-    private abstract record Dialog;
-
-    /// <summary>A delete: the keys the user named and the plan's text when the dialog opened.</summary>
-    private sealed record DeleteDialogOpen(ImmutableArray<string> Keys, RemovalPlan Plan) : Dialog;
-
-    private sealed record PruneDialogOpen(PrunePlan Plan) : Dialog;
-
     /// <summary>The filter's choices, in <see cref="UsageShow"/>'s order.</summary>
     private static readonly string[] ShowChoices = ["All networks", "In use", "Unused"];
 
@@ -42,7 +34,6 @@ internal sealed class NetworksPage : ListPageComponent
         var (filter, sort) = (view.Filter, view.Sort);
         var searchBox = UseListSearch();
         var nav = UseNavigation<AppRoute>();
-        var (dialog, setDialog) = UseState<Dialog?>(null);
         var handlers = UseMemo(() => new NetworkTableHandlers(), Array.Empty<object>());
 
         var connected = state.Status == ConnectionStatus.Connected;
@@ -57,14 +48,10 @@ internal sealed class NetworksPage : ListPageComponent
         var deleteKeys = NetworkRows.RemoveKeys(rows, checkedKeys, connected);
         var removal = state.Networks.Removal;
         var removalPanel = UseMemo(() => RemovalPanel.Render(removal, ResourceKind.Networks, NameOf(state)), removal ?? NoBatch, state.Networks.Items);
-
-        void AskDelete(IEnumerable<string> keys)
-        {
-            var named = keys.ToImmutableArray();
-            var plan = Confirmations.RemoveNetworks(rows, named, connected);
-            if (!plan.IsEmpty)
-                setDialog(new DeleteDialogOpen(named, plan));
-        }
+        // A delete plans from the rows shown (the filter and search), when asked and again at confirm; never a built-in network.
+        var remove = UseRemoveDialogs(state, (now, keys) =>
+            Confirmations.RemoveNetworks(NetworkRows.Shown(NetworkRows.From(now), view.Filter, view.Sort), keys, now.Status == ConnectionStatus.Connected));
+        var unusedNotKnown = Confirmations.UnusedNotKnown(state);
 
         handlers.SetChecked = setChecked;
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });
@@ -80,12 +67,12 @@ internal sealed class NetworksPage : ListPageComponent
                     ContainerParts.CopyToClipboard(row.Id);
                     break;
                 case RowActionKind.Delete:
-                    AskDelete((string[])[row.Key]);
+                    remove.AskDelete((string[])[row.Key]);
                     break;
             }
         };
 
-        var keys = ListPage.Keys(searchBox, dialogOpen: dialog is not null, connected, deleteKeys.Length > 0 ? () => AskDelete(deleteKeys) : null);
+        var keys = ListPage.Keys(searchBox, dialogOpen: remove.Dialog is not null, connected, deleteKeys.Length > 0 ? () => remove.AskDelete(deleteKeys) : null);
         UseEffect(() => ShellKeys.Register(AppRoute.Networks, keys), keys);
 
         var toolbar = ListPage.Toolbar(
@@ -99,13 +86,13 @@ internal sealed class NetworksPage : ListPageComponent
             new ToolbarAction(
                 "Remove unused networks…",
                 "remove-unused-networks",
-                () => setDialog(new PruneDialogOpen(Confirmations.PruneNetworks(state))),
-                connected && removal is not { IsRunning: true },
-                "Remove every network, other than the built-in ones, that no container is attached to"));
+                () => remove.AskUnused(Confirmations.PruneNetworks(state)),
+                connected && removal is not { IsRunning: true } && unusedNotKnown is null,
+                unusedNotKnown ?? "Remove every network, other than the built-in ones, that no container is attached to"));
 
         var bulk = ListPage.BulkBar(
             RowSelection.SelectedCount(rows, checkedKeys),
-            Button("Delete", () => AskDelete(deleteKeys))
+            Button("Delete", () => remove.AskDelete(deleteKeys))
                 .AutomationId("delete-selected")
                 .ToolTip("Delete the selected networks (Delete)")
                 .IsEnabled(deleteKeys.Length > 0));
@@ -117,7 +104,7 @@ internal sealed class NetworksPage : ListPageComponent
             toolbar,
             ListPage.Bars(removalPanel, bulk),
             Table(state, rows, members, filter, checkedKeys, compact, connected, sort, handlers),
-            DialogOf(dialog, () => setDialog(null), view));
+            remove.Dialog ?? Empty());
     }
 
     /// <summary>A line about a remove names the network by its name while it is listed, not by its ID.</summary>
@@ -136,32 +123,7 @@ internal sealed class NetworksPage : ListPageComponent
         NetworkTableHandlers handlers)
     {
         var networks = state.Networks;
-        if (rows.Count == 0 && !networks.Loaded)
-        {
-            // The connection's first list has not arrived (or its read failed): an empty list here does not mean there are no networks.
-            return networks.LoadError is { } error
-                ? ListTable.LoadFailed(error, () => AppServices.Current.Session.Dispatch(new NetworksWanted()))
-                : ListTable.Loading("Loading networks");
-        }
-
-        if (rows.Count == 0)
-            return ListTable.EmptyState(NetworkRows.EmptyText(!networks.Items.IsEmpty, filter));
-
-        return Component<NetworkTable, NetworkTableProps>(new(rows, members, checkedKeys, compact, connected, sort, handlers)).Flex(grow: 1, basis: 0);
-    }
-
-    /// <summary>The dialog open, or an empty element in its place (the page's dialog slot is always there).</summary>
-    private static Element DialogOf(Dialog? dialog, Action close, ResourceListView<UsageFilter, NetworkColumn> view) => dialog switch
-    {
-        DeleteDialogOpen delete => RemoveDialog.Render(delete.Plan.Title, delete.Plan.Text, canConfirm: true, () => ConfirmDelete(delete.Keys, view), close),
-        PruneDialogOpen prune => RemoveDialog.Render(prune.Plan.Title, prune.Plan.Text, !prune.Plan.IsEmpty, () => RemoveDialog.SendUnused(prune.Plan), close),
-        _ => Empty(),
-    };
-
-    /// <summary>Sends the confirmed delete as it stands now: of the keys named, the rows the filter and search show, listed, not pending and not built in.</summary>
-    private static void ConfirmDelete(ImmutableArray<string> keys, ResourceListView<UsageFilter, NetworkColumn> view)
-    {
-        var state = AppServices.Current.Session.State;
-        RemoveDialog.Send(Confirmations.RemoveNetworks(NetworkRows.Shown(NetworkRows.From(state), view.Filter, view.Sort), keys, state.Status == ConnectionStatus.Connected));
+        return ListTable.States(networks, rows.Count, "Loading networks", new NetworksWanted(), NetworkRows.EmptyText(!networks.Items.IsEmpty, filter))
+            ?? Component<NetworkTable, NetworkTableProps>(new(rows, members, checkedKeys, compact, connected, sort, handlers)).Flex(grow: 1, basis: 0);
     }
 }

@@ -32,11 +32,6 @@ internal sealed class ImagesPage : ListPageComponent
 
     private sealed record InspectDialogOpen(ImageRow Row) : Dialog;
 
-    /// <summary>A delete: the keys the user named and the plan's text when the dialog opened.</summary>
-    private sealed record DeleteDialogOpen(ImmutableArray<string> Keys, RemovalPlan Plan) : Dialog;
-
-    private sealed record PruneDialogOpen(PrunePlan Plan) : Dialog;
-
     /// <summary>The filter's choices, in <see cref="ImageShow"/>'s order.</summary>
     private static readonly string[] ShowChoices = ["All images", "In use", "Unused", "Dangling"];
 
@@ -70,13 +65,13 @@ internal sealed class ImagesPage : ListPageComponent
         // A refused image is named by its tags, read from the list while it is still listed.
         var removalPanel = UseMemo(() => RemovalPanel.Render(removal, ResourceKind.Images, key => ImageRows.NameOfKey(state, key)), (object?)removal ?? NoKeys, state.Images.Items);
 
-        void AskDelete(IEnumerable<string> keys)
+        // A delete plans from the rows shown (the filter and search), grouped by image, when asked and again at confirm.
+        var remove = UseRemoveDialogs(state, (now, keys) =>
         {
-            var named = keys.ToImmutableArray();
-            var plan = Confirmations.RemoveImages(rows, all, named, connected, state.DiskUsage.Usage);
-            if (!plan.IsEmpty)
-                setDialog(new DeleteDialogOpen(named, plan));
-        }
+            var nowAll = ImageRows.From(now);
+            return Confirmations.RemoveImages(ImageRows.Shown(nowAll, view.Filter, view.Sort), nowAll, keys, now.Status == ConnectionStatus.Connected, now.DiskUsage.Usage);
+        });
+        var unusedNotKnown = Confirmations.UnusedNotKnown(state);
 
         void FocusPull(string key) => setPullFocus(new PullRowsProps(key, pullFocus.FocusRequest + 1));
 
@@ -111,12 +106,12 @@ internal sealed class ImagesPage : ListPageComponent
                     ContainerParts.CopyToClipboard(row.ImageId);
                     break;
                 case RowActionKind.Delete:
-                    AskDelete((string[])[row.Key]);
+                    remove.AskDelete((string[])[row.Key]);
                     break;
             }
         };
 
-        var keys = ListPage.Keys(searchBox, dialogOpen: dialog is not null, connected, deleteKeys.Length > 0 ? () => AskDelete(deleteKeys) : null);
+        var keys = ListPage.Keys(searchBox, dialogOpen: dialog is not null || remove.Dialog is not null, connected, deleteKeys.Length > 0 ? () => remove.AskDelete(deleteKeys) : null);
         UseEffect(() => ShellKeys.Register(AppRoute.Images, keys), keys);
 
         void OpenContainer(string? id)
@@ -137,14 +132,14 @@ internal sealed class ImagesPage : ListPageComponent
             new ToolbarAction(
                 "Remove unused images…",
                 "remove-unused-images",
-                () => setDialog(new PruneDialogOpen(Confirmations.PruneImages(state, danglingOnly: false))),
-                connected && removal is not { IsRunning: true },
-                "Remove every image no container uses"));
+                () => remove.AskUnused(Confirmations.PruneImages(state, danglingOnly: false)),
+                connected && removal is not { IsRunning: true } && unusedNotKnown is null,
+                unusedNotKnown ?? "Remove every image no container uses"));
 
         var selected = RowSelection.SelectedCount(rows, checkedKeys);
         var bulk = ListPage.BulkBar(
             selected,
-            Button("Delete", () => AskDelete(deleteKeys))
+            Button("Delete", () => remove.AskDelete(deleteKeys))
                 .AutomationId("delete-selected")
                 .ToolTip("Delete the selected images (Delete)")
                 .IsEnabled(deleteKeys.Length > 0));
@@ -155,7 +150,7 @@ internal sealed class ImagesPage : ListPageComponent
             toolbar,
             ListPage.Bars(removalPanel, bulk, CancelledNote(cancelledPull, () => setCancelledPull(null))),
             Table(state, rows, filter, checkedKeys, compact, connected, sort, pullFocus with { OnCancelled = onPullCancelled }, handlers),
-            DialogOf(dialog, () => setDialog(null), FocusPull, OpenContainer, view));
+            remove.Dialog ?? DialogOf(dialog, () => setDialog(null), FocusPull, OpenContainer));
     }
 
     /// <summary>After a pull's Cancel: Berth stopped following it, but the engine may still finish downloading the image (it has no cancel).</summary>
@@ -181,28 +176,15 @@ internal sealed class ImagesPage : ListPageComponent
         ImageTableHandlers handlers)
     {
         var images = state.Images;
-        if (rows.Count == 0 && !images.Loaded)
-        {
-            // The connection's first list has not arrived (or its read failed): an empty list here does not mean there are no images.
-            return images.LoadError is { } error
-                ? ListTable.LoadFailed(error, () => AppServices.Current.Session.Dispatch(new ImagesWanted()))
-                : ListTable.Loading("Loading images");
-        }
-
-        if (rows.Count == 0)
-        {
-            // A first pull on an empty engine still shows its row.
-            return (FlexColumn(
-                    Component<PullRows, PullRowsProps>(pullFocus).Flex(shrink: 0),
-                    ListTable.EmptyState(ImageRows.EmptyText(!images.Items.IsEmpty, filter)))
-                with
-                {
-                    RowGap = 8,
-                })
-                .Flex(grow: 1, basis: 0);
-        }
-
-        return Component<ImageTable, ImageTableProps>(new(rows, checkedKeys, compact, connected, sort, pullFocus, handlers)).Flex(grow: 1, basis: 0);
+        // A first pull on an empty engine still shows its row.
+        return ListTable.States(
+                images,
+                rows.Count,
+                "Loading images",
+                new ImagesWanted(),
+                ImageRows.EmptyText(!images.Items.IsEmpty, filter),
+                aboveEmpty: rows.Count == 0 ? Component<PullRows, PullRowsProps>(pullFocus) : null)
+            ?? Component<ImageTable, ImageTableProps>(new(rows, checkedKeys, compact, connected, sort, pullFocus, handlers)).Flex(grow: 1, basis: 0);
     }
 
     /// <summary>The dialog open, or an empty element in its place (the page's dialog slot is always there).</summary>
@@ -210,25 +192,11 @@ internal sealed class ImagesPage : ListPageComponent
         Dialog? dialog,
         Action close,
         Action<string> focusPull,
-        Action<string?> openContainer,
-        ResourceListView<ImageFilter, ImageColumn> view) => dialog switch
+        Action<string?> openContainer) => dialog switch
     {
         PullDialogOpen => Component<PullDialog, PullDialogProps>(new(focusPull, close)),
         RunDialogOpen run => Component<RunDialog, RunDialogProps>(new(run.Row.IsTagged ? run.Row.Key : run.Row.ImageId, run.Row.ImageId, openContainer)),
         InspectDialogOpen inspect => Component<InspectDialog, InspectDialogProps>(new(inspect.Row.DisplayName, inspect.Row.ImageId, close)),
-        DeleteDialogOpen delete => RemoveDialog.Render(delete.Plan.Title, delete.Plan.Text, canConfirm: true, () => ConfirmDelete(delete.Keys, view), close),
-        PruneDialogOpen prune => RemoveDialog.Render(prune.Plan.Title, prune.Plan.Text, !prune.Plan.IsEmpty, () => RemoveDialog.SendUnused(prune.Plan), close),
         _ => Empty(),
     };
-
-    /// <summary>
-    /// Sends the confirmed delete as it stands now, from the current session: of the keys named, the rows the filter and search show,
-    /// still listed and not pending, grouped by image as <see cref="Confirmations.RemoveImages"/> decides; nothing while not connected.
-    /// </summary>
-    private static void ConfirmDelete(ImmutableArray<string> keys, ResourceListView<ImageFilter, ImageColumn> view)
-    {
-        var state = AppServices.Current.Session.State;
-        var all = ImageRows.From(state);
-        RemoveDialog.Send(Confirmations.RemoveImages(ImageRows.Shown(all, view.Filter, view.Sort), all, keys, state.Status == ConnectionStatus.Connected, state.DiskUsage.Usage));
-    }
 }

@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
+using Berth.Components;
 using Berth.Presentation;
+using Berth.Session;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Hooks;
 using Microsoft.UI.Reactor.Input;
@@ -28,6 +30,12 @@ internal static class ListViewStore
 /// <see cref="ListPageComponent.UseListView{T}"/>.
 /// </summary>
 internal sealed record ResourceListView<TFilter, TColumn>(TFilter Filter, Berth.Presentation.ListSort<TColumn> Sort) where TColumn : struct, Enum;
+
+/// <summary>
+/// A list page's remove confirmations (<see cref="ListPageComponent.UseRemoveDialogs"/>): the one open (<see cref="Dialog"/>, null when
+/// none), a delete of the keys named, and a "Remove unused …" of a plan.
+/// </summary>
+internal sealed record RemoveDialogs(Element? Dialog, Action<IEnumerable<string>> AskDelete, Action<PrunePlan> AskUnused);
 
 /// <summary>The search box of a list page: reached through <see cref="Box"/> (Ctrl+F focuses it), and whether it has the focus.</summary>
 internal sealed record ListSearch(ElementRef<TextBox> Box, bool Focused, Action<bool> SetFocused);
@@ -62,6 +70,31 @@ internal abstract class ListPageComponent : EngineStateComponent
             },
             all);
         return (checkedKeys, (keys, value) => updateChecked(current => value ? current.Union(keys) : current.Except(keys)));
+    }
+
+    /// <summary>
+    /// The page's delete and "Remove unused …" confirmations: <see cref="RemoveDialogs.AskDelete"/> plans a delete of the keys named with
+    /// <paramref name="planDelete"/> from <paramref name="state"/> and opens its confirmation unless nothing would go;
+    /// <see cref="RemoveDialogs.AskUnused"/> opens a "Remove unused …" plan. On confirm, <see cref="RemoveDialog.For"/> plans again from
+    /// the session as it is then. <paramref name="planDelete"/> plans from the rows the page shows (its filter and search), so the latest
+    /// one given is used.
+    /// </summary>
+    protected RemoveDialogs UseRemoveDialogs(EngineState state, Func<EngineState, ImmutableArray<string>, RemovalPlan> planDelete)
+    {
+        var (ask, setAsk) = UseState<RemoveDialog.Ask?>(null);
+        var plan = UseRef(planDelete);
+        plan.Current = planDelete;
+
+        void AskDelete(IEnumerable<string> keys)
+        {
+            var named = keys.ToImmutableArray();
+            var opened = planDelete(state, named);
+            if (!opened.IsEmpty)
+                setAsk(new RemoveDialog.DeleteAsk(named, opened));
+        }
+
+        var dialog = RemoveDialog.For(ask, (now, keys) => plan.Current(now, keys), () => setAsk(null));
+        return new RemoveDialogs(dialog, AskDelete, unused => setAsk(new RemoveDialog.UnusedAsk(unused)));
     }
 
     /// <summary>The page's search box reference and whether the box has the focus.</summary>

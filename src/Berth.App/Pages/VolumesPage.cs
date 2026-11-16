@@ -25,11 +25,6 @@ internal sealed class VolumesPage : ListPageComponent
 
     private sealed record CreateDialogOpen : Dialog;
 
-    /// <summary>A delete: the keys the user named and the plan's text when the dialog opened.</summary>
-    private sealed record DeleteDialogOpen(ImmutableArray<string> Keys, RemovalPlan Plan) : Dialog;
-
-    private sealed record PruneDialogOpen(PrunePlan Plan) : Dialog;
-
     /// <summary>The filter's choices, in <see cref="UsageShow"/>'s order.</summary>
     private static readonly string[] ShowChoices = ["All volumes", "In use", "Unused"];
 
@@ -54,14 +49,10 @@ internal sealed class VolumesPage : ListPageComponent
         var deleteKeys = RowSelection.Checked(rows, checkedKeys, connected);
         var removal = state.Volumes.Removal;
         var removalPanel = UseMemo(() => RemovalPanel.Render(removal, ResourceKind.Volumes), removal ?? NoBatch);
-
-        void AskDelete(IEnumerable<string> keys)
-        {
-            var named = keys.ToImmutableArray();
-            var plan = Confirmations.RemoveVolumes(rows, named, connected);
-            if (!plan.IsEmpty)
-                setDialog(new DeleteDialogOpen(named, plan));
-        }
+        // A delete plans from the rows shown (the filter and search), when asked and again at confirm.
+        var remove = UseRemoveDialogs(state, (now, keys) =>
+            Confirmations.RemoveVolumes(VolumeRows.Shown(VolumeRows.From(now), view.Filter, view.Sort), keys, now.Status == ConnectionStatus.Connected));
+        var unusedNotKnown = Confirmations.UnusedNotKnown(state);
 
         handlers.SetChecked = setChecked;
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });
@@ -76,12 +67,12 @@ internal sealed class VolumesPage : ListPageComponent
                     ContainerParts.CopyToClipboard(row.Name);
                     break;
                 case RowActionKind.Delete:
-                    AskDelete((string[])[row.Key]);
+                    remove.AskDelete((string[])[row.Key]);
                     break;
             }
         };
 
-        var keys = ListPage.Keys(searchBox, dialogOpen: dialog is not null, connected, deleteKeys.Length > 0 ? () => AskDelete(deleteKeys) : null);
+        var keys = ListPage.Keys(searchBox, dialogOpen: dialog is not null || remove.Dialog is not null, connected, deleteKeys.Length > 0 ? () => remove.AskDelete(deleteKeys) : null);
         UseEffect(() => ShellKeys.Register(AppRoute.Volumes, keys), keys);
 
         var toolbar = ListPage.Toolbar(
@@ -95,13 +86,13 @@ internal sealed class VolumesPage : ListPageComponent
             new ToolbarAction(
                 "Remove unused volumes…",
                 "remove-unused-volumes",
-                () => setDialog(new PruneDialogOpen(Confirmations.PruneVolumes(state))),
-                connected && removal is not { IsRunning: true },
-                "Remove every volume no container uses, and the data in it"));
+                () => remove.AskUnused(Confirmations.PruneVolumes(state)),
+                connected && removal is not { IsRunning: true } && unusedNotKnown is null,
+                unusedNotKnown ?? "Remove every volume no container uses, and the data in it"));
 
         var bulk = ListPage.BulkBar(
             RowSelection.SelectedCount(rows, checkedKeys),
-            Button("Delete", () => AskDelete(deleteKeys))
+            Button("Delete", () => remove.AskDelete(deleteKeys))
                 .AutomationId("delete-selected")
                 .ToolTip("Delete the selected volumes (Delete)")
                 .IsEnabled(deleteKeys.Length > 0));
@@ -113,7 +104,7 @@ internal sealed class VolumesPage : ListPageComponent
             toolbar,
             ListPage.Bars(removalPanel, bulk),
             Table(state, rows, filter, checkedKeys, connected, sort, handlers),
-            DialogOf(dialog, () => setDialog(null), view));
+            remove.Dialog ?? DialogOf(dialog, () => setDialog(null)));
     }
 
     private static Element Table(
@@ -126,33 +117,14 @@ internal sealed class VolumesPage : ListPageComponent
         VolumeTableHandlers handlers)
     {
         var volumes = state.Volumes;
-        if (rows.Count == 0 && !volumes.Loaded)
-        {
-            // The connection's first list has not arrived (or its read failed): an empty list here does not mean there are no volumes.
-            return volumes.LoadError is { } error
-                ? ListTable.LoadFailed(error, () => AppServices.Current.Session.Dispatch(new VolumesWanted()))
-                : ListTable.Loading("Loading volumes");
-        }
-
-        if (rows.Count == 0)
-            return ListTable.EmptyState(VolumeRows.EmptyText(!volumes.Items.IsEmpty, filter));
-
-        return Component<VolumeTable, VolumeTableProps>(new(rows, checkedKeys, connected, state.DiskUsage.Usage is not null, sort, handlers)).Flex(grow: 1, basis: 0);
+        return ListTable.States(volumes, rows.Count, "Loading volumes", new VolumesWanted(), VolumeRows.EmptyText(!volumes.Items.IsEmpty, filter))
+            ?? Component<VolumeTable, VolumeTableProps>(new(rows, checkedKeys, connected, state.DiskUsage.Usage is not null, sort, handlers)).Flex(grow: 1, basis: 0);
     }
 
     /// <summary>The dialog open, or an empty element in its place (the page's dialog slot is always there).</summary>
-    private static Element DialogOf(Dialog? dialog, Action close, ResourceListView<UsageFilter, VolumeColumn> view) => dialog switch
+    private static Element DialogOf(Dialog? dialog, Action close) => dialog switch
     {
         CreateDialogOpen => Component<CreateVolumeDialog, CreateVolumeDialogProps>(new(close)),
-        DeleteDialogOpen delete => RemoveDialog.Render(delete.Plan.Title, delete.Plan.Text, canConfirm: true, () => ConfirmDelete(delete.Keys, view), close),
-        PruneDialogOpen prune => RemoveDialog.Render(prune.Plan.Title, prune.Plan.Text, !prune.Plan.IsEmpty, () => RemoveDialog.SendUnused(prune.Plan), close),
         _ => Empty(),
     };
-
-    /// <summary>Sends the confirmed delete as it stands now: of the keys named, the rows the filter and search show, still listed and not pending.</summary>
-    private static void ConfirmDelete(ImmutableArray<string> keys, ResourceListView<UsageFilter, VolumeColumn> view)
-    {
-        var state = AppServices.Current.Session.State;
-        RemoveDialog.Send(Confirmations.RemoveVolumes(VolumeRows.Shown(VolumeRows.From(state), view.Filter, view.Sort), keys, state.Status == ConnectionStatus.Connected));
-    }
 }

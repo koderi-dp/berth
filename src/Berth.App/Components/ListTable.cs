@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
 using Berth.Presentation;
+using Berth.Session;
+using Berth.State;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Layout;
@@ -171,6 +173,28 @@ internal static class ListTable
                 RowGap = 0,
             })
             .Flex(grow: 1, basis: 0);
+    }
+
+    /// <summary>
+    /// What a list shows in its table's place, or null when it has rows to show: while the connection's first list has not arrived, a
+    /// progress ring named <paramref name="loadingName"/>, or the engine's message with Retry (sending <paramref name="retry"/>) when that
+    /// read failed (an empty list then does not mean there is nothing); with no rows, <paramref name="emptyText"/>, under
+    /// <paramref name="aboveEmpty"/> when there is one (a first pull on an empty engine).
+    /// </summary>
+    public static Element? States<T>(ResourceList<T> list, int rowCount, string loadingName, SessionEvent retry, string emptyText, Element? aboveEmpty = null)
+    {
+        if (rowCount > 0)
+            return null;
+        if (!list.Loaded)
+        {
+            return list.LoadError is { } error
+                ? LoadFailed(error, () => AppServices.Current.Session.Dispatch(retry))
+                : Loading(loadingName);
+        }
+
+        return aboveEmpty is null
+            ? EmptyState(emptyText)
+            : (FlexColumn(aboveEmpty.Flex(shrink: 0), EmptyState(emptyText)) with { RowGap = 8 }).Flex(grow: 1, basis: 0);
     }
 
     /// <summary>

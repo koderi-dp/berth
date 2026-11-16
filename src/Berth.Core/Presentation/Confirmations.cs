@@ -157,9 +157,18 @@ public static class Confirmations
     public static PrunePlan PruneNetworks(EngineState state) => PruneNetworks(state, only: null);
 
     /// <summary>
+    /// Why what is unused is not known now, or null when it is: a container of any state keeps an image, volume or network in use, so it
+    /// is known only from this connection's container list, once read and while its last read did not fail.
+    /// </summary>
+    public static string? UnusedNotKnown(EngineState state) =>
+        state.ContainersLoadError is not null ? "The container list could not be read, so what is in use is not known."
+        : !state.ListLoaded ? "Waiting for the container list, which tells what is in use."
+        : null;
+
+    /// <summary>
     /// What a "Remove unused …" dialog sends when the user confirms: of what <paramref name="named"/> named, what <paramref name="state"/>
     /// still lists, no container uses and nothing is pending on, in the order named; an image with its tags as they are now. Nothing new
-    /// is added, and nothing at all while not connected.
+    /// is added, and nothing at all while not connected or while what is unused is not known (<see cref="UnusedNotKnown"/>).
     /// </summary>
     public static PrunePlan ConfirmPrune(PrunePlan named, EngineState state)
     {
@@ -174,10 +183,11 @@ public static class Confirmations
 
     private static PrunePlan PruneImages(EngineState state, bool danglingOnly, Only? only)
     {
-        var connected = state.Status == ConnectionStatus.Connected;
+        var unknown = UnusedNotKnown(state);
+        var canPlan = state.Status == ConnectionStatus.Connected && unknown is null;
         var items = ImageRows.From(state)
             .GroupBy(r => r.ImageId, StringComparer.Ordinal)
-            .Where(g => connected && (only?.Has(g.Key) ?? true))
+            .Where(g => canPlan && (only?.Has(g.Key) ?? true))
             .Select(g => g.ToList())
             .Where(rows => !rows[0].InUse && !rows[0].IsPending && (!danglingOnly || rows[0].IsDangling))
             .Select(rows => new PlannedRemoval(
@@ -191,32 +201,34 @@ public static class Confirmations
             : danglingOnly || only is not null ? Freed(items, i => usage.Images.FirstOrDefault(u => u.Id == i.Id)?.UniqueSize)
             : usage.ImageTotals.Reclaimable;
         return danglingOnly
-            ? Prune(ResourceKind.Images, true, items, freed, "Remove dangling images?", "untagged image", "No image is dangling.", warning: false)
-            : Prune(ResourceKind.Images, false, items, freed, "Remove unused images?", "image", "No image is unused.", warning: false);
+            ? Prune(ResourceKind.Images, true, items, freed, "Remove dangling images?", "untagged image", unknown ?? "No image is dangling.", warning: false)
+            : Prune(ResourceKind.Images, false, items, freed, "Remove unused images?", "image", unknown ?? "No image is unused.", warning: false);
     }
 
     private static PrunePlan PruneVolumes(EngineState state, Only? only)
     {
-        var connected = state.Status == ConnectionStatus.Connected;
+        var unknown = UnusedNotKnown(state);
+        var canPlan = state.Status == ConnectionStatus.Connected && unknown is null;
         var rows = VolumeRows.From(state)
-            .Where(r => connected && !r.InUse && !r.IsPending && (only?.Has(r.Name) ?? true))
+            .Where(r => canPlan && !r.InUse && !r.IsPending && (only?.Has(r.Name) ?? true))
             .OrderBy(r => only?.IndexOf(r.Name) ?? 0)
             .ToList();
         var items = rows.Select(r => new PlannedRemoval(r.Name, r.ShownName, Unused(r.Name, [r.Name]))).ToImmutableArray();
         var usage = state.DiskUsage.Usage;
         var freed = usage is null ? null : only is null ? usage.VolumeTotals.Reclaimable : Freed(rows, r => r.Size);
-        return Prune(ResourceKind.Volumes, false, items, freed, "Remove unused volumes?", "volume", "No volume is unused.", warning: true);
+        return Prune(ResourceKind.Volumes, false, items, freed, "Remove unused volumes?", "volume", unknown ?? "No volume is unused.", warning: true);
     }
 
     private static PrunePlan PruneNetworks(EngineState state, Only? only)
     {
-        var connected = state.Status == ConnectionStatus.Connected;
+        var unknown = UnusedNotKnown(state);
+        var canPlan = state.Status == ConnectionStatus.Connected && unknown is null;
         var items = NetworkRows.From(state)
-            .Where(r => connected && !r.InUse && !r.IsBuiltIn && !r.IsPending && (only?.Has(r.Id) ?? true))
+            .Where(r => canPlan && !r.InUse && !r.IsBuiltIn && !r.IsPending && (only?.Has(r.Id) ?? true))
             .OrderBy(r => only?.IndexOf(r.Id) ?? 0)
             .Select(r => new PlannedRemoval(r.Id, r.Name, Unused(r.Id, [r.Id])))
             .ToImmutableArray();
-        return Prune(ResourceKind.Networks, false, items, null, "Remove unused networks?", "network", "No network is unused.", warning: false);
+        return Prune(ResourceKind.Networks, false, items, null, "Remove unused networks?", "network", unknown ?? "No network is unused.", warning: false);
     }
 
     /// <param name="warning">Whether to warn that the data in what is removed is lost (volumes).</param>

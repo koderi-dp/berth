@@ -45,6 +45,9 @@ internal sealed class NetworkTable : Component<NetworkTableProps>
 
     private const string BuiltInNote = "Built-in network; it cannot be removed.";
 
+    /// <summary>A fill that is not seen but makes the built-in network's checkbox wrapper take the pointer, so its tooltip shows.</summary>
+    private const string NoFill = "#00000000";
+
     private static readonly ListColumns<NetworkColumn> Columns = new(
         ListColumn<NetworkColumn>.Select(),
         ListColumn<NetworkColumn>.Of(GridSize.Star(3)) with { Title = "Name", SortBy = NetworkColumn.Name },
@@ -83,7 +86,11 @@ internal sealed class NetworkTable : Component<NetworkTableProps>
         void Run(RowAction action) => handlers.Act(row, action);
 
         var select = row.IsBuiltIn
-            ? ListTable.SelectBox(false, _ => { }, "Select " + row.Name).IsEnabled(false).ToolTip(BuiltInNote)
+            // A disabled control shows no tooltip and takes no focus: the tooltip is on a hit-testable wrapper, and a screen reader reads
+            // the reason as the checkbox's help text.
+            ? Border(ListTable.SelectBox(false, _ => { }, "Select " + row.Name).IsEnabled(false).HelpText(BuiltInNote))
+                .Background(NoFill)
+                .ToolTip(BuiltInNote)
             : ListTable.SelectBox(isChecked, value => handlers.SetChecked((string[])[row.Key], value), "Select " + row.Name).IsEnabled(connected);
 
         var name = row.IsPending

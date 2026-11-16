@@ -309,4 +309,44 @@ public sealed class ConfirmationsTests
         Assert.Equal("No image is unused.", Confirmations.PruneImages(StateWith(), danglingOnly: false).Text);
         Assert.Equal("No network is unused.", Confirmations.PruneNetworks(StateWith()).Text);
     }
+
+    [Fact]
+    public void What_is_unused_is_known_only_once_this_connections_container_list_has_been_read()
+    {
+        var loaded = StateWith(volumes: [Volume("data")], networks: [Network("1", "app")], images: [Image("sha256:a", ["a:1"])]);
+        Assert.Null(Confirmations.UnusedNotKnown(loaded));
+
+        var notLoaded = loaded with { ListLoaded = false };
+        Assert.Equal("Waiting for the container list, which tells what is in use.", Confirmations.UnusedNotKnown(notLoaded));
+
+        var failed = loaded with { ContainersLoadError = "list broke" };
+        Assert.Equal("The container list could not be read, so what is in use is not known.", Confirmations.UnusedNotKnown(failed));
+        Assert.Equal(Confirmations.UnusedNotKnown(failed), Confirmations.UnusedNotKnown(failed with { ListLoaded = false }));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Removing_unused_names_nothing_and_says_why_while_what_is_unused_is_not_known(bool failed)
+    {
+        var loaded = StateWith(volumes: [Volume("data")], networks: [Network("1", "app")], images: [Image("sha256:a", ["a:1"])]);
+        var unknown = failed ? loaded with { ContainersLoadError = "list broke" } : loaded with { ListLoaded = false };
+        var reason = Confirmations.UnusedNotKnown(unknown);
+
+        PrunePlan[] plans = [Confirmations.PruneVolumes(unknown), Confirmations.PruneNetworks(unknown), Confirmations.PruneImages(unknown, danglingOnly: false)];
+
+        Assert.All(plans, plan => Assert.True(plan.IsEmpty));
+        Assert.All(plans, plan => Assert.Equal(reason, plan.Text));
+    }
+
+    [Fact]
+    public void Removing_unused_at_confirm_sends_nothing_once_what_is_unused_is_not_known()
+    {
+        var loaded = StateWith(volumes: [Volume("data")], networks: [Network("1", "app")], images: [Image("sha256:a", ["a:1"])]);
+        PrunePlan[] named = [Confirmations.PruneVolumes(loaded), Confirmations.PruneNetworks(loaded), Confirmations.PruneImages(loaded, danglingOnly: false)];
+        Assert.All(named, plan => Assert.False(plan.IsEmpty));
+
+        Assert.All(named, plan => Assert.True(Confirmations.ConfirmPrune(plan, loaded with { ListLoaded = false }).IsEmpty));
+        Assert.All(named, plan => Assert.True(Confirmations.ConfirmPrune(plan, loaded with { ContainersLoadError = "list broke" }).IsEmpty));
+    }
 }
