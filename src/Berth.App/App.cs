@@ -165,6 +165,8 @@ internal sealed class App : EngineStateComponent
             {
                 if (WantedEvent(nav.CurrentRoute) is { } wanted)
                     AppServices.Current.Session.Dispatch(wanted);
+                if (nav.CurrentRoute == AppRoute.Settings)
+                    Shell.StartWithWindows.RequestReadAgain();
                 // The Images and Volumes pages' usage lines and the volumes' sizes: read again each time one is shown (Remove unused names
                 // the space it frees from it).
                 if (nav.CurrentRoute == AppRoute.Images || AppRoute.ListOf(nav.CurrentRoute) == AppRoute.Volumes)

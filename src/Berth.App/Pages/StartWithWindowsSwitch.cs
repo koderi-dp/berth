@@ -7,7 +7,8 @@ using static Microsoft.UI.Reactor.Factories;
 namespace Berth.Pages;
 
 /// <summary>
-/// "Start with Windows": the switch shows the startup task's real state, read when the page shows and after each change, and says why
+/// "Start with Windows": the switch shows the startup task's real state, read when the page is shown, when the window is activated
+/// and after each change, and says why
 /// when Windows settings or a policy decide it (then the switch is disabled: only Windows settings can change it).
 /// </summary>
 internal sealed class StartWithWindowsSwitch : Component
@@ -18,7 +19,17 @@ internal sealed class StartWithWindowsSwitch : Component
         var (state, setState) = UseState<StartWithWindowsState?>(null);
         var (busy, setBusy) = UseState(false);
 
-        UseEffect(() => { _ = ReadAsync(setState); }, Array.Empty<object>());
+        // Read when mounted, and again each time the page is shown or the window activated: the page stays mounted in the navigation
+        // cache, and the task can be turned off in Windows settings meanwhile.
+        UseEffect(
+            () =>
+            {
+                void Read() => _ = ReadAsync(setState);
+                Read();
+                StartWithWindows.ReadAgain += Read;
+                return () => StartWithWindows.ReadAgain -= Read;
+            },
+            Array.Empty<object>());
 
         async Task SetAsync(bool on)
         {

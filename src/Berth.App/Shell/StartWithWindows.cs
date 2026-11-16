@@ -14,6 +14,14 @@ internal static class StartWithWindows
 {
     public const string TaskId = "BerthStartup";
 
+    /// <summary>
+    /// Raised on the UI thread when the state may have changed outside Berth and should be read again: the Settings page was shown,
+    /// or the window was activated (the user may have just used Windows settings).
+    /// </summary>
+    public static event Action? ReadAgain;
+
+    public static void RequestReadAgain() => ReadAgain?.Invoke();
+
     /// <summary>The state now; <see cref="StartWithWindowsState.Unavailable"/> when the task cannot be read (no package identity). Never throws.</summary>
     public static async Task<StartWithWindowsState> ReadAsync()
     {
