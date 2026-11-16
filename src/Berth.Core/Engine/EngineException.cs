@@ -7,4 +7,7 @@ namespace Berth.Engine;
 public sealed class EngineException(int statusCode, string message) : Exception(message)
 {
     public int StatusCode { get; } = statusCode;
+
+    /// <summary>The engine was reached but did not answer within the call's deadline (<see cref="StatusCode"/> is 0).</summary>
+    public bool TimedOut { get; init; }
 }

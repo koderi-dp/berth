@@ -14,14 +14,12 @@ using Berth.Engine.Models;
 namespace Berth.Engine;
 
 /// <summary>
-/// The typed client for the Docker Engine API. Plain calls time out after 30 seconds, stop and restart after 90; streams, a pull,
-/// disk usage and the prunes have no deadline. A timeout or an engine that cannot be reached throws <see cref="EngineException"/> with
-/// status 0. Disposing the client disposes the handler.
+/// The typed client for the Docker Engine API. Plain calls time out after 30 seconds; stop, restart and image and volume removes after
+/// 90; streams, a pull, disk usage and the prunes have no deadline. A timeout or an engine that cannot be reached throws
+/// <see cref="EngineException"/> with status 0 (a timeout also with <see cref="EngineException.TimedOut"/>). Disposing the client disposes the handler.
 /// </summary>
 public sealed class EngineClient : IEngineApi
 {
-    private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(90);
-
     /// <summary>The API from which <c>/system/df</c> takes <c>verbose</c> and then leaves out its older lists.</summary>
     private static readonly ApiVersion DiskUsageVerboseSince = new(1, 52);
 
@@ -39,6 +37,9 @@ public sealed class EngineClient : IEngineApi
 
     /// <summary>The deadline of a plain call: 30 seconds. Tests shorten it to show which calls have none, without waiting.</summary>
     internal TimeSpan PlainTimeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>The deadline of a call that can take long (stop, restart, an image or volume remove): 90 seconds. Tests shorten it.</summary>
+    internal TimeSpan LongTimeout { get; init; } = TimeSpan.FromSeconds(90);
 
     /// <summary>The API version later calls use; null until <see cref="ConnectAsync"/> succeeds.</summary>
     public ApiVersion? Negotiated { get; private set; }
@@ -224,7 +225,7 @@ public sealed class EngineClient : IEngineApi
     public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct)
     {
         var path = ImagePath(idOrName, force ? "?force=true" : "");
-        using var response = await SendAsync(HttpMethod.Delete, path, PlainTimeout, ct).ConfigureAwait(false);
+        using var response = await SendAsync(HttpMethod.Delete, path, LongTimeout, ct).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.ListWireImageDelete, ct).ConfigureAwait(false);
         return wire.ConvertAll(d => new ImageDeleteResult(d.Untagged, d.Deleted));
     }
@@ -285,7 +286,7 @@ public sealed class EngineClient : IEngineApi
     }
 
     public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) =>
-        ActAsync(HttpMethod.Delete, Versioned($"/volumes/{Uri.EscapeDataString(name)}{(force ? "?force=true" : "")}"), PlainTimeout, ct);
+        ActAsync(HttpMethod.Delete, Versioned($"/volumes/{Uri.EscapeDataString(name)}{(force ? "?force=true" : "")}"), LongTimeout, ct);
 
     public async Task<PruneResult> PruneVolumesAsync(CancellationToken ct)
     {
@@ -615,7 +616,7 @@ public sealed class EngineClient : IEngineApi
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new EngineException(0, $"The engine did not answer within {timeout.TotalSeconds:0} seconds.");
+            throw new EngineException(0, $"The engine did not answer within {timeout.TotalSeconds:0} seconds.") { TimedOut = true };
         }
         catch (Exception ex) when (IsUnreachable(ex))
         {

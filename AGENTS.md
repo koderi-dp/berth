@@ -26,7 +26,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             (StreamStatsAsync); images (list, inspect, remove, prune, pull as a stream of PullProgress),
                             volumes (list, create, remove, prune of every unused one), networks (list, inspect with attached
                             containers, remove, prune), disk usage (/system/df for images and volumes). Pulls, disk usage,
-                            prunes and streams have no deadline; other calls 30 s (stop and restart 90 s).
+                            prunes and streams have no deadline; other calls 30 s (stop, restart and image and volume removes 90 s).
                             EngineHttp, EngineJson (source-generated), ApiVersion, ConnectionTester, EngineTime, JsonLines
                             (line-delimited JSON streams), LogFrames (the engine's multiplexed log framing), LogLines (frames
                             or TTY text to LogLine), AnsiText (terminal output to plain text), StatsMath (CPU and memory from
