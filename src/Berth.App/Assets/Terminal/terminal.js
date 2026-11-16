@@ -20,6 +20,11 @@
     minimumContrastRatio: 4.5,
     // Typing is off until the app says a shell takes it.
     disableStdin: true,
+    // A link a program prints (OSC 8) is never followed: no dialog, no navigation, no window. Opening links is not offered yet.
+    linkHandler: {
+      activate: function () {},
+      allowNonHttpProtocols: false,
+    },
   });
   // The addon's UMD build puts its module, not the class, on the global object.
   var fit = new FitAddon.FitAddon();
@@ -139,23 +144,24 @@
   }
 
   // The keys the page keeps for itself: copy, paste and F6. Every other key goes to xterm, and with it to the shell. A handled key
-  // has its default prevented as well, so the browser does not paste or copy a second time.
+  // has its default prevented as well, so the browser does not paste or copy a second time. Keys are matched on their position
+  // (e.code), so copy and paste work on any keyboard layout (on a Cyrillic one e.key is the local letter).
   term.attachCustomKeyEventHandler(function (e) {
-    var key = e.key;
+    var code = e.code;
     var ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
     var action = null;
-    if ((ctrl && e.shiftKey && (key === 'C' || key === 'c')) || (ctrl && !e.shiftKey && key === 'Insert')) {
+    if ((ctrl && e.shiftKey && code === 'KeyC') || (ctrl && !e.shiftKey && code === 'Insert')) {
       action = copySelection;
-    } else if (ctrl && !e.shiftKey && (key === 'c' || key === 'C') && term.hasSelection()) {
+    } else if (ctrl && !e.shiftKey && code === 'KeyC' && term.hasSelection()) {
       action = function () {
         copySelection();
         term.clearSelection();
       };
-    } else if ((ctrl && (key === 'v' || key === 'V')) || (e.shiftKey && !e.ctrlKey && !e.altKey && key === 'Insert')) {
+    } else if ((ctrl && code === 'KeyV') || (e.shiftKey && !e.ctrlKey && !e.altKey && code === 'Insert')) {
       action = function () {
         post({ t: 'paste' });
       };
-    } else if (key === 'F6' && !e.ctrlKey && !e.altKey) {
+    } else if (code === 'F6' && !e.ctrlKey && !e.altKey) {
       action = function () {
         post({ t: 'leave' });
       };
@@ -241,6 +247,8 @@
     }
   });
 
-  // For the app's checks (the spike's self-test and Task 8's): the terminal object.
-  window.berthTerminal = term;
+  // For the app's checks, in Debug builds only (the host sets berthDebug there before the page loads): the terminal object.
+  if (window.berthDebug === true) {
+    window.berthTerminal = term;
+  }
 })();

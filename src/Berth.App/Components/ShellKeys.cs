@@ -1,3 +1,4 @@
+using Berth.Presentation;
 using Microsoft.UI.Reactor.Navigation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -76,21 +77,27 @@ internal static class ShellKeys
     }
 
     /// <summary>
-    /// Whether a shortcut may act: the focus is in the window's content (not in a dialog, menu or drop-down, which sit in popups outside
-    /// it) and, when <paramref name="notInTextBox"/>, not in a box that edits text.
+    /// Whether a shortcut may act (<see cref="ShortcutFocusRule"/>): the focus is in the window's content (not in a dialog, menu or
+    /// drop-down, which sit in popups outside it), not in the terminal (every key there is the shell's: Escape for vi, Alt+Left for
+    /// readline) and, when <paramref name="notInTextBox"/>, not in a box that edits text.
     /// </summary>
     private static bool FocusAllows(FrameworkElement root, bool notInTextBox)
     {
         if (root.XamlRoot is not { } xamlRoot || FocusManager.GetFocusedElement(xamlRoot) is not DependencyObject focused)
-            return true;
-        if (notInTextBox && focused is TextBox or PasswordBox or RichEditBox)
-            return false;
+            return ShortcutFocusRule.Allows(null, notInTextBox);
+
+        var inContent = false;
+        var inTerminal = false;
         for (var node = focused; node is not null; node = VisualTreeHelper.GetParent(node))
         {
+            inTerminal |= node is WebView2;
             if (ReferenceEquals(node, root))
-                return true;
+            {
+                inContent = true;
+                break;
+            }
         }
 
-        return false;
+        return ShortcutFocusRule.Allows(new ShortcutFocus(inContent, focused is TextBox or PasswordBox or RichEditBox, inTerminal), notInTextBox);
     }
 }

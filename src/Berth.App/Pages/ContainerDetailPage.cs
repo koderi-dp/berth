@@ -55,6 +55,10 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var (logSearchRequests, updateLogSearchRequests) = UseReducer(0);
         // The Logs tab's search lives here, so it outlives the tab being mounted again (another tab chosen and back, or a ring shown).
         var (logSearch, updateLogSearch) = UseReducer(LogSearchState.Closed);
+        // The Exec tab's shell choice and custom command live here too, so they outlive the tab being mounted again.
+        var (shellChoice, setShellChoice) = UseState(0);
+        var (customCommand, setCustomCommand) = UseState("");
+        var execSetters = UseMemo(() => (Choice: (Action<int>)(i => setShellChoice(i)), Custom: (Action<string>)(t => setCustomCommand(t))), Array.Empty<object>());
         var lastName = UseRef<string?>(null);
         var lastList = UseRef(default(ImmutableArray<ContainerSummary>));
         var lastRow = UseRef<ContainerRow?>(null);
@@ -65,7 +69,14 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             () =>
             {
                 if (DebugStart.TakeExecTab(id))
+                {
                     setTab(DetailTab.Exec);
+                    if (DebugStart.ExecCommand is { } command)
+                    {
+                        setShellChoice(ExecCommand.Choices.Count - 1);
+                        setCustomCommand(command);
+                    }
+                }
             },
             Array.Empty<object>());
 #endif
@@ -168,6 +179,12 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         // The page renders on every batch of log lines (ten a second while a log floods). The header and the tab strip are built again
         // only when what they show changes; the header's "Running (52 minutes ago)" at most once a minute.
         var details = shown?.Details;
+        // The Exec tab is given the state as it was when its details, shell or removal last changed: a batch of log lines or a stats
+        // sample does not render it again.
+        var execDetail = UseMemo(() => shown, shown?.Details, shown?.Exec, shown?.Removed ?? false);
+        var execProps = execDetail is null
+            ? null
+            : new ExecTabProps(id, name, execDetail, waiting, connected, row?.Pending is not null, shellChoice, customCommand, execSetters.Choice, execSetters.Custom);
         // One key for the rest of what the header shows: the minute, whether connected, whether compact, and where Back goes.
         var headerKey = string.Concat(((DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0)).ToString(CultureInfo.InvariantCulture), "|", backLabel);
         var header = UseMemo(
@@ -186,7 +203,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
                 LoadErrorBar(mine?.LoadError, connected ? id : null)?.WithKey("load-error"),
                 tabStrip,
-                Content(shown, waiting, row is not null, tab, name, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), state.Info?.MemoryBytes ?? 0)
+                Content(shown, waiting, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), execProps, state.Info?.MemoryBytes ?? 0)
                     .Flex(grow: 1, basis: 0)
                     .WithKey("content"),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null))?.WithKey("delete-dialog"))
@@ -235,7 +252,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     /// Logs and Stats tabs say so instead of what their streams say (see <see cref="DetailPage.Waiting"/>).
     /// </summary>
     private static Element Content(
-        DetailState? detail, bool waiting, bool listed, DetailTab tab, string name, LogsTabHooks logs, long machineMemory)
+        DetailState? detail, bool waiting, bool listed, DetailTab tab, LogsTabHooks logs, ExecTabProps? exec, long machineMemory)
     {
         if (detail?.Details is null)
         {
@@ -249,7 +266,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             DetailTab.Inspect => Component<InspectTab, InspectTabProps>(new(detail.Details, detail.RawJson ?? "")),
             DetailTab.BindMounts => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
             // A page left stays in the navigation cache without rendering: the terminal closes its browser itself when it leaves the window.
-            DetailTab.Exec => Component<ExecSpikeTab, ExecSpikeTabProps>(new(name)),
+            DetailTab.Exec when exec is not null => Component<ExecTab, ExecTabProps>(exec),
             DetailTab.Stats => Component<StatsTab, StatsTabProps>(new(
                 detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, waiting, detail.Details.CpuLimit, machineMemory)),
             _ => Component<LogsTab, LogsTabProps>(new(detail, waiting, ClearLogs, logs.Search, logs.UpdateSearch, logs.Keys, logs.SearchRequests)),

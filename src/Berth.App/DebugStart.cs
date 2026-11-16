@@ -5,12 +5,16 @@ namespace Berth;
 
 /// <summary>
 /// Debug builds only: <c>BERTH_OPEN_EXEC=&lt;container name&gt;</c> opens that container's page on the Exec tab once its row is
-/// listed, so a check can reach the terminal without a click. Compiled out of Release.
+/// listed, so a check can reach the terminal without a click; <c>BERTH_EXEC_COMMAND=&lt;command&gt;</c> has that tab choose
+/// "Custom command…" with this text and run it. Compiled out of Release.
 /// </summary>
 internal static class DebugStart
 {
     private static string? _containerToOpen = Environment.GetEnvironmentVariable("BERTH_OPEN_EXEC") is { Length: > 0 } name ? name : null;
     private static string? _execTabFor;
+
+    /// <summary>The command the opened Exec tab runs as a custom command; null for the default shell.</summary>
+    public static string? ExecCommand { get; } = Environment.GetEnvironmentVariable("BERTH_EXEC_COMMAND") is { Length: > 0 } command ? command : null;
 
     /// <summary>The id of the container named by the switch, once, when <paramref name="containers"/> has it; null otherwise.</summary>
     public static string? TakeContainerToOpen(IReadOnlyList<ContainerSummary> containers)

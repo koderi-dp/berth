@@ -1,4 +1,6 @@
+#if DEBUG
 using System.Diagnostics;
+#endif
 using System.Globalization;
 using Berth.Presentation;
 using Microsoft.UI.Reactor;
@@ -16,12 +18,16 @@ namespace Berth.Pages.Detail;
 /// <param name="OnMessage">Each message from the page, read with <see cref="TerminalProtocol.Parse"/>; one it cannot read is dropped.</param>
 /// <param name="OnReady">The page is open and fitted (after each load): the handle takes posts from now on.</param>
 /// <param name="OnFailed">The WebView could not start (no runtime, no user data folder): the exception's message.</param>
+/// <param name="OnPageLost">
+/// The page was lost to a failed browser process and is loaded again (or a new WebView started): the screen is empty, and the
+/// shell it showed should be ended. <see cref="TerminalRecovery"/> decides which failures do that.
+/// </param>
 /// <remarks>
 /// The handlers are read when they are called, not when the WebView is made, so a page that hands new ones on every render costs
 /// nothing; only <paramref name="Name"/> changes what the control is given.
 /// </remarks>
 internal sealed record TerminalViewProps(
-    string Name, string Background, Action<TerminalMessage> OnMessage, Action<TerminalHandle> OnReady, Action<string> OnFailed);
+    string Name, string Background, Action<TerminalMessage> OnMessage, Action<TerminalHandle> OnReady, Action<string> OnFailed, Action OnPageLost);
 
 /// <summary>
 /// The terminal page (xterm.js, bundled in <c>Assets\Terminal</c>) in a WebView2. The WebView serves the bundled folder as
@@ -68,7 +74,9 @@ internal sealed class TerminalHandle
     private static readonly Uri PageUri = new("https://" + HostName + "/index.html");
 
     private readonly Queue<string> _waiting = new();
+#if DEBUG
     private readonly Stopwatch _sinceAttach = new();
+#endif
     private WebView2? _control;
     private bool _ready;
     private bool _started;
@@ -77,17 +85,29 @@ internal sealed class TerminalHandle
     /// <summary>The latest props: the handlers are read from here when they are called.</summary>
     internal TerminalViewProps? Props { get; set; }
 
-    /// <summary>How long the WebView took from being made to its first page saying ready; null until then. For checks.</summary>
+#if DEBUG
+    // Debug builds only, for checks: none of this is in a Release build.
+
+    /// <summary>How long the WebView took from being made to its first page saying ready; null until then.</summary>
     public TimeSpan? ReadyAfter { get; private set; }
 
-    /// <summary>How long the WebView took to start its browser (<c>EnsureCoreWebView2Async</c>); null until then. For checks.</summary>
+    /// <summary>How long the WebView took to start its browser (<c>EnsureCoreWebView2Async</c>); null until then.</summary>
     public TimeSpan? StartedAfter { get; private set; }
 
-    /// <summary>Where the WebView keeps its profile; null until it has started. For checks.</summary>
+    /// <summary>Where the WebView keeps its profile; null until it has started.</summary>
     public string? UserDataFolder { get; private set; }
 
-    /// <summary>How many times the bundled page started loading in this WebView: 1 unless it was reloaded. For checks.</summary>
+    /// <summary>How many times the bundled page started loading in this WebView: 1 unless it was reloaded.</summary>
     public int LoadCount { get; private set; }
+
+    /// <summary>Runs <paramref name="script"/> (a constant written by a check) in the page and gives its result as JSON.</summary>
+    public async Task<string> EvalAsync(string script)
+    {
+        if (_closed || _control?.CoreWebView2 is not { } core)
+            return "null";
+        return await core.ExecuteScriptAsync(script);
+    }
+#endif
 
     /// <summary>The page's messages: <paramref name="json"/> goes to the page now, or once it said ready. Nothing after close.</summary>
     public void Post(string json)
@@ -110,14 +130,6 @@ internal sealed class TerminalHandle
             return;
         _control.Focus(FocusState.Programmatic);
         Post(TerminalProtocol.Focus());
-    }
-
-    /// <summary>Runs <paramref name="script"/> in the page and gives its result as JSON. For checks and the spike only.</summary>
-    public async Task<string> EvalAsync(string script)
-    {
-        if (_closed || _control?.CoreWebView2 is not { } core)
-            return "null";
-        return await core.ExecuteScriptAsync(script);
     }
 
     /// <summary>Whether the WebView is drawn dark (its ActualTheme): follows Windows switching between light and dark while the app runs.</summary>
@@ -155,7 +167,9 @@ internal sealed class TerminalHandle
         if (_closed || _started || _control is not { } control)
             return;
         _started = true;
+#if DEBUG
         _sinceAttach.Start();
+#endif
         _ = StartAsync(control);
     }
 
@@ -188,7 +202,9 @@ internal sealed class TerminalHandle
         if (message is TerminalMessage.Ready)
         {
             _ready = true;
+#if DEBUG
             ReadyAfter ??= _sinceAttach.Elapsed;
+#endif
             while (_ready && !_closed && _waiting.TryDequeue(out var waiting))
                 _control?.CoreWebView2?.PostWebMessageAsString(waiting);
             props.OnReady(this);
@@ -231,9 +247,15 @@ internal sealed class TerminalHandle
             await control.EnsureCoreWebView2Async();
             if (_closed)
                 return;
-            StartedAfter = _sinceAttach.Elapsed;
             var core = control.CoreWebView2;
+#if DEBUG
+            StartedAfter = _sinceAttach.Elapsed;
             UserDataFolder = core.Environment.UserDataFolder;
+            // The terminal object is reachable from scripts (window.berthTerminal) for checks, in Debug builds only.
+            await core.AddScriptToExecuteOnDocumentCreatedAsync("window.berthDebug = true;");
+            if (_closed)
+                return;
+#endif
             core.SetVirtualHostNameToFolderMapping(
                 HostName, Path.Combine(AppContext.BaseDirectory, "Assets", "Terminal"), CoreWebView2HostResourceAccessKind.Deny);
 
@@ -247,6 +269,12 @@ internal sealed class TerminalHandle
             settings.IsStatusBarEnabled = false;
             settings.IsZoomControlEnabled = false;
             settings.AreBrowserAcceleratorKeysEnabled = false;
+            // A link printed by a program must not open a dialog with its text; nothing in the page is a form or a host object.
+            settings.AreDefaultScriptDialogsEnabled = false;
+            settings.AreHostObjectsAllowed = false;
+            settings.IsGeneralAutofillEnabled = false;
+            settings.IsPasswordAutosaveEnabled = false;
+            settings.IsBuiltInErrorPageEnabled = false;
 
             // Only the bundled page: any other navigation (a link in output, a script) is cancelled, and no window opens.
             core.NavigationStarting += (_, e) =>
@@ -255,20 +283,19 @@ internal sealed class TerminalHandle
                 {
                     e.Cancel = true;
                 }
-                else
+                else if (!_closed)
                 {
-                    _ready = false; // the page loads again: posts wait for its next ready
+                    // The page loads again: posts wait for its next ready, and what was queued for the old page is not sent to it.
+                    _ready = false;
+                    _waiting.Clear();
+#if DEBUG
                     LoadCount++;
+#endif
                 }
             };
             core.FrameNavigationStarting += (_, e) => e.Cancel = true;
             core.NewWindowRequested += (_, e) => e.Handled = true;
-            // A browser or renderer process that ends leaves an empty page: said like a failed start, so the tab can offer a new one.
-            core.ProcessFailed += (_, e) =>
-            {
-                if (!_closed)
-                    Props?.OnFailed("The terminal's browser process ended (" + e.ProcessFailedKind.ToString() + ").");
-            };
+            core.ProcessFailed += (_, e) => OnProcessFailed(core, e.ProcessFailedKind);
             core.Navigate(PageUri.AbsoluteUri);
         }
         catch (Exception ex) when (!_closed)
@@ -279,6 +306,49 @@ internal sealed class TerminalHandle
         {
             // Closed while it started: nothing to report.
         }
+    }
+
+    /// <summary>
+    /// A renderer that ended leaves a blank page: it is loaded again. A browser that ended leaves a dead WebView: a new one is made.
+    /// Helper processes the WebView restarts itself, and a renderer that is only slow, are left alone. Logged by kind only.
+    /// </summary>
+    private void OnProcessFailed(CoreWebView2 core, CoreWebView2ProcessFailedKind kind)
+    {
+        if (_closed)
+            return;
+        var failure = kind switch
+        {
+            CoreWebView2ProcessFailedKind.BrowserProcessExited => TerminalProcessFailure.BrowserExited,
+            CoreWebView2ProcessFailedKind.RenderProcessExited or CoreWebView2ProcessFailedKind.FrameRenderProcessExited =>
+                TerminalProcessFailure.RendererExited,
+            CoreWebView2ProcessFailedKind.RenderProcessUnresponsive => TerminalProcessFailure.RendererUnresponsive,
+            _ => TerminalProcessFailure.HelperExited,
+        };
+        var step = TerminalRecovery.For(failure);
+        AppLog.Write("terminal browser process failed: " + failure + ", " + step);
+        if (step == TerminalRecoveryStep.Reload)
+        {
+            _ready = false;
+            _waiting.Clear();
+            try
+            {
+                core.Reload();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("reloading the terminal page failed", ex);
+                step = TerminalRecoveryStep.Recreate;
+            }
+        }
+
+        if (step == TerminalRecoveryStep.Recreate)
+        {
+            Close();
+            Left?.Invoke();
+        }
+
+        if (TerminalRecovery.EndsTheShell(step))
+            Props?.OnPageLost();
     }
 
     private static bool IsBundled(string uri) =>
