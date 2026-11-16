@@ -250,7 +250,10 @@ internal sealed class ExecLink
         using var started = Process.Start(info);
     }
 
-    /// <summary>The clipboard's text goes to the page, which pastes it as one piece; nothing when it holds no text or too much.</summary>
+    /// <summary>
+    /// The clipboard's text goes to the page, which pastes it as one piece; nothing when it holds no text or too much. Started
+    /// without being awaited, so it never throws: any failure is logged in fixed words.
+    /// </summary>
     private async Task PasteAsync()
     {
         string text;
@@ -267,16 +270,23 @@ internal sealed class ExecLink
             return;
         }
 
-        if (text.Length == 0 || Handle is not { } handle)
-            return;
-        if (!ExecInputNotes.PasteFits(text))
+        try
         {
-            Note = ExecInputNotes.PasteTooLarge(Generation);
-            UpdateNote(Note);
-            return;
-        }
+            if (text.Length == 0 || Handle is not { } handle)
+                return;
+            if (!ExecInputNotes.PasteFits(text))
+            {
+                Note = ExecInputNotes.PasteTooLarge(Generation);
+                UpdateNote(Note);
+                return;
+            }
 
-        handle.Post(TerminalProtocol.PasteText(text));
+            handle.Post(TerminalProtocol.PasteText(text));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("pasting into the terminal failed", ex);
+        }
     }
 
     /// <summary>F6 in the terminal: the keyboard focus goes to the tab strip's selected tab.</summary>
