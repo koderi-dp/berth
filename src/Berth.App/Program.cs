@@ -14,6 +14,10 @@ foreach (var name in Environment.GetEnvironmentVariables().Keys.OfType<string>()
 }
 #endif
 
+// A second launch shows the first Berth's window and ends here, before it logs or connects anything.
+if (!Berth.Shell.SingleInstance.Claim())
+    return;
+
 AppLog.Install();
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
@@ -43,8 +47,13 @@ ReactorApp.DefaultRenderErrorHandler = error =>
 };
 
 // A shell open in the Exec tab would stay in its container (the engine keeps it): the detail session ends it, given a second at most.
-// Berth has one window, so its closing is the exit.
-ReactorApp.WindowClosed += (_, _) => services.CloseDetailForExit(TimeSpan.FromSeconds(1));
+// Berth has one window, so its closing is the exit (closing it to the tray is cancelled before this; Quit closes it for good). The
+// tray icon is removed here, so none is left in the notification area.
+ReactorApp.WindowClosed += (_, _) =>
+{
+    services.CloseDetailForExit(TimeSpan.FromSeconds(1));
+    Berth.Shell.TrayIcon.Close();
+};
 
 ReactorApp.Run<App>(window, _ =>
 {
