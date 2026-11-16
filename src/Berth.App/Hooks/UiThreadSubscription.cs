@@ -24,6 +24,8 @@ internal sealed class UiThreadSubscription<TSource, TState>
     private TSource? _source;
     private int _pending;
     private bool _disposed;
+    // A change arrived while the window was hidden to the tray and was held back.
+    private bool _heldBack;
 
     /// <param name="onChange">Called on the UI thread after one or more changes.</param>
     /// <param name="current">The source now; null when there is none.</param>
@@ -44,6 +46,7 @@ internal sealed class UiThreadSubscription<TSource, TState>
         _addChanged = addChanged;
         _removeChanged = removeChanged;
         addReplaced(OnReplaced);
+        Shell.MainWindow.HiddenChanged += OnHiddenChanged;
         OnReplaced();
     }
 
@@ -61,6 +64,7 @@ internal sealed class UiThreadSubscription<TSource, TState>
     private void Dispose()
     {
         _removeReplaced(OnReplaced);
+        Shell.MainWindow.HiddenChanged -= OnHiddenChanged;
         lock (_gate)
         {
             _disposed = true;
@@ -100,7 +104,26 @@ internal sealed class UiThreadSubscription<TSource, TState>
     {
         // Cleared before the callback, so a change that arrives while the UI reads the state queues another update.
         Volatile.Write(ref _pending, 0);
-        if (!Volatile.Read(ref _disposed))
-            _onChange();
+        if (Volatile.Read(ref _disposed))
+            return;
+
+        // A window hidden to the tray does no rendering work: the change is held back, and the latest state is read when it shows.
+        if (Shell.MainWindow.IsHidden)
+        {
+            _heldBack = true;
+            return;
+        }
+
+        _onChange();
+    }
+
+    /// <summary>On the UI thread: the window was shown again, so a change held back while it was hidden is delivered now.</summary>
+    private void OnHiddenChanged()
+    {
+        if (!Shell.MainWindow.IsHidden && _heldBack)
+        {
+            _heldBack = false;
+            Post();
+        }
     }
 }
