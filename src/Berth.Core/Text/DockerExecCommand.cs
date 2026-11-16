@@ -12,9 +12,18 @@ public static class DockerExecCommand
     /// <summary>Why there is no command for a connection docker cannot be pointed at by Berth (SSH until phase 7).</summary>
     public const string NotAvailableText = "Not available for this connection.";
 
+    /// <summary>Why there is no command for a TLS connection with half a client certificate: docker would be told something else.</summary>
+    public const string HalfCertificateText = "The connection has a client certificate without its key, or a key without its certificate.";
+
     /// <summary>Null when docker can be pointed at <paramref name="connection"/>; otherwise why not, in a sentence the UI can show.</summary>
-    public static string? Unavailable(ConnectionProfile connection) =>
-        connection.Kind is TransportKind.Tcp or TransportKind.NamedPipe ? null : NotAvailableText;
+    public static string? Unavailable(ConnectionProfile connection)
+    {
+        if (connection.Kind is not (TransportKind.Tcp or TransportKind.NamedPipe))
+            return NotAvailableText;
+        if (connection is { Kind: TransportKind.Tcp, Tls: { } tls } && string.IsNullOrEmpty(tls.CertPath) != string.IsNullOrEmpty(tls.KeyPath))
+            return HalfCertificateText;
+        return null;
+    }
 
     /// <summary>
     /// What follows "docker": the connection's flags (<c>--tlsverify --tlscacert</c>, and <c>--tlscert --tlskey</c> with a client
@@ -46,7 +55,7 @@ public static class DockerExecCommand
             Option("--tlsverify");
             Option("--tlscacert");
             Value(tls.CaPath);
-            if (tls.CertPath is { } cert && tls.KeyPath is { } key)
+            if (tls is { CertPath: { Length: > 0 } cert, KeyPath: { Length: > 0 } key })
             {
                 Option("--tlscert");
                 Value(cert);

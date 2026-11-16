@@ -86,6 +86,22 @@ public sealed class DockerExecCommandTests
         Assert.Throws<ArgumentException>(() => DockerExecCommand.Text(ssh, Id, Sh, ShellKind.PowerShell));
     }
 
+    [Theory]
+    [InlineData(@"C:\certs\cert.pem", null)]
+    [InlineData(null, @"C:\certs\key.pem")]
+    [InlineData("", @"C:\certs\key.pem")]
+    [InlineData(@"C:\certs\cert.pem", "")]
+    public void Half_a_client_certificate_is_refused_with_a_reason_not_dropped(string? cert, string? key)
+    {
+        var connection = Tcp("engine.lan", 2376, new TlsOptions(@"C:\certs\ca.pem", cert, key));
+
+        Assert.Equal(
+            "The connection has a client certificate without its key, or a key without its certificate.",
+            DockerExecCommand.Unavailable(connection));
+        Assert.Throws<ArgumentException>(() => DockerExecCommand.Arguments(connection, Id, Sh));
+        Assert.Throws<ArgumentException>(() => DockerExecCommand.Text(connection, Id, Sh, ShellKind.PowerShell));
+    }
+
     [Fact]
     public void Tcp_tls_and_pipes_are_available()
     {

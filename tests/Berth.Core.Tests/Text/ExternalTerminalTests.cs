@@ -36,13 +36,115 @@ public sealed partial class ExternalTerminalTests
     }
 
     [Fact]
-    public void The_own_console_runs_docker_with_shell_execute()
+    public void The_own_console_runs_docker_directly_with_the_arguments_as_they_are()
     {
         var launch = ExternalTerminal.OwnConsole(Docker("sh", "-c", "echo a; b"));
 
         Assert.Equal("docker.exe", launch.FileName);
-        Assert.True(launch.UseShellExecute);
+        // Not through shell execute: a console program started from a window gets a console of its own, and only a direct start
+        // can have its environment changed.
+        Assert.False(launch.UseShellExecute);
         Assert.Equal<string>(Docker("sh", "-c", "echo a; b"), launch.Arguments);
+    }
+
+    [Fact]
+    public void Both_launches_clear_the_variables_that_would_point_docker_elsewhere()
+    {
+        string[] cleared = ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_TLS"];
+
+        Assert.Equal<string>(cleared, ExternalTerminal.WindowsTerminal("web", Docker("sh")).ClearedVariables);
+        Assert.Equal<string>(cleared, ExternalTerminal.OwnConsole(Docker("sh")).ClearedVariables);
+    }
+
+    [Theory]
+    [InlineData("say \"hi\"")]
+    [InlineData("%PATH%")]
+    [InlineData(@"C:\a b\")]
+    [InlineData("a\tb")]
+    [InlineData("a\nb")]
+    [InlineData("")]
+    [InlineData("--")]
+    [InlineData("echo a b; sleep 5")]
+    public void The_own_console_takes_what_windows_terminal_cannot_and_docker_gets_it_unchanged(string word)
+    {
+        var docker = Docker("sh", "-c", word);
+
+        Assert.Null(ExternalTerminal.ConsoleRefusal(docker));
+        var launch = ExternalTerminal.OwnConsole(docker);
+
+        // One parser only: the list joined as .NET joins it, split again by docker's C runtime rules.
+        Assert.Equal<string>(docker, WindowsTerminalPath.ConsoleArguments(launch.Arguments));
+    }
+
+    [Fact]
+    public void The_own_console_refuses_only_a_nul_or_a_lone_surrogate()
+    {
+        Assert.Equal(CannotPass, ExternalTerminal.ConsoleRefusal(Docker("sh", "-c", "a\0b")));
+        Assert.Equal(CannotPass, ExternalTerminal.ConsoleRefusal(Docker("sh", "-c", "a" + (char)0xD800)));
+        Assert.Null(ExternalTerminal.ConsoleRefusal(Docker("sh", "-c", char.ConvertFromUtf32(0x1F600))));
+        Assert.Throws<ArgumentException>(() => ExternalTerminal.OwnConsole(Docker("sh", "-c", "a\0b")));
+    }
+
+    [Fact]
+    public void Without_docker_on_path_nothing_is_started_and_the_tab_says_why()
+    {
+        var plan = ExternalTerminal.Plan("web", Docker("sh"), dockerFound: false, windowsTerminalFound: true);
+
+        Assert.Null(plan.First);
+        Assert.Null(plan.Fallback);
+        Assert.Equal("The docker command was not found on PATH.", plan.Refusal);
+    }
+
+    [Fact]
+    public void With_windows_terminal_it_is_tried_first_and_the_console_is_the_fallback()
+    {
+        var plan = ExternalTerminal.Plan("web", Docker("sh"), dockerFound: true, windowsTerminalFound: true);
+
+        Assert.Equal<string>(ExternalTerminal.WindowsTerminal("web", Docker("sh")).Arguments, plan.First!.Arguments);
+        Assert.Equal("wt.exe", plan.First.FileName);
+        Assert.Equal("docker.exe", plan.Fallback!.FileName);
+        Assert.Equal<string>(Docker("sh"), plan.Fallback.Arguments);
+        Assert.Null(plan.Refusal);
+    }
+
+    [Fact]
+    public void With_windows_terminal_a_command_it_cannot_carry_is_refused_with_a_reason()
+    {
+        var plan = ExternalTerminal.Plan("web", Docker("sh", "-c", "say \"hi\""), dockerFound: true, windowsTerminalFound: true);
+
+        Assert.Null(plan.First);
+        Assert.Null(plan.Fallback);
+        Assert.Equal(CannotPass, plan.Refusal);
+    }
+
+    [Fact]
+    public void Without_windows_terminal_the_console_takes_the_command_or_says_why_not()
+    {
+        var quoted = ExternalTerminal.Plan("web", Docker("sh", "-c", "say \"hi\""), dockerFound: true, windowsTerminalFound: false);
+        Assert.Equal("docker.exe", quoted.First!.FileName);
+        Assert.Equal<string>(Docker("sh", "-c", "say \"hi\""), quoted.First.Arguments);
+        Assert.Null(quoted.Fallback);
+        Assert.Null(quoted.Refusal);
+
+        var nul = ExternalTerminal.Plan("web", Docker("sh", "-c", "a\0b"), dockerFound: true, windowsTerminalFound: false);
+        Assert.Null(nul.First);
+        Assert.Equal(CannotPass, nul.Refusal);
+    }
+
+    [Fact]
+    public void A_program_is_found_in_the_first_path_entry_that_has_it()
+    {
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"C:\Program Files\Docker\docker.exe",
+            @"C:\Tools\docker.exe",
+        };
+        const string Path = @"C:\Windows;;""C:\Program Files\Docker"";C:\Tools";
+
+        Assert.Equal(@"C:\Program Files\Docker\docker.exe", ExternalTerminal.FindOnPath("docker.exe", Path, files.Contains));
+        Assert.Null(ExternalTerminal.FindOnPath("wt.exe", Path, files.Contains));
+        Assert.Null(ExternalTerminal.FindOnPath("docker.exe", null, files.Contains));
+        Assert.Null(ExternalTerminal.FindOnPath("docker.exe", @"relative\dir", _ => true));
     }
 
     [Fact]
@@ -112,7 +214,6 @@ public sealed partial class ExternalTerminalTests
 
         Assert.Equal(CannotPass, ExternalTerminal.Refusal(docker));
         Assert.Throws<ArgumentException>(() => ExternalTerminal.WindowsTerminal("web", docker));
-        Assert.Throws<ArgumentException>(() => ExternalTerminal.OwnConsole(docker));
     }
 
     [Fact]
@@ -158,6 +259,9 @@ public sealed partial class ExternalTerminalTests
             return docker[1..];
         }
 
+        /// <summary>The console's way: no wt step, only the list joined by .NET and split again by docker.</summary>
+        public static string[] ConsoleArguments(ImmutableArray<string> arguments) => CommandLineToArgv(Join(arguments))[1..];
+
         [GeneratedRegex(@"^;|[^\\];")]
         private static partial Regex Delimiter();
 
@@ -168,7 +272,7 @@ public sealed partial class ExternalTerminalTests
             foreach (var argument in arguments)
             {
                 text.Append(' ');
-                if (argument.Length > 0 && !argument.Any(c => c is ' ' or '\t' or '"'))
+                if (argument.Length > 0 && !argument.Any(c => char.IsWhiteSpace(c) || c == '"'))
                 {
                     text.Append(argument);
                     continue;
