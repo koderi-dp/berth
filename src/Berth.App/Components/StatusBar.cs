@@ -30,11 +30,8 @@ internal sealed class StatusBar : EngineStateComponent
             ? Caption(EngineCounts.Text(info)).Foreground(Theme.SecondaryText)
             : null;
 
-        var label = (FlexRow(Widgets.StatusDot(ToneColor(EngineStatus.Tone(phase))), Caption(text).Foreground(Theme.PrimaryText)) with
-        {
-            AlignItems = FlexAlign.Center,
-            ColumnGap = 8,
-        });
+        // A stack, not a flex row: a flex row takes all the room offered, and the button would span the bar.
+        var label = HStack(8, Widgets.StatusDot(ToneColor(EngineStatus.Tone(phase))).VAlign(Microsoft.UI.Xaml.VerticalAlignment.Center), Caption(text).Foreground(Theme.PrimaryText));
 
         Element engine = items is null
             ? label.AutomationName(text).AutomationId("engine-status")
@@ -46,7 +43,7 @@ internal sealed class StatusBar : EngineStateComponent
                 .Background(Theme.Ref("SubtleFillColorTransparentBrush"))
                 .BorderThickness(0);
 
-        var row = (FlexRow(engine, counts) with
+        var row = (FlexRow(engine.Flex(shrink: 0), counts) with
             {
                 AlignItems = FlexAlign.Center,
                 ColumnGap = 8,

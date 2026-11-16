@@ -22,7 +22,7 @@ internal static class ConnectionBar
         var view = EngineStatus.Disconnected(state);
         var message = view.Failure ?? view.Message ?? (view.Busy ? EngineStatus.Text(EngineStatus.Phase(state)) : view.Title);
 
-        return (InfoBar(message: message) with
+        var bar = (InfoBar(message: message) with
             {
                 IsOpen = true,
                 Content = (FlexRow(
@@ -39,9 +39,10 @@ internal static class ConnectionBar
                     })
                     .Margin(0, 0, 0, 12),
             })
-            .Warning()
             .IsClosable(false)
             .Flex(shrink: 0);
+        // Stopped from Berth is not a fault: said plainly, not as a warning.
+        return EngineStatus.Phase(state) == EnginePhase.Stopped && view.Failure is null ? bar.Informational() : bar.Warning();
     }
 
     private static void StartEngine() => AppServices.Current.Session.Dispatch(new EngineCommandRequested(EngineCommand.Start));

@@ -48,6 +48,7 @@ internal static class DisconnectedView
             with
             {
                 ColumnGap = 8,
+                JustifyContent = FlexJustify.Center,
             });
 
     /// <summary>A failed start or stop: what failed, then its output as the command wrote it, selectable, in the monospace font.</summary>
