@@ -29,7 +29,14 @@ public sealed partial class ContainerDetailSession
 
     private const int ExecReadSize = 32 * 1024;
 
+    /// <summary>
+    /// What a shell's failure shows when the terminal it writes to (the attached <see cref="IExecOutput"/>) threw: Berth's words,
+    /// never that exception's message, which is not the engine's and could hold terminal bytes.
+    /// </summary>
+    public const string TerminalFailedText = "The terminal stopped working. Start again.";
+
     private const string ExecFailedReport = "the exec stream failed";
+    private const string TerminalFailedReport = "the terminal failed";
     private const string ResizeFailedReport = "resizing the terminal failed";
     private const string ExitCodeFailedReport = "reading the shell's exit code failed";
 
@@ -139,6 +146,11 @@ public sealed partial class ContainerDetailSession
         {
             // Stopped on purpose: nothing is shown or reported.
         }
+        catch (TerminalFailedException ex)
+        {
+            Report(TerminalFailedReport, ex.InnerException!);
+            Post(new ExecFailed(run.Generation, TerminalFailedText));
+        }
         catch (Exception ex)
         {
             Report(ExecFailedReport, ex);
@@ -171,7 +183,14 @@ public sealed partial class ContainerDetailSession
                 return;
             if (run.IsStopRequested || Volatile.Read(ref _execOutput) is not { } terminal)
                 continue;
-            await terminal.WriteAsync(run.Generation, buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            try
+            {
+                await terminal.WriteAsync(run.Generation, buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                throw new TerminalFailedException(ex);
+            }
         }
     }
 
@@ -332,3 +351,6 @@ public sealed partial class ContainerDetailSession
         }
     }
 }
+
+/// <summary>Carries a failure of the attached terminal out of the output pump, so it is not taken for the engine's.</summary>
+internal sealed class TerminalFailedException(Exception inner) : Exception(null, inner);

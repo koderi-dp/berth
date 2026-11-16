@@ -192,6 +192,26 @@ public sealed class ContainerDetailSessionExecTests
     }
 
     [Fact]
+    public async Task A_terminal_that_throws_fails_the_shell_in_berths_words_not_its_message()
+    {
+        const string Leaked = "bytes the terminal could not take: s3cret";
+        await using var h = new Harness();
+        var shell = await h.RunningAsync(attachSink: false);
+        var thrown = new InvalidOperationException(Leaked);
+        h.Session.AttachExecOutput(new ThrowingSink(thrown));
+
+        await shell.WriteOutputAsync("hello"u8.ToArray());
+        var state = await h.WaitFor(s => s.Exec.Status == ExecStatus.Failed);
+        var error = await h.WaitForError();
+
+        Assert.Equal("The terminal stopped working. Start again.", state.Exec.Error);
+        Assert.Equal(ContainerDetailSession.TerminalFailedText, state.Exec.Error);
+        Assert.Equal("the terminal failed", error.What);
+        Assert.Same(thrown, error.Exception);
+        await shell.Disposed.WaitAsync(Patience);
+    }
+
+    [Fact]
     public async Task Stop_closes_the_stream_and_raises_nothing_more()
     {
         await using var h = new Harness();
@@ -410,6 +430,12 @@ public sealed class ContainerDetailSessionExecTests
             if (_hold is { } hold)
                 await hold.Released.WaitAsync(ct);
         }
+    }
+
+    /// <summary>A terminal that fails on every write.</summary>
+    private sealed class ThrowingSink(Exception error) : IExecOutput
+    {
+        public ValueTask WriteAsync(int generation, ReadOnlyMemory<byte> bytes, CancellationToken ct) => ValueTask.FromException(error);
     }
 
     /// <summary>A detail session for container c over a fake engine, with a fake clock and a terminal sink.</summary>
