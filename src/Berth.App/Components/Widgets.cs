@@ -43,6 +43,7 @@ internal static class Glyphs
     public const string Add = "";
     public const string HardDrive = "";
     public const string Network = "";
+    public const string OpenInNewWindow = "";
 }
 
 /// <summary>Small pieces shared by the shell and the pages.</summary>

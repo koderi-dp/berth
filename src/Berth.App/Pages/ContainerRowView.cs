@@ -89,7 +89,15 @@ internal static class ContainerRowView
         void Run(RowAction action) => ContainerParts.Run(action, row, actions, other =>
         {
             if (other.Kind == RowActionKind.ViewDetails)
+            {
                 callbacks.ViewDetails(row);
+            }
+            else if (other.Kind == RowActionKind.OpenTerminal)
+            {
+                // The page opens on the Exec tab, which starts a shell by itself.
+                Detail.DetailTabRequest.Set(row.Id, DetailTab.Exec);
+                callbacks.ViewDetails(row);
+            }
             else
                 RunEngineAction(other, (ContainerRow[])[row], callbacks);
         });

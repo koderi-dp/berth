@@ -56,3 +56,6 @@ public sealed record RunCommandFailed(string Id, string Message, bool EngineUnre
 
 /// <summary>Copying to the clipboard failed (another program held it); the error bar says so.</summary>
 public sealed record ClipboardCopyFailed : SessionEvent;
+
+/// <summary>"Open in external terminal" could not start a program; the error bar shows <see cref="Message"/> (the start's own words).</summary>
+public sealed record ExternalTerminalFailed(string Message) : SessionEvent;

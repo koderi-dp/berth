@@ -60,9 +60,17 @@ internal sealed class ExecTab : Component<ExecTabProps>
     // The toolbar, the state's line, the terminal, the note about dropped input.
     private static readonly GridSize[] PageRows = [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto];
 
-    // The shell picker, the custom command, Run, the size, and the slot for the external terminal's buttons.
+    // The shell picker, the custom command, Run, the size, and the external terminal's buttons.
     private static readonly GridSize[] ToolbarColumns = [GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto, GridSize.Auto];
-    private static readonly GridSize[] ToolbarRows = [GridSize.Px(32), GridSize.Auto];
+
+    // The controls, the custom command's error, and why the external terminal is not offered.
+    private static readonly GridSize[] ToolbarRows = [GridSize.Px(32), GridSize.Auto, GridSize.Auto];
+
+    /// <summary>Below this window width the external terminal's button shows its glyph alone.</summary>
+    private const double ExternalTextMinWidth = 760;
+
+    private const string ExternalLabel = "Open in external terminal";
+    private const string CopyLabel = "Copy the docker exec command (PowerShell)";
 
     public override Element Render()
     {
@@ -77,6 +85,8 @@ internal sealed class ExecTab : Component<ExecTabProps>
         var (note, setNote) = UseState<ExecInputNote?>(null);
         var (customError, setCustomError) = UseState<string?>(null);
         var link = UseMemo(() => new ExecLink(DispatcherQueue.GetForCurrentThread()), Array.Empty<object>());
+        var (tools, setTools) = UseState<ExternalTools?>(null);
+        var wide = UseBreakpoint(ExternalTextMinWidth);
 
         var dark = themeDark ?? startupDark;
         var colors = UseMemo(() => Colors(dark, highContrast), dark, highContrast);
@@ -96,6 +106,16 @@ internal sealed class ExecTab : Component<ExecTabProps>
         link.StartedOnce = startedOnce;
         link.SetStartedOnce = setStartedOnce;
         link.Note = note;
+        var connection = AppServices.Current.ActiveConnectionProfile;
+        var externalCommand = ExternalCommandOf(choice, props.CustomCommand);
+        var external = UseMemo(
+            () => ExternalCommand.For(connection, props.ContainerId, props.Name, externalCommand, tools),
+            connection,
+            props.ContainerId,
+            props.Name,
+            string.Join('\0', externalCommand),
+            (object?)tools ?? "not looked up");
+        link.External = external;
         link.OnPageLost = () =>
         {
             link.Session?.StopExec();
@@ -172,6 +192,23 @@ internal sealed class ExecTab : Component<ExecTabProps>
 
         UseEffect(() => link.Handle?.Post(TerminalProtocol.Theme(colors)), colors);
 
+        // Whether docker and Windows Terminal are installed: looked up once, off the UI thread.
+        UseEffect(
+            () =>
+            {
+                var ui = DispatcherQueue.GetForCurrentThread();
+                var mounted = true;
+                _ = Task.Run(ExternalTools.Find).ContinueWith(
+                    found => ui.TryEnqueue(() =>
+                    {
+                        if (mounted)
+                            setTools(found.Result);
+                    }),
+                    TaskContinuationOptions.OnlyOnRanToCompletion);
+                return () => mounted = false;
+            },
+            Array.Empty<object>());
+
         // A terminal taken off the screen (the container stopped, the page waits) is gone: the next one starts a shell only once it
         // has said ready, so nothing is sent to the closed one.
         var terminalShown = view.ShowTerminal && webViewError is null;
@@ -184,7 +221,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
             terminalShown);
 
         var toolbar = view.ShowTerminal || webViewError is not null
-            ? Toolbar(view, choice, props, size, customError, OnChoose, text => StartChosen(choice, text ?? props.CustomCommand))
+            ? Toolbar(view, choice, props, size, customError, OnChoose, text => StartChosen(choice, text ?? props.CustomCommand), external, wide, link)
             : null;
 
         void OnChoose(int index)
@@ -261,7 +298,10 @@ internal sealed class ExecTab : Component<ExecTabProps>
         TerminalSize? size,
         string? customError,
         Action<int> choose,
-        Action<string?> runCustom)
+        Action<string?> runCustom,
+        ExternalCommand external,
+        bool wide,
+        ExecLink link)
     {
         var picker = ComboBox(ShellLabels, props.ShellChoice, choose)
             .Width(192)
@@ -318,7 +358,50 @@ internal sealed class ExecTab : Component<ExecTabProps>
                 .Grid(row: 0, column: 3)
             : null;
 
-        return Grid(ToolbarColumns, ToolbarRows, picker, custom, run, error, caption);
+        var why = external.Refusal;
+        var outside = HStack(
+                4,
+                ExternalButton(wide, why is null && external.Plan?.First is not null, link.OpenExternal),
+                Widgets.IconButton(Glyphs.Copy, CopyLabel, link.CopyCommand)
+                    .AutomationId("exec-copy-command")
+                    .IsEnabled(external.CopyText is not null))
+            .VAlign(VerticalAlignment.Center)
+            .Margin(8, 0, 0, 0)
+            .Grid(row: 0, column: 4);
+        var refusal = why is null
+            ? null
+            : Caption(why)
+                .Foreground(Theme.SecondaryText)
+                .TextWrapping(TextWrapping.Wrap)
+                .HAlign(HorizontalAlignment.Right)
+                .AutomationId("exec-external-refusal")
+                .Margin(0, 4, 0, 0)
+                .Grid(row: 2, column: 0, columnSpan: 5);
+
+        return Grid(ToolbarColumns, ToolbarRows, picker, custom, run, error, caption, outside, refusal);
+    }
+
+    /// <summary>"Open in external terminal": its glyph and text, or below <see cref="ExternalTextMinWidth"/> its glyph alone.</summary>
+    private static Element ExternalButton(bool wide, bool enabled, Action open)
+    {
+        Element content = wide
+            ? HStack(8, Widgets.Glyph(Glyphs.OpenInNewWindow, 16), TextBlock(ExternalLabel).VAlign(VerticalAlignment.Center))
+            : Widgets.Glyph(Glyphs.OpenInNewWindow, 16);
+        return Button(content, open)
+            .SubtleButton()
+            .AutomationName(ExternalLabel)
+            .ToolTip(ExternalLabel)
+            .AutomationId("exec-external")
+            .IsEnabled(enabled);
+    }
+
+    /// <summary>The command the external terminal runs: the picker's current one, sh while a custom command does not parse.</summary>
+    private static ImmutableArray<string> ExternalCommandOf(ShellChoice choice, string custom)
+    {
+        if (!choice.IsCustom)
+            return choice.Command;
+        var parsed = ExecCommand.Parse(custom);
+        return parsed.Error is null ? parsed.Command : ExecView.ShCommand;
     }
 
     /// <summary>
@@ -441,229 +524,4 @@ internal sealed class ExecTab : Component<ExecTabProps>
     }
 
     private static string Hex(Windows.UI.Color c) => string.Create(CultureInfo.InvariantCulture, $"#{c.R:x2}{c.G:x2}{c.B:x2}");
-}
-
-/// <summary>
-/// What the Exec tab's terminal handlers act on: the detail session the shell runs in, the terminal page, the bridge between them and
-/// the latest of what the tab rendered. One per mounted tab; its handlers are the same delegates on every render. UI thread only.
-/// </summary>
-internal sealed class ExecLink
-{
-    public ExecLink(DispatcherQueue ui)
-    {
-        Bridge = new TerminalBridge(ui);
-        OnMessage = Received;
-        OnReady = Ready;
-        OnFailed = message => SetWebViewError(message);
-        PageLost = () => OnPageLost();
-    }
-
-    public TerminalBridge Bridge { get; }
-
-    public Action<TerminalMessage> OnMessage { get; }
-
-    public Action<TerminalHandle> OnReady { get; }
-
-    public Action<string> OnFailed { get; }
-
-    public Action PageLost { get; }
-
-    public string ContainerId { get; set; } = "";
-
-    public int Generation { get; set; }
-
-    public bool AcceptsInput { get; set; }
-
-    public TerminalColors? Colors { get; set; }
-
-    public ExecInputNote? Note { get; set; }
-
-    public ImmutableArray<string> LastCommand { get; set; }
-
-    public Action<TerminalSize?> SetSize { get; set; } = _ => { };
-
-    public Action<bool?> SetThemeDark { get; set; } = _ => { };
-
-    public Action<string?> SetWebViewError { get; set; } = _ => { };
-
-    public Action<ExecInputNote?> UpdateNote { get; set; } = _ => { };
-
-    public Action OnPageLost { get; set; } = () => { };
-
-    /// <summary>The tab's own "a shell was started since it was shown", as last rendered, and its setter.</summary>
-    public bool StartedOnce { get; set; }
-
-    public Action<bool> SetStartedOnce { get; set; } = _ => { };
-
-    // Whether the session followed before the current one had lost its connection when it went.
-    private bool _previousLost;
-
-    /// <summary>The detail session the shell runs in; null while none is open for this container.</summary>
-    public ContainerDetailSession? Session { get; private set; }
-
-    /// <summary>The terminal page, once it said ready; null before.</summary>
-    public TerminalHandle? Handle { get; private set; }
-
-    /// <summary>The terminal's fitted size; null before the page said ready.</summary>
-    public TerminalSize? Size { get; private set; }
-
-    /// <summary>
-    /// Attaches the bridge to <paramref name="session"/> when it is this container's, and detaches it from the one before. A new
-    /// session numbers its shells from 1 again, so the bridge starts over; and unless the old one lost its connection, the tab
-    /// starts a shell by itself again (<see cref="ExecView.StartedOnceAfterNewSession"/>).
-    /// </summary>
-    public void Follow(ContainerDetailSession? session)
-    {
-        if (session is not null && session.State.ContainerId != ContainerId)
-            session = null;
-        if (ReferenceEquals(session, Session))
-            return;
-        if (Session is { } previous)
-        {
-            previous.AttachExecOutput(null);
-            _previousLost = previous.State.ConnectionLost;
-        }
-
-        Session = session;
-        if (session is null)
-            return;
-        Bridge.NewSession();
-        var startedOnce = ExecView.StartedOnceAfterNewSession(StartedOnce, _previousLost);
-        if (startedOnce != StartedOnce)
-            SetStartedOnce(startedOnce);
-        session.AttachExecOutput(Bridge);
-    }
-
-    /// <summary>The tab is left: the shell ends and its output goes nowhere.</summary>
-    public void Leave()
-    {
-        if (Session is { } session)
-        {
-            session.StopExec();
-            session.AttachExecOutput(null);
-        }
-
-        Session = null;
-        if (Handle is { } handle)
-            Bridge.Disconnect(handle);
-        Handle = null;
-    }
-
-    /// <summary>The terminal page is off the screen: its handle is dropped and its size forgotten until the next one is ready.</summary>
-    public void TerminalGone()
-    {
-        if (Handle is { } handle)
-            Bridge.Disconnect(handle);
-        Handle = null;
-        Size = null;
-        SetSize(null);
-    }
-
-    private void Ready(TerminalHandle handle)
-    {
-        if (Handle is { } previous && previous != handle)
-            Bridge.Disconnect(previous);
-        Handle = handle;
-        Bridge.Connect(handle);
-        SetThemeDark(handle.IsDark);
-        handle.ThemeChanged = dark => SetThemeDark(dark);
-        if (Colors is { } colors)
-            handle.Post(TerminalProtocol.Theme(colors));
-        handle.Post(TerminalProtocol.Enabled(AcceptsInput));
-        if (AcceptsInput)
-            handle.Focus();
-    }
-
-    private void Received(TerminalMessage message)
-    {
-        switch (message)
-        {
-            case TerminalMessage.Ready ready:
-                SetTerminalSize(ready.Size);
-                break;
-            case TerminalMessage.Resize resize:
-                SetTerminalSize(resize.Size);
-                Session?.ResizeExec(resize.Size);
-                break;
-            case TerminalMessage.Input input when Session is { } session:
-                var outcome = session.SendExecInput(Generation, input.Bytes);
-                var next = ExecInputNotes.AfterInput(Note, outcome, Generation);
-                if (next != Note)
-                {
-                    Note = next;
-                    UpdateNote(next);
-                }
-
-                break;
-            case TerminalMessage.Ack ack:
-                Bridge.Acked(ack.Bytes);
-                break;
-            case TerminalMessage.Copy copy:
-                ContainerParts.CopyToClipboard(copy.Text);
-                break;
-            case TerminalMessage.Paste:
-                _ = PasteAsync();
-                break;
-            case TerminalMessage.Leave:
-                FocusTabStrip();
-                break;
-        }
-    }
-
-    private void SetTerminalSize(TerminalSize size)
-    {
-        Size = size;
-        SetSize(size);
-    }
-
-    /// <summary>The clipboard's text goes to the page, which pastes it as one piece; nothing when it holds no text or too much.</summary>
-    private async Task PasteAsync()
-    {
-        string text;
-        try
-        {
-            var content = Clipboard.GetContent();
-            if (!content.Contains(StandardDataFormats.Text))
-                return;
-            text = await content.GetTextAsync();
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error("reading the clipboard failed", ex);
-            return;
-        }
-
-        if (text.Length == 0 || Handle is not { } handle)
-            return;
-        if (!ExecInputNotes.PasteFits(text))
-        {
-            Note = ExecInputNotes.PasteTooLarge(Generation);
-            UpdateNote(Note);
-            return;
-        }
-
-        handle.Post(TerminalProtocol.PasteText(text));
-    }
-
-    /// <summary>F6 in the terminal: the keyboard focus goes to the tab strip's selected tab.</summary>
-    private void FocusTabStrip()
-    {
-        if (Handle?.XamlRoot?.Content is not DependencyObject root || Find(root, "detail-tabs") is not SelectorBar bar)
-            return;
-        var target = (Control?)bar.SelectedItem ?? bar;
-        target.Focus(FocusState.Keyboard);
-    }
-
-    private static DependencyObject? Find(DependencyObject node, string automationId)
-    {
-        if (AutomationProperties.GetAutomationId(node) == automationId)
-            return node;
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
-        {
-            if (Find(VisualTreeHelper.GetChild(node, i), automationId) is { } found)
-                return found;
-        }
-
-        return null;
-    }
 }

@@ -446,6 +446,19 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
+    public void An_external_terminal_that_did_not_start_shows_its_message_in_the_error_bar_connected_or_not()
+    {
+        const string Message = "An error occurred trying to start process 'docker.exe'. The system cannot find the file specified.";
+        foreach (var before in new[] { Connected(), EngineState.Initial })
+        {
+            var (state, effects) = Reduce(before, new ExternalTerminalFailed(Message));
+
+            Assert.Equal(before with { ActionError = Message }, state);
+            Assert.Empty(effects);
+        }
+    }
+
+    [Fact]
     public void A_failed_clipboard_copy_shows_in_the_error_bar_connected_or_not()
     {
         foreach (var before in new[] { Connected(), EngineState.Initial })

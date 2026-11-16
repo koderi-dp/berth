@@ -83,6 +83,15 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
 
         // Reactor keeps a page it navigated away from, so the list keeps its search and scroll; such a page does nothing.
         var active = nav.CurrentRoute == Props.Route;
+
+        // "Open terminal" on the list: the page, new or kept, shows the tab it asked for once it is the one shown.
+        UseEffect(
+            () =>
+            {
+                if (active && DetailTabRequest.Take(id) is { } requested)
+                    setTab(requested);
+            },
+            active);
         var connected = state.Status == ConnectionStatus.Connected;
         var row = UseMemo(() => FindRow(state, id), state.Containers, state.Pending);
         var mine = detail?.ContainerId == id ? detail : null;
@@ -170,7 +179,9 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
 
         void Run(RowAction action)
         {
-            if (action.Kind == RowActionKind.Delete && row is not null)
+            if (action.Kind == RowActionKind.OpenTerminal)
+                setTab(DetailTab.Exec);
+            else if (action.Kind == RowActionKind.Delete && row is not null)
                 setDeleteRequest(DeleteRequest.For((ContainerRow[])[row]));
             else if (action.EngineAction is { } engineAction && action.Ids.Length > 0)
                 AppServices.Current.Session.Dispatch(new ActionRequested(action.Ids, engineAction));

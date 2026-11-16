@@ -152,6 +152,9 @@ public static partial class SessionReducer
             case ClipboardCopyFailed:
                 return (state with { ActionError = ClipboardFailedText }, None);
 
+            case ExternalTerminalFailed failure:
+                return (state with { ActionError = failure.Message }, None);
+
             case ActionErrorDismissed when state.ActionError is not null:
                 return (state with { ActionError = null }, None);
 

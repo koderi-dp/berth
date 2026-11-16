@@ -47,6 +47,9 @@ internal sealed class AppServices
 
     public AppSettings Settings => Volatile.Read(ref _settings);
 
+    /// <summary>The connection the session runs on (the first one when the settings name none).</summary>
+    public ConnectionProfile ActiveConnectionProfile => ActiveConnection(Settings);
+
     /// <summary>The settings file was damaged at start: it was kept as <c>settings.bad.json</c> and Berth started with defaults.</summary>
     public bool SettingsWereSetAside { get; }
 
