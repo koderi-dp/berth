@@ -56,7 +56,8 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
                             Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text), PullFigure (a pull's progress
-                            line), RunDraft (the run dialog's fields, checks and create request); detail page: LogView, LogSearch,
+                            line), PullReference (the pull dialog's field check), RunDraft (the run dialog's fields, checks
+                            and create request); detail page: LogView, LogSearch,
                             InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
                             and CPU column texts), DetailPage (the detail page's lifecycle: when it opens, closes, refreshes
                             or leaves its session, and which state its tabs show)
@@ -82,8 +83,8 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
                             above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
-                            row and the detail header), ListPage (a list page's sections, usage line, toolbar, search box, bars
-                            and its shortcuts) and ListTable (columns with wide and compact widths, header with sortable
+                            row and the detail header), ListPage (a list page's sections, usage line, toolbar (its
+                            secondary buttons in a "more" menu below 1300 effective px), search box, bars and its shortcuts) and ListTable (columns with wide and compact widths, header with sortable
                             titles, rows, the virtualized table, loading, failed-load and empty states, TableHandlers for a
                             table component's callbacks), shared by the four lists;
                             ShellKeys (the app's shortcuts at the window root, Ctrl+F, F5, Delete, Escape, Alt+Left,

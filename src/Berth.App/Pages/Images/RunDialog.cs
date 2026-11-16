@@ -47,6 +47,9 @@ internal sealed class RunDialog : EngineStateComponent<RunDialogProps>
         var (sent, setSent) = UseState(false);
         var (open, setOpen) = UseState(true);
         var target = UseRef<string?>(null);
+        // From the click until the session has taken the run: the run result before the click, so a second click or Enter in between
+        // sends nothing (the reducer drops a second run only once the first is under way).
+        var asked = UseRef<(bool Waiting, ContainerRun? Before)>((false, null));
         var outcomeView = this.UseElementRef<FrameworkElement>();
 
         var connected = state.Status == ConnectionStatus.Connected;
@@ -96,12 +99,15 @@ internal sealed class RunDialog : EngineStateComponent<RunDialogProps>
 
         var published = UseMemo(() => RunDraft.PublishedPorts(state.Containers), state.Containers);
         var errors = draft.Validate(published);
-        var canRun = connected && errors.IsValid && !runInProgress && started is null && inspect is { IsLoading: false };
+        if (asked.Current.Waiting && (!connected || (!ReferenceEquals(state.Run, asked.Current.Before) && !runInProgress)))
+            asked.Current = (false, null);
+        var canRun = connected && errors.IsValid && !runInProgress && started is null && inspect is { IsLoading: false } && !asked.Current.Waiting;
 
         void Run()
         {
-            if (!canRun)
+            if (!canRun || asked.Current.Waiting)
                 return;
+            asked.Current = (true, AppServices.Current.Session.State.Run);
             setSent(true);
             AppServices.Current.Session.Dispatch(new RunContainerRequested(draft.ToRequest()));
         }

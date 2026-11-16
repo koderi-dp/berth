@@ -18,7 +18,11 @@ namespace Berth.Pages.Images;
 /// Which pull row takes the focus: the one of <paramref name="FocusKey"/>, each time <paramref name="FocusRequest"/> goes up (the user
 /// asked to pull a reference that is already being pulled).
 /// </summary>
-internal sealed record PullRowsProps(string? FocusKey, int FocusRequest);
+internal sealed record PullRowsProps(string? FocusKey, int FocusRequest)
+{
+    /// <summary>Called with a pull's reference after its Cancel was clicked; one instance kept by the page, so the props stay equal.</summary>
+    public Action<string>? OnCancelled { get; init; }
+}
 
 /// <summary>
 /// The pulls the user started, at the top of the images table, in the order they started. It follows the engine state itself, so a
@@ -37,7 +41,7 @@ internal sealed class PullRows : EngineStateComponent<PullRowsProps>
         return FlexColumn(
             [
                 .. ordered.Select(pull => Component<PullRow, PullRowProps>(
-                        new(pull, pull.Reference == Props.FocusKey ? Props.FocusRequest : 0))
+                        new(pull, pull.Reference == Props.FocusKey ? Props.FocusRequest : 0, Props.OnCancelled))
                     .WithKey(pull.Reference)),
             ]) with
         {
@@ -47,7 +51,7 @@ internal sealed class PullRows : EngineStateComponent<PullRowsProps>
 }
 
 /// <summary>One pull and when it should take the focus (a count that goes up, 0 for never).</summary>
-internal sealed record PullRowProps(ImagePull Pull, int FocusRequest);
+internal sealed record PullRowProps(ImagePull Pull, int FocusRequest, Action<string>? OnCancelled);
 
 /// <summary>
 /// A pull as a row: the reference, its progress line and bar, and Cancel; once failed or stopped, the engine's message (or that the
@@ -95,7 +99,11 @@ internal sealed class PullRow : Component<PullRowProps>
             .Margin(0, 8, 12, 8);
 
         Element? buttons = running
-            ? Button("Cancel", () => Send(new PullCancelRequested(reference)))
+            ? Button("Cancel", () =>
+                {
+                    Send(new PullCancelRequested(reference));
+                    Props.OnCancelled?.Invoke(reference);
+                })
                 .AutomationId("cancel-pull-" + reference)
                 .AutomationName("Cancel the pull of " + reference)
                 .Ref(focusTarget)

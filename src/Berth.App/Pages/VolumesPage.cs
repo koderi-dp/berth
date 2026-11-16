@@ -38,6 +38,7 @@ internal sealed class VolumesPage : ListPageComponent
     public override Element Render()
     {
         var state = UseEngineState();
+        var compactToolbar = !UseBreakpoint(ListPage.ToolbarWideMinWidth);
         var (view, updateView) = UseListView(AppRoute.Volumes, new ResourceListView<UsageFilter, VolumeColumn>(UsageFilter.All, VolumeRows.DefaultSort));
         var (filter, sort) = (view.Filter, view.Sort);
         var searchBox = UseListSearch();
@@ -89,14 +90,14 @@ internal sealed class VolumesPage : ListPageComponent
                 .AutomationId("volume-filter")
                 .AutomationName("Show")
                 .MinWidth(160),
-            Button("Create", () => setDialog(new CreateDialogOpen()))
-                .AccentButton()
-                .AutomationId("create-volume")
-                .IsEnabled(connected),
-            Button("Remove unused volumes…", () => setDialog(new PruneDialogOpen(Confirmations.PruneVolumes(state))))
-                .AutomationId("remove-unused-volumes")
-                .ToolTip("Remove every volume no container uses, and the data in it")
-                .IsEnabled(connected && removal is not { IsRunning: true }));
+            compactToolbar,
+            new ToolbarAction("Create", "create-volume", () => setDialog(new CreateDialogOpen()), connected),
+            new ToolbarAction(
+                "Remove unused volumes…",
+                "remove-unused-volumes",
+                () => setDialog(new PruneDialogOpen(Confirmations.PruneVolumes(state))),
+                connected && removal is not { IsRunning: true },
+                "Remove every volume no container uses, and the data in it"));
 
         var bulk = ListPage.BulkBar(
             RowSelection.SelectedCount(rows, checkedKeys),

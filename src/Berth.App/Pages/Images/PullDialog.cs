@@ -55,7 +55,7 @@ internal sealed class PullDialog : EngineStateComponent<PullDialogProps>
 
         void Pull()
         {
-            if (key is null || !connected)
+            if (key is null || !connected || !PullReference.CanPull(text))
                 return;
             if (key != started && state.Pulls.TryGetValue(key, out var other) && other.Status == PullStatus.Running)
             {
@@ -72,7 +72,7 @@ internal sealed class PullDialog : EngineStateComponent<PullDialogProps>
             AppServices.Current.Session.Dispatch(new PullRequested(text));
         }
 
-        var invalid = text.Trim().Length > 0 && key is null;
+        var error = PullReference.Error(text);
         Element? status = null;
         if (pull is not null)
         {
@@ -91,7 +91,7 @@ internal sealed class PullDialog : EngineStateComponent<PullDialogProps>
                     .AutomationId("pull-reference")
                     .AutomationName("Image")
                     .WithKey("reference"),
-                invalid ? DialogParts.FieldError("Enter an image name, with an optional :tag or @digest.").WithKey("error") : null,
+                error is not null ? DialogParts.FieldError(error).AutomationId("pull-reference-error").WithKey("error") : null,
                 status)
             .MinWidth(400);
 
@@ -100,7 +100,7 @@ internal sealed class PullDialog : EngineStateComponent<PullDialogProps>
                 IsOpen = open,
                 CloseButtonText = running ? "Close" : "Cancel",
                 DefaultButton = ContentDialogButton.Primary,
-                IsPrimaryButtonEnabled = connected && key is not null && !(running && key == started),
+                IsPrimaryButtonEnabled = connected && key is not null && PullReference.CanPull(text) && !(running && key == started),
                 OnClosed = _ =>
                 {
                     // A failure was read here; it does not also stay in the list.

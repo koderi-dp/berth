@@ -10,7 +10,11 @@ using static Microsoft.UI.Reactor.Factories;
 namespace Berth.Pages.Images;
 
 /// <summary>What the images table calls back (see <see cref="TableHandlers{TRow, TSort}"/>).</summary>
-internal sealed class ImageTableHandlers : TableHandlers<ImageRow, ImageColumn>;
+internal sealed class ImageTableHandlers : TableHandlers<ImageRow, ImageColumn>
+{
+    /// <summary>A pull's Cancel was clicked (its reference).</summary>
+    public Action<string> PullCancelled { get; set; } = _ => { };
+}
 
 /// <summary>
 /// What the images table shows: the rows the filter and search keep (a memoized list), the checked keys, the layout, whether the

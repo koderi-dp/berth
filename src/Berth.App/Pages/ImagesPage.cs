@@ -48,6 +48,7 @@ internal sealed class ImagesPage : ListPageComponent
     {
         var state = UseEngineState();
         var compact = !UseBreakpoint(ImageTable.WideLayoutMinWidth);
+        var compactToolbar = !UseBreakpoint(ListPage.ToolbarWideMinWidth);
         var (view, updateView) = UseListView(AppRoute.Images, new ResourceListView<ImageFilter, ImageColumn>(ImageFilter.All, ImageRows.DefaultSort));
         var (filter, sort) = (view.Filter, view.Sort);
         var searchBox = UseListSearch();
@@ -55,6 +56,9 @@ internal sealed class ImagesPage : ListPageComponent
         var (dialog, setDialog) = UseState<Dialog?>(null);
         var (pullFocus, setPullFocus) = UseState(NoPullFocus);
         var handlers = UseMemo(() => new ImageTableHandlers(), Array.Empty<object>());
+        // The pull whose Cancel was clicked: the engine may still finish it, so a note says so until it is closed.
+        var (cancelledPull, setCancelledPull) = UseState<string?>(null);
+        var onPullCancelled = UseMemo(() => new Action<string>(reference => handlers.PullCancelled(reference)), Array.Empty<object>());
 
         var connected = state.Status == ConnectionStatus.Connected;
         var all = UseMemo(() => ImageRows.From(state), state.Images, state.Containers);
@@ -85,6 +89,7 @@ internal sealed class ImagesPage : ListPageComponent
         }
 
         handlers.SetChecked = setChecked;
+        handlers.PullCancelled = reference => setCancelledPull(reference);
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });
         handlers.Act = (row, action) =>
         {
@@ -127,14 +132,14 @@ internal sealed class ImagesPage : ListPageComponent
                 .AutomationId("image-filter")
                 .AutomationName("Show")
                 .MinWidth(160),
-            Button("Pull image", () => setDialog(new PullDialogOpen()))
-                .AccentButton()
-                .AutomationId("pull-image")
-                .IsEnabled(connected),
-            Button("Remove unused images…", () => setDialog(new PruneDialogOpen(Confirmations.PruneImages(state, danglingOnly: false))))
-                .AutomationId("remove-unused-images")
-                .ToolTip("Remove every image no container uses")
-                .IsEnabled(connected && removal is not { IsRunning: true }));
+            compactToolbar,
+            new ToolbarAction("Pull image", "pull-image", () => setDialog(new PullDialogOpen()), connected),
+            new ToolbarAction(
+                "Remove unused images…",
+                "remove-unused-images",
+                () => setDialog(new PruneDialogOpen(Confirmations.PruneImages(state, danglingOnly: false))),
+                connected && removal is not { IsRunning: true },
+                "Remove every image no container uses"));
 
         var selected = RowSelection.SelectedCount(rows, checkedKeys);
         var bulk = ListPage.BulkBar(
@@ -148,10 +153,21 @@ internal sealed class ImagesPage : ListPageComponent
             state,
             ListPage.UsageLine(ImageRows.UsageLine(state), "image-usage", state),
             toolbar,
-            ListPage.Bars(removalPanel, bulk),
-            Table(state, rows, filter, checkedKeys, compact, connected, sort, pullFocus, handlers),
+            ListPage.Bars(removalPanel, bulk, CancelledNote(cancelledPull, () => setCancelledPull(null))),
+            Table(state, rows, filter, checkedKeys, compact, connected, sort, pullFocus with { OnCancelled = onPullCancelled }, handlers),
             DialogOf(dialog, () => setDialog(null), FocusPull, OpenContainer, view));
     }
+
+    /// <summary>After a pull's Cancel: Berth stopped following it, but the engine may still finish downloading the image (it has no cancel).</summary>
+    private static Element? CancelledNote(string? reference, Action onClose) =>
+        reference is null
+            ? null
+            : (InfoBar(message: $"Stopped following the pull of {reference}. The engine may still finish downloading the image.") with { IsOpen = true })
+                .Informational()
+                .IsClosable()
+                .Closed(onClose)
+                .AutomationId("pull-cancelled")
+                .Flex(shrink: 0);
 
     private static Element Table(
         EngineState state,

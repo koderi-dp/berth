@@ -111,22 +111,27 @@ public sealed class EngineClient : IEngineApi
     public async Task<ContainerInspection> InspectContainerAsync(string id, CancellationToken ct)
     {
         using var response = await SendAsync(HttpMethod.Get, ContainerPath(id, "/json"), PlainTimeout, ct).ConfigureAwait(false);
-        var body = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        var (wire, raw) = await ReadWithRawAsync(response, EngineJson.Default.WireInspect, ct).ConfigureAwait(false);
+        return new ContainerInspection(ToDetails(wire), raw);
+    }
 
-        WireInspect wire;
-        string raw;
+    /// <summary>
+    /// Reads an inspect answer: the record and the engine's whole answer indented (for a raw JSON view). An unreadable or empty answer
+    /// throws as <see cref="Unreadable"/> says.
+    /// </summary>
+    private static async Task<(T Wire, string Raw)> ReadWithRawAsync<T>(HttpResponseMessage response, JsonTypeInfo<T> type, CancellationToken ct)
+    {
+        var body = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         try
         {
             using var document = JsonDocument.Parse(body);
-            wire = document.Deserialize(EngineJson.Default.WireInspect) ?? throw new JsonException("The answer was empty.");
-            raw = Indented(document);
+            var wire = document.Deserialize(type) ?? throw new JsonException("The answer was empty.");
+            return (wire, Indented(document));
         }
         catch (JsonException ex)
         {
             throw Unreadable(response, ex);
         }
-
-        return new ContainerInspection(ToDetails(wire), raw);
     }
 
     /// <summary>
@@ -208,21 +213,7 @@ public sealed class EngineClient : IEngineApi
     public async Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct)
     {
         using var response = await SendAsync(HttpMethod.Get, ImagePath(idOrName, "/json"), PlainTimeout, ct).ConfigureAwait(false);
-        var body = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-
-        WireImageInspect wire;
-        string raw;
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-            wire = document.Deserialize(EngineJson.Default.WireImageInspect) ?? throw new JsonException("The answer was empty.");
-            raw = Indented(document);
-        }
-        catch (JsonException ex)
-        {
-            throw Unreadable(response, ex);
-        }
-
+        var (wire, raw) = await ReadWithRawAsync(response, EngineJson.Default.WireImageInspect, ct).ConfigureAwait(false);
         return new ImageInspection(ToImageDetails(wire), raw);
     }
 

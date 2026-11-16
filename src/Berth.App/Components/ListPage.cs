@@ -14,6 +14,9 @@ namespace Berth.Components;
 /// order, the toolbar, the search box, the bulk bar and what the page does with the app's shortcuts. The table is
 /// <see cref="ListTable"/>; the view state kept across a page being built again is <c>ListPageComponent.UseListView</c>.
 /// </summary>
+/// <summary>A toolbar button: its label, AutomationId, what it does, whether it can act now, and its tooltip.</summary>
+internal sealed record ToolbarAction(string Label, string AutomationId, Action OnClick, bool IsEnabled, string? ToolTip = null);
+
 internal static class ListPage
 {
     /// <summary>The search box's width in the toolbar.</summary>
@@ -62,36 +65,98 @@ internal static class ListPage
     }
 
     /// <summary>
-    /// The row under the title: the <paramref name="search"/> box, an optional <paramref name="filter"/> control beside it, and
-    /// the page's <paramref name="buttons"/> (such as Create) at the right end.
+    /// The window is at least this wide (in effective pixels) when every toolbar button is a button; below it the toolbar is compact.
+    /// The images toolbar needs about 1170 with the sidebar open; the margin is for larger text.
     /// </summary>
-    public static Element Toolbar(Element search, Element? filter, params Element[] buttons)
+    public const double ToolbarWideMinWidth = 1300;
+
+    /// <summary>The search box is never narrower than this in a compact toolbar.</summary>
+    private const double SearchMinWidth = 160;
+
+    /// <summary>The row under the title without buttons: the <paramref name="search"/> box and an optional <paramref name="filter"/>.</summary>
+    public static Element Toolbar(Element search, Element? filter) =>
+        (FlexRow(search, filter)
+            with
+            {
+                AlignItems = FlexAlign.Center,
+                ColumnGap = 24,
+            })
+            .Flex(shrink: 0);
+
+    /// <summary>
+    /// The row under the title: the <paramref name="search"/> box, an optional <paramref name="filter"/> control beside it, and the
+    /// page's buttons at the right end: its <paramref name="primary"/> action (accent) and the <paramref name="secondary"/> ones. When
+    /// <paramref name="compact"/> (a window narrower than <see cref="ToolbarWideMinWidth"/>) the secondary actions move into one "more"
+    /// menu (AutomationId <c>toolbar-more</c>) and the search box narrows down to <see cref="SearchMinWidth"/>; nothing is dropped.
+    /// </summary>
+    public static Element Toolbar(Element search, Element? filter, bool compact, ToolbarAction? primary, params ToolbarAction[] secondary)
     {
-        if (buttons.Length == 0)
-        {
-            return (FlexRow(search, filter)
-                with
-                {
-                    AlignItems = FlexAlign.Center,
-                    ColumnGap = 24,
-                })
-                .Flex(shrink: 0);
-        }
+        var main = primary is null ? null : ActionButton(primary, accent: true);
+        Element?[] buttons = compact && secondary.Length > 0
+            ? [main, More(secondary)]
+            : [main, .. secondary.Select(a => (Element?)ActionButton(a))];
 
         // A grid, not a flex row: a flex row of buttons takes the whole width it is offered, which left the search box and the filter
-        // none. The buttons take what they need at the right end; the search and the filter keep their widths at the left.
+        // none. The buttons take what they need at the right end; the search and the filter keep their widths at the left (compact: the
+        // search box gives up width first).
+        var searchCell = compact
+            // A flex row in the cell: the box keeps its usual width while there is room, at the left, and shrinks to its minimum when not.
+            ? FlexRow(search.Width(double.NaN).MinWidth(SearchMinWidth).Flex(grow: 0, shrink: 1, basis: SearchWidth))
+            : search;
         return Grid(
-                ToolbarColumns,
+                compact ? CompactToolbarColumns : ToolbarColumns,
                 ToolbarRows,
-                search.VAlign(VerticalAlignment.Center).Margin(0, 0, 24, 0).Grid(column: 0),
-                filter?.VAlign(VerticalAlignment.Center).Margin(0, 0, 24, 0).Grid(column: 1),
-                HStack(8, buttons).VAlign(VerticalAlignment.Center).Grid(column: 3))
+                searchCell.VAlign(VerticalAlignment.Center).Margin(0, 0, compact ? 16 : 24, 0).Grid(column: 0),
+                filter?.VAlign(VerticalAlignment.Center).Margin(0, 0, compact ? 16 : 24, 0).Grid(column: 1),
+                HStack(8, [.. buttons.OfType<Element>()]).VAlign(VerticalAlignment.Center).Grid(column: 3))
             .Flex(shrink: 0);
     }
 
     private static readonly GridSize[] ToolbarColumns = [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto];
 
+    /// <summary>Compact: the search box's column takes what is left (up to its usual width), so the buttons are never pushed out.</summary>
+    private static readonly GridSize[] CompactToolbarColumns = [GridSize.Star(), GridSize.Auto, GridSize.Px(0), GridSize.Auto];
+
     private static readonly GridSize[] ToolbarRows = [GridSize.Auto];
+
+    // The compact toolbar's "more" menus, by the actions' AutomationIds: built again only when a label or enabled state changes, so the
+    // button is not handed a new menu on every render; each item calls its action's latest OnClick. UI thread only.
+    private static readonly Dictionary<string, (string Shape, Element Menu, Action[] Latest)> Menus = [];
+
+    private static Element ActionButton(ToolbarAction action, bool accent = false)
+    {
+        var button = Button(action.Label, action.OnClick);
+        Element shown = (accent ? button.AccentButton() : button).AutomationId(action.AutomationId).IsEnabled(action.IsEnabled);
+        return action.ToolTip is { } tip ? shown.ToolTip(tip) : shown;
+    }
+
+    private static Element More(ToolbarAction[] actions)
+    {
+        var key = string.Join("|", actions.Select(a => a.AutomationId));
+        var shape = string.Join("|", actions.Select(a => a.Label + (a.IsEnabled ? "+" : "-")));
+        if (!Menus.TryGetValue(key, out var cached) || cached.Shape != shape)
+        {
+            var latest = new Action[actions.Length];
+            var menu = MenuItems(
+            [
+                .. actions.Select((a, i) => (Microsoft.UI.Reactor.Core.MenuFlyoutItemBase)(MenuItem(a.Label, () => latest[i]()) with
+                {
+                    IsEnabled = a.IsEnabled,
+                    Description = a.ToolTip,
+                })),
+            ]);
+            cached = (shape, menu, latest);
+            Menus[key] = cached;
+        }
+
+        for (var i = 0; i < actions.Length; i++)
+            cached.Latest[i] = actions[i].OnClick;
+
+        return Widgets.IconButton(Glyphs.More, "More actions", null)
+            .AutomationId("toolbar-more")
+            .WithFlyout(cached.Menu)
+            .IsEnabled(actions.Any(a => a.IsEnabled));
+    }
 
     /// <summary>
     /// The list's search box (AutomationId <c>search</c>): uncontrolled (<see cref="Widgets.SearchBox"/>), so a page that comes
@@ -147,13 +212,13 @@ internal static class ListPage
             .Flex(shrink: 0);
 
     /// <summary>
-    /// The bars above the table: the batch of removes (<see cref="RemovalPanel"/>) above the bulk bar, each keyed; null when neither is
-    /// there.
+    /// The bars above the table: an optional <paramref name="note"/> (such as a pull no longer followed), the batch of removes
+    /// (<see cref="RemovalPanel"/>) and the bulk bar, each keyed; null when none is there.
     /// </summary>
-    public static Element? Bars(Element? removalPanel, Element? bulkBar) =>
-        removalPanel is null && bulkBar is null
+    public static Element? Bars(Element? removalPanel, Element? bulkBar, Element? note = null) =>
+        removalPanel is null && bulkBar is null && note is null
             ? null
-            : (FlexColumn(removalPanel?.WithKey("removal"), bulkBar?.WithKey("selection")) with { RowGap = 12 }).Flex(shrink: 0);
+            : (FlexColumn(note?.WithKey("note"), removalPanel?.WithKey("removal"), bulkBar?.WithKey("selection")) with { RowGap = 12 }).Flex(shrink: 0);
 
     /// <summary>
     /// What a list page does with the app's shortcuts: Ctrl+F focuses its search box with the text selected, F5 reloads every list
