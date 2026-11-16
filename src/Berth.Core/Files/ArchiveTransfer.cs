@@ -1,4 +1,5 @@
 using Berth.Engine;
+using Berth.Engine.Models;
 
 namespace Berth.Files;
 
@@ -56,6 +57,7 @@ public static class ArchiveTransfer
         Action<long> sized,
         CancellationToken ct)
     {
+        await CheckFolderAsync(api, containerId, destination, ct).ConfigureAwait(false);
         sized(sources.Sum(SizeOf));
         TransferSummary? summary = null;
         await api.PutArchiveAsync(
@@ -64,6 +66,29 @@ public static class ArchiveTransfer
             async (stream, token) => summary = await ArchiveWriter.WriteAsync(stream, sources, progress, token).ConfigureAwait(false),
             ct).ConfigureAwait(false);
         return summary ?? TransferSummary.Empty;
+    }
+
+    /// <summary>
+    /// Makes sure the upload's folder is there before any byte is sent: the engine refuses a missing folder at once and closes the
+    /// connection while the tar is still being written, which reads as a dropped connection rather than its message (seen on the daily
+    /// engine even with <c>Expect: 100-continue</c>). A missing folder throws the engine's own message (from the archive call, whose
+    /// error answer has a body; the stat's has none); a path that is not a folder throws <see cref="NotAFolderException"/>.
+    /// </summary>
+    private static async Task CheckFolderAsync(IEngineApi api, string containerId, ContainerPath destination, CancellationToken ct)
+    {
+        PathStat stat;
+        try
+        {
+            stat = await api.StatPathAsync(containerId, destination.Value, ct).ConfigureAwait(false);
+        }
+        catch (EngineException ex) when (ex.StatusCode == 404)
+        {
+            await using var _ = await api.GetArchiveAsync(containerId, destination.Value, ct).ConfigureAwait(false);
+            throw;
+        }
+
+        if (!stat.IsDirectory && !stat.IsLink)
+            throw new NotAFolderException(destination);
     }
 
     private static long SizeOf(string path)

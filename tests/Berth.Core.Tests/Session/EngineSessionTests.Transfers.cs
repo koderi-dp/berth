@@ -132,6 +132,7 @@ public sealed partial class EngineSessionTests
             var file = Path.Combine(folder, "notes.txt");
             await File.WriteAllTextAsync(file, "hello");
             var api = new FakeEngineApi();
+            api.PathStats["/tmp/berth-check"] = new PathStat("berth-check", 4096, PathStat.DirectoryBit | 0x1ed, null, "");
             await using var h = Harness.With(api);
             await h.ConnectAsync();
 
@@ -143,6 +144,30 @@ public sealed partial class EngineSessionTests
             await using var reader = new ArchiveReader(new MemoryStream(tar));
             Assert.Equal("notes.txt", (await reader.NextAsync(CancellationToken.None))!.Name);
             Assert.Equal((1, 5L, (long?)5), (Assert.Single(state.Transfers.Values).Summary!.Files, state.Transfers.Values.Single().Summary!.Bytes, state.Transfers.Values.Single().Total));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task An_upload_into_a_missing_folder_fails_with_the_engines_message_before_sending_anything()
+    {
+        var folder = TransferFolder();
+        try
+        {
+            var file = Path.Combine(folder, "notes.txt");
+            await File.WriteAllTextAsync(file, "hello");
+            var api = new FakeEngineApi();
+            await using var h = Harness.With(api);
+            await h.ConnectAsync();
+
+            h.Session.Dispatch(new TransferRequested(new UploadRequest("a", [file], ContainerPath.Root.Join("nope"))));
+            var state = await h.WaitFor(s => s.Transfers.Values.Any(t => t.Status == TransferStatus.Failed));
+
+            Assert.Equal("Could not find the file /nope in container a", Assert.Single(state.Transfers.Values).Error);
+            Assert.Empty(api.Uploads);
         }
         finally
         {
