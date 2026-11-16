@@ -43,8 +43,8 @@ internal sealed record ExecTabProps(
 
 /// <summary>
 /// The "Exec" tab of a container's detail page: a terminal connected to a shell in the container. A toolbar with the shell picker and
-/// the terminal's size, a line for the shell's state, and the terminal filling the rest. The shell starts by itself when the tab is
-/// shown and ends when it is left. What the tab shows and says is decided in <see cref="ExecView"/>; the bytes travel through a
+/// the terminal's size, a line for the shell's state, and the terminal filling the rest. A fixed shell (sh, bash, ash) starts by
+/// itself when the tab is shown; a custom command runs only when the user runs it. The shell ends when the tab is left. What the tab shows and says is decided in <see cref="ExecView"/>; the bytes travel through a
 /// <see cref="TerminalBridge"/> and never pass through the state.
 /// </summary>
 internal sealed class ExecTab : Component<ExecTabProps>
@@ -166,11 +166,20 @@ internal sealed class ExecTab : Component<ExecTabProps>
             },
             Array.Empty<object>());
 
-        // A shell starts by itself once the terminal is ready, when the tab is shown on a running container.
+        // A fixed shell starts by itself once the terminal is ready, when the tab is shown on a running container; a custom command
+        // waits for Run.
         UseEffect(
             () =>
             {
-                if (size is not null && ExecView.ShouldStartByItself(view, startedOnce))
+                if (size is null)
+                    return;
+                var custom = choice.IsCustom;
+#if DEBUG
+                // BERTH_EXEC_COMMAND: the tab it opened runs that command once, as if Run had been pressed.
+                if (custom && ExecView.ShouldStartByItself(view, startedOnce, custom: false) && DebugStart.TakeExecCommandRun())
+                    custom = false;
+#endif
+                if (ExecView.ShouldStartByItself(view, startedOnce, custom))
                     StartChosen(choice, props.CustomCommand);
             },
             view.Kind,

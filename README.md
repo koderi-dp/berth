@@ -50,7 +50,9 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 - **Exec: a terminal in the container.** The Exec tab of a running container starts a shell
   and shows it in a terminal (xterm.js, bundled with the app; it works with no network). The
   picker above it chooses `sh` (the default), `bash`, `ash` or a custom command; choosing
-  another ends the shell and starts the new one. The terminal follows the window's size, its
+  another ends the shell and starts the new one. `sh`, `bash` and `ash` start by themselves
+  whenever the tab is shown; a custom command runs only when Run (or Enter) is pressed, never
+  again by itself when the tab or the page is shown again. The terminal follows the window's size, its
   colours follow the light or dark theme, and the size is shown above it. While the terminal
   has the keyboard, every key goes to the shell, Escape and Alt+Left included; F6 leaves the
   terminal for the tab strip. Ctrl+C copies when text is selected and interrupts otherwise

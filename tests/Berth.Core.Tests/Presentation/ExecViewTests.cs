@@ -190,11 +190,21 @@ public sealed class ExecViewTests
         var ready = ExecView.For(Detail(), waiting: false, startedOnce: false);
         var lost = ExecView.For(Detail(), waiting: false, startedOnce: true);
 
-        Assert.True(ExecView.ShouldStartByItself(ready, startedOnce: false));
-        Assert.False(ExecView.ShouldStartByItself(ready, startedOnce: true));
-        Assert.False(ExecView.ShouldStartByItself(lost, startedOnce: true));
-        Assert.False(ExecView.ShouldStartByItself(ExecView.For(Detail(running: false), false, false), startedOnce: false));
-        Assert.False(ExecView.ShouldStartByItself(ExecView.For(Detail(), waiting: true, startedOnce: false), startedOnce: false));
+        Assert.True(ExecView.ShouldStartByItself(ready, startedOnce: false, custom: false));
+        Assert.False(ExecView.ShouldStartByItself(ready, startedOnce: true, custom: false));
+        Assert.False(ExecView.ShouldStartByItself(lost, startedOnce: true, custom: false));
+        Assert.False(ExecView.ShouldStartByItself(ExecView.For(Detail(running: false), false, false), startedOnce: false, custom: false));
+        Assert.False(ExecView.ShouldStartByItself(ExecView.For(Detail(), waiting: true, startedOnce: false), startedOnce: false, custom: false));
+    }
+
+    [Fact]
+    public void A_custom_command_never_starts_by_itself_only_when_run()
+    {
+        // Showing the tab again, the page again, a start or resume from the tab, or "Open terminal" on the row must not run an
+        // arbitrary command again, nor one typed and never run.
+        var ready = ExecView.For(Detail(), waiting: false, startedOnce: false);
+
+        Assert.False(ExecView.ShouldStartByItself(ready, startedOnce: false, custom: true));
     }
 
     [Fact]

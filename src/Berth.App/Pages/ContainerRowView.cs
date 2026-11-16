@@ -94,7 +94,7 @@ internal static class ContainerRowView
             }
             else if (other.Kind == RowActionKind.OpenTerminal)
             {
-                // The page opens on the Exec tab, which starts a shell by itself.
+                // The page opens on the Exec tab, which starts a fixed shell by itself (a custom command waits for Run).
                 Detail.DetailTabRequest.Set(row.Id, DetailTab.Exec);
                 callbacks.ViewDetails(row);
             }

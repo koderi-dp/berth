@@ -100,11 +100,14 @@ public static class ExecView
     public static string SizeName(Engine.Models.TerminalSize size) =>
         string.Create(CultureInfo.InvariantCulture, $"Terminal size: {size.Columns} columns, {size.Rows} rows");
 
-    /// <summary>Whether the tab starts a shell itself: when it is ready and has not started one since it was shown.</summary>
-    public static bool ShouldStartByItself(ExecViewModel view, bool startedOnce)
+    /// <summary>
+    /// Whether the tab starts a shell itself: when it is ready, has not started one since it was shown, and a fixed shell is chosen.
+    /// A <paramref name="custom"/> command is arbitrary (it could change the container), so it runs only when the user runs it.
+    /// </summary>
+    public static bool ShouldStartByItself(ExecViewModel view, bool startedOnce, bool custom)
     {
         ArgumentNullException.ThrowIfNull(view);
-        return view.Kind == ExecViewKind.Ready && !startedOnce;
+        return view.Kind == ExecViewKind.Ready && !startedOnce && !custom;
     }
 
     /// <summary>

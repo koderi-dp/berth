@@ -12,6 +12,7 @@ internal static class DebugStart
 {
     private static string? _containerToOpen = Environment.GetEnvironmentVariable("BERTH_OPEN_EXEC") is { Length: > 0 } name ? name : null;
     private static string? _execTabFor;
+    private static bool _execCommandRun = Environment.GetEnvironmentVariable("BERTH_EXEC_COMMAND") is { Length: > 0 };
 
     /// <summary>The command the opened Exec tab runs as a custom command; null for the default shell.</summary>
     public static string? ExecCommand { get; } = Environment.GetEnvironmentVariable("BERTH_EXEC_COMMAND") is { Length: > 0 } command ? command : null;
@@ -27,6 +28,18 @@ internal static class DebugStart
         _containerToOpen = null;
         _execTabFor = match.Id;
         return match.Id;
+    }
+
+    /// <summary>
+    /// Whether the Exec tab runs <see cref="ExecCommand"/> without Run being pressed: once, for the first tab ready to (a custom command
+    /// never starts by itself otherwise).
+    /// </summary>
+    public static bool TakeExecCommandRun()
+    {
+        if (!_execCommandRun)
+            return false;
+        _execCommandRun = false;
+        return true;
     }
 
     /// <summary>Whether the page of <paramref name="containerId"/> opens on the Exec tab: once, for the container the switch opened.</summary>
