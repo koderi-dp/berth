@@ -242,6 +242,134 @@ public sealed class DetailReducerTests
             effects);
     }
 
+    /// <summary>The same inspection as read between a container's exit and its next start: not running, or restarting.</summary>
+    private static ContainerInspection InTheGap(ContainerInspection inspection, bool restarting) => inspection with
+    {
+        Details = inspection.Details with
+        {
+            State = inspection.Details.State with { Running = restarting, Restarting = restarting, Status = restarting ? "restarting" : "exited" },
+        },
+    };
+
+    /// <summary>Live on a running container whose streams then ended by themselves, and the read that followed answered with <paramref name="read"/>.</summary>
+    private static DetailState EndedAndReadAgain(ContainerInspection read)
+    {
+        var (logEnded, _) = Reduce(Live(), new LogStreamEnded(1, Error: null));
+        var (bothEnded, _) = Reduce(logEnded, new StatsStreamEnded(1, Error: null));
+        var (state, effects) = Reduce(bothEnded, new InspectLoaded(bothEnded.InspectGeneration, read));
+        Assert.Empty(effects);
+        return state;
+    }
+
+    [Theory]
+    [InlineData(false)] // docker restart: read while it was stopped
+    [InlineData(true)] // a restart policy: read while it was waiting to start again
+    public void A_restart_read_in_the_gap_starts_nothing_and_the_next_refresh_follows_the_new_run(bool restarting)
+    {
+        var gap = EndedAndReadAgain(InTheGap(FakeEngineApi.Inspection("c"), restarting));
+        Assert.Equal(StreamStatus.Ended, gap.LogStatus);
+        Assert.Equal(1, gap.StreamGeneration);
+
+        var (refreshing, _) = Reduce(gap, new DetailRefreshRequested());
+        var (state, effects) = Reduce(
+            refreshing, new InspectLoaded(refreshing.InspectGeneration, Restarted(FakeEngineApi.Inspection("c"))));
+
+        Assert.Equal(2, state.StreamGeneration);
+        Assert.Equal(StreamStatus.Loading, state.LogStatus);
+        Assert.Equal(StreamStatus.Loading, state.StatsStatus);
+        Assert.Equal(
+            [new StopDetailStreamsEffect(), new FollowLogsEffect(2, Tty: false, DetailReducer.LogsRequest), new FollowStatsEffect(2)],
+            effects);
+    }
+
+    [Fact]
+    public void A_refresh_that_finds_it_running_with_its_streams_ended_follows_them_again()
+    {
+        var (withLines, _) = Reduce(Live(), new LogLinesArrived(1, [Line("one")]));
+        var (logEnded, _) = Reduce(withLines, new LogStreamEnded(1, Error: null));
+        var (ended, _) = Reduce(logEnded, new StatsStreamEnded(1, Error: null));
+        var (refreshing, _) = Reduce(ended, new DetailRefreshRequested());
+
+        var (state, effects) = Reduce(refreshing, new InspectLoaded(refreshing.InspectGeneration, FakeEngineApi.Inspection("c")));
+
+        // The log is read again from its tail, so its lines are not shown twice.
+        Assert.Empty(state.Logs.Lines);
+        Assert.Equal(2, state.StreamGeneration);
+        Assert.Equal(StreamStatus.Loading, state.LogStatus);
+        Assert.Equal(StreamStatus.Loading, state.StatsStatus);
+        Assert.Equal(
+            [new StopDetailStreamsEffect(), new FollowLogsEffect(2, Tty: false, DetailReducer.LogsRequest), new FollowStatsEffect(2)],
+            effects);
+    }
+
+    [Fact]
+    public void The_read_after_its_streams_ended_does_not_follow_them_again_so_a_stream_that_keeps_ending_cannot_loop()
+    {
+        var state = EndedAndReadAgain(FakeEngineApi.Inspection("c"));
+
+        Assert.Equal(StreamStatus.Ended, state.LogStatus);
+        Assert.Equal(StreamStatus.Ended, state.StatsStatus);
+        Assert.Equal(1, state.StreamGeneration);
+    }
+
+    [Fact]
+    public void A_refresh_that_finds_it_restarting_waits_for_it_to_run()
+    {
+        var gap = EndedAndReadAgain(InTheGap(FakeEngineApi.Inspection("c"), restarting: true));
+        var (refreshing, _) = Reduce(gap, new DetailRefreshRequested());
+
+        var (state, effects) = Reduce(
+            refreshing, new InspectLoaded(refreshing.InspectGeneration, InTheGap(FakeEngineApi.Inspection("c"), restarting: true)));
+
+        Assert.Empty(effects);
+        Assert.Equal(1, state.StreamGeneration);
+    }
+
+    [Fact]
+    public void A_refresh_with_nothing_changed_keeps_both_streams()
+    {
+        var (withLines, _) = Reduce(Live(), new LogLinesArrived(1, [Line("one")]));
+        var (withSample, _) = Reduce(withLines, new StatsSampleArrived(1, Sample(0, cpu: 1.5)));
+        var (refreshing, _) = Reduce(withSample, new DetailRefreshRequested());
+
+        var (state, effects) = Reduce(refreshing, new InspectLoaded(refreshing.InspectGeneration, FakeEngineApi.Inspection("c")));
+
+        Assert.Empty(effects);
+        Assert.Equal(1, state.StreamGeneration);
+        Assert.Equal(StreamStatus.Live, state.LogStatus);
+        Assert.Equal(StreamStatus.Live, state.StatsStatus);
+        Assert.Same(withSample.Logs, state.Logs);
+    }
+
+    [Fact]
+    public void Opening_a_restarting_container_follows_its_log_but_not_its_stats()
+    {
+        var (opened, _) = Reduce(DetailState.Initial("c"), new DetailOpenRequested());
+
+        var (state, effects) = Reduce(
+            opened, new InspectLoaded(opened.InspectGeneration, InTheGap(FakeEngineApi.Inspection("c"), restarting: true)));
+
+        Assert.Equal(StreamStatus.Idle, state.StatsStatus);
+        Assert.Equal([new FollowLogsEffect(1, Tty: false, DetailReducer.LogsRequest)], effects);
+    }
+
+    [Fact]
+    public void Retry_after_a_failed_first_read_reads_it_and_starts_the_streams()
+    {
+        var (opened, _) = Reduce(DetailState.Initial("c"), new DetailOpenRequested());
+        var (failed, _) = Reduce(opened, new InspectFailed(opened.InspectGeneration, "timeout", NotFound: false));
+        var (retrying, retryEffects) = Reduce(failed, new DetailRefreshRequested());
+
+        var (state, effects) = Reduce(retrying, new InspectLoaded(retrying.InspectGeneration, FakeEngineApi.Inspection("c")));
+
+        Assert.Equal("timeout", failed.LoadError);
+        Assert.Equal([new InspectContainerEffect(2)], retryEffects);
+        Assert.Null(state.LoadError);
+        Assert.Equal(
+            [new FollowLogsEffect(1, Tty: false, DetailReducer.LogsRequest), new FollowStatsEffect(1)],
+            effects);
+    }
+
     [Fact]
     public void Results_for_an_older_stream_are_ignored()
     {

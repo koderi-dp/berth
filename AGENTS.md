@@ -34,7 +34,8 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat, DockerRunCommand (PowerShell or
                             bash quoting); detail page: LogBuffer (last 10,000 lines), LogView, LogSearch, AnsiText,
                             InspectSections, StatsHistory (last 120 samples), StatsCharts (axes, figures, screen-reader
-                            summaries), StatsSummary (list strip and CPU column texts)
+                            summaries), StatsSummary (list strip and CPU column texts), DetailPage (the detail page's
+                            lifecycle: when it opens, closes, refreshes or leaves its session, and which state its tabs show)
   Logging/, Storage/        FileLog, AtomicFile
 src/Berth.App/              UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
   Program.cs                entry point: log, services, first connect, window
@@ -90,7 +91,9 @@ runs it.
 `ContainerDetailSession` owns one container page: `Open()` inspects the container, then
 follows its log (the last 1000 lines, then new ones) and, while it runs, its stats.
 `Refresh()` inspects again and restarts the streams when the container was started again
-since the last read. Results carry the generation of the inspect or stream that asked for
+since the last read, or when it runs while a stream of it has ended (a restart the read after
+the stream ended saw only half of; that read itself never restarts them, so a stream that keeps
+ending cannot loop). Results carry the generation of the inspect or stream that asked for
 them and the reducer drops older ones, so a stream stopped on purpose never reaches the page
 and is never reported as an error. Log lines are batched and applied at most every 100 ms
 (`LogTick`), so a flooding container is ten state changes a second, not one per line. When a
@@ -103,7 +106,14 @@ connection is retired the engine session cuts the detail session off (`CutOffAsy
 stopped, state `ConnectionLost`), and the page opens a new one on the new connection.
 `App` closes the detail session whenever the page shown is not a detail page, and removes
 every detail route from the history on a switch of connection. Components reach the state
-through `DetailStateHook` (an external store); both it and `EngineStateHook` use
+through `DetailStateHook` (an external store). The page's lifecycle is decided in Core by
+`DetailPage.Next` (open, close, refresh or leave; tests in `DetailPageTests`), which the page
+only carries out: it refreshes on each list load that shows the container may have run again
+(another state or status text, an action ended, or the session out of step with the row), so a
+restart from outside Berth too quick for the list to show is still followed. While the session
+is closed, reopening or its connection is lost, the tabs show the last live state and say
+"Waiting for the engine…" instead of what their streams say (`DetailPage.Shown`, `Waiting`).
+Both `DetailStateHook` and `EngineStateHook` use
 `UiThreadSubscription`, which follows a source that can be replaced and coalesces its
 thread-pool changes into at most one pending UI-thread callback that reads the latest state.
 
@@ -279,7 +289,7 @@ Above the list, `stats-total-cpu` and `stats-total-memory` carry the totals in t
 On the detail page:
 
 - Header: `back-to-list` (Esc), `detail-status`, and the same row actions (`stop-<name>`,
-  `more-<name>`, `delete-<name>`, ...). The navigation's `SettingsItem` and the title bar's
+  `more-<name>`, `delete-<name>`, ...); below it `detail-error` (a failed read, with Retry). The navigation's `SettingsItem` and the title bar's
   `PART_BackButton` go to Settings and back to the page.
 - Tabs: the SelectorBar `detail-tabs`; select one with `winapp ui invoke Stats --type
   ListItem -a Berth` (`Logs`, `Inspect`, `Bind mounts`, `Stats`).
@@ -292,8 +302,8 @@ On the detail page:
   `inspect-copy-<section>-<name>`, `inspect-raw-toggle`, `inspect-raw-json`,
   `inspect-copy-json`.
 - Bind mounts: `bind-mounts`, `bind-mount-open-<index>`, `bind-mounts-empty`.
-- Stats: `stats-tab`, `stats-loading`, `stats-not-running`, `stats-error`; the cards
-  `stats-cpu`, `stats-memory`, `stats-disk`, `stats-network`. The figures drawn beside each
+- Stats: `stats-tab`, `stats-loading`, `stats-not-running`, `stats-error`, `stats-waiting`;
+  the cards `stats-cpu`, `stats-memory`, `stats-disk`, `stats-network`. The figures drawn beside each
   title are hidden from UI Automation; each card's title carries the latest and highest
   figures as its name ("CPU usage 49.8%. Highest in the last 2 minutes: ...").
 

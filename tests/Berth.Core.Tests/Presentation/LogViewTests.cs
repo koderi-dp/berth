@@ -21,7 +21,7 @@ public sealed class LogViewTests
     [InlineData(StreamStatus.Ended, true, false, "Log cleared.")]
     public void An_empty_log_says_why(StreamStatus status, bool linesSeen, bool waitedLong, string text)
     {
-        Assert.Equal(text, LogView.EmptyText(status, lineCount: 0, linesSeen, waitedLong));
+        Assert.Equal(text, LogView.EmptyText(status, lineCount: 0, linesSeen, waitedLong, waiting: false));
     }
 
     [Theory]
@@ -29,7 +29,7 @@ public sealed class LogViewTests
     [InlineData(true)]
     public void A_failed_log_shows_no_empty_text_its_error_says_it(bool linesSeen)
     {
-        Assert.Null(LogView.EmptyText(StreamStatus.Failed, lineCount: 0, linesSeen, waitedLong: true));
+        Assert.Null(LogView.EmptyText(StreamStatus.Failed, lineCount: 0, linesSeen, waitedLong: true, waiting: false));
     }
 
     [Theory]
@@ -82,22 +82,22 @@ public sealed class LogViewTests
     [InlineData(StreamStatus.Failed)]
     public void A_log_with_lines_shows_them_instead_of_an_empty_text(StreamStatus status)
     {
-        Assert.Null(LogView.EmptyText(status, lineCount: 3, linesSeen: true, waitedLong: true));
+        Assert.Null(LogView.EmptyText(status, lineCount: 3, linesSeen: true, waitedLong: true, waiting: false));
     }
 
     [Fact]
     public void A_stopped_container_s_lines_say_they_are_its_last()
     {
-        Assert.Equal(["The container stopped. These are its last lines."], LogView.Notes(StreamStatus.Ended, lineCount: 3, dropped: 0));
+        Assert.Equal(["The container stopped. These are its last lines."], LogView.Notes(StreamStatus.Ended, lineCount: 3, dropped: 0, waiting: false));
     }
 
     [Fact]
     public void Dropped_lines_say_only_the_latest_are_shown()
     {
-        Assert.Equal(["Showing the latest 10,000 lines."], LogView.Notes(StreamStatus.Live, lineCount: 10_000, dropped: 1));
+        Assert.Equal(["Showing the latest 10,000 lines."], LogView.Notes(StreamStatus.Live, lineCount: 10_000, dropped: 1, waiting: false));
         Assert.Equal(
             ["The container stopped. These are its last lines.", "Showing the latest 10,000 lines."],
-            LogView.Notes(StreamStatus.Ended, lineCount: 10_000, dropped: 5));
+            LogView.Notes(StreamStatus.Ended, lineCount: 10_000, dropped: 5, waiting: false));
     }
 
     [Theory]
@@ -106,13 +106,47 @@ public sealed class LogViewTests
     [InlineData(StreamStatus.Failed)]
     public void A_log_that_dropped_nothing_and_did_not_end_has_no_notes(StreamStatus status)
     {
-        Assert.Empty(LogView.Notes(status, lineCount: 3, dropped: 0));
+        Assert.Empty(LogView.Notes(status, lineCount: 3, dropped: 0, waiting: false));
     }
 
     [Fact]
     public void An_empty_ended_log_has_no_notes_its_empty_text_says_it()
     {
-        Assert.Empty(LogView.Notes(StreamStatus.Ended, lineCount: 0, dropped: 0));
+        Assert.Empty(LogView.Notes(StreamStatus.Ended, lineCount: 0, dropped: 0, waiting: false));
+    }
+
+    [Theory]
+    [InlineData(StreamStatus.Idle)]
+    [InlineData(StreamStatus.Loading)]
+    [InlineData(StreamStatus.Live)]
+    [InlineData(StreamStatus.Ended)]
+    [InlineData(StreamStatus.Failed)]
+    public void While_waiting_for_the_engine_the_log_says_so_and_nothing_about_its_stream(StreamStatus status)
+    {
+        Assert.Equal("Waiting for the engine…", LogView.EmptyText(status, lineCount: 0, linesSeen: true, waitedLong: true, waiting: true));
+        Assert.Null(LogView.EmptyText(status, lineCount: 3, linesSeen: true, waitedLong: true, waiting: true));
+        Assert.Equal(["Waiting for the engine…"], LogView.Notes(status, lineCount: 3, dropped: 0, waiting: true));
+        Assert.Empty(LogView.Notes(status, lineCount: 0, dropped: 0, waiting: true));
+        Assert.False(LogView.ShowsError(status, waiting: true));
+    }
+
+    [Fact]
+    public void While_waiting_the_dropped_lines_note_stays()
+    {
+        Assert.Equal(
+            ["Waiting for the engine…", "Showing the latest 10,000 lines."],
+            LogView.Notes(StreamStatus.Ended, lineCount: 10_000, dropped: 5, waiting: true));
+    }
+
+    [Theory]
+    [InlineData(StreamStatus.Idle, false)]
+    [InlineData(StreamStatus.Loading, false)]
+    [InlineData(StreamStatus.Live, false)]
+    [InlineData(StreamStatus.Ended, false)]
+    [InlineData(StreamStatus.Failed, true)]
+    public void A_failed_log_shows_its_error_with_Retry_while_connected(StreamStatus status, bool shows)
+    {
+        Assert.Equal(shows, LogView.ShowsError(status, waiting: false));
     }
 
     [Theory]

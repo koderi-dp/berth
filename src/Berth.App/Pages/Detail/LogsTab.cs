@@ -26,6 +26,9 @@ namespace Berth.Pages.Detail;
 
 /// <summary>What the Logs tab is given.</summary>
 /// <param name="Detail">The container's detail state: its log, and where the log stream stands.</param>
+/// <param name="Waiting">
+/// The page waits for the engine (see <see cref="DetailPage.Waiting"/>): the log says so in place of its stream's state, with no Retry.
+/// </param>
 /// <param name="ClearLogs">Empties the view (the container's log is kept).</param>
 /// <param name="Search">
 /// The search, kept by the page so it outlives the tab being mounted again (another tab chosen and back).
@@ -37,6 +40,7 @@ namespace Berth.Pages.Detail;
 /// </param>
 internal sealed record LogsTabProps(
     DetailState Detail,
+    bool Waiting,
     Action ClearLogs,
     LogSearchState Search,
     Action<Func<LogSearchState, LogSearchState>> UpdateSearch,
@@ -201,8 +205,9 @@ internal sealed class LogsTab : Component<LogsTabProps>
             },
         ];
 
-        var emptyText = LogView.EmptyText(detail.LogStatus, logs.Lines.Count, linesSeen: logs.FirstNumber > 1, waitedGeneration == generation);
-        var notes = LogView.Notes(detail.LogStatus, logs.Lines.Count, logs.Dropped);
+        var waiting = Props.Waiting;
+        var emptyText = LogView.EmptyText(detail.LogStatus, logs.Lines.Count, linesSeen: logs.FirstNumber > 1, waitedGeneration == generation, waiting);
+        var notes = LogView.Notes(detail.LogStatus, logs.Lines.Count, logs.Dropped, waiting);
         var log = emptyText is null
             ? LogList(rows, options, matches, current, dark, scroller)
             : Widgets.CenteredNote(emptyText).AutomationId("log-empty");
@@ -228,7 +233,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
                         .Margin(0, 0, 0, 8)
                         .Grid(row: 0)
                     : null,
-                FailureBar(detail)?.Margin(0, 0, 0, 8).Grid(row: 1),
+                FailureBar(detail, waiting)?.Margin(0, 0, 0, 8).Grid(row: 1),
                 notes.Count == 0
                     ? null
                     : Caption(string.Join("  ", notes)).Foreground(Theme.SecondaryText).AutomationId("log-notes").Margin(0, 0, 0, 8).Grid(row: 2),
@@ -413,9 +418,12 @@ internal sealed class LogsTab : Component<LogsTabProps>
             box.Text = term;
     }
 
-    /// <summary>The engine's message, as it gave it, when the log could not be read; Retry opens the page's session again.</summary>
-    private static Element? FailureBar(DetailState detail) =>
-        detail.LogStatus != StreamStatus.Failed
+    /// <summary>
+    /// The engine's message, as it gave it, when the log could not be read; Retry opens the page's session again. Not while the page
+    /// waits for the engine, when Retry could not work.
+    /// </summary>
+    private static Element? FailureBar(DetailState detail, bool waiting) =>
+        !LogView.ShowsError(detail.LogStatus, waiting)
             ? null
             : (InfoBar(message: detail.LogError ?? "") with
             {

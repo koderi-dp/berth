@@ -55,13 +55,16 @@ public static class LogView
     /// <summary>
     /// The text shown in place of the lines while there are none: "Loading logs…" for the first moments of a log that is
     /// starting (until <paramref name="waitedLong"/>), then "No log output yet."; a stopped container's empty log says it wrote
-    /// nothing, or "Log cleared." when <paramref name="linesSeen"/> (lines came and the view was cleared). Null when there are
-    /// lines, or when the log failed (its error says why).
+    /// nothing, or "Log cleared." when <paramref name="linesSeen"/> (lines came and the view was cleared). While
+    /// <paramref name="waiting"/> for the engine (see <see cref="DetailPage.Waiting"/>) the stream's state is not known, so it says
+    /// only that. Null when there are lines, or when the log failed (its error says why).
     /// </summary>
-    public static string? EmptyText(StreamStatus status, int lineCount, bool linesSeen, bool waitedLong)
+    public static string? EmptyText(StreamStatus status, int lineCount, bool linesSeen, bool waitedLong, bool waiting)
     {
         if (lineCount > 0)
             return null;
+        if (waiting)
+            return DetailPage.WaitingText;
 
         return status switch
         {
@@ -81,16 +84,24 @@ public static class LogView
         : search.Term.Length > 0 ? LogEscape.ClearTerm
         : LogEscape.CloseSearch;
 
-    /// <summary>The notes shown above the lines: that a stopped container's lines are its last, and that older lines were dropped.</summary>
-    public static IReadOnlyList<string> Notes(StreamStatus status, int lineCount, long dropped)
+    /// <summary>
+    /// The notes shown above the lines: that a stopped container's lines are its last (or, while <paramref name="waiting"/> for the
+    /// engine, only that), and that older lines were dropped.
+    /// </summary>
+    public static IReadOnlyList<string> Notes(StreamStatus status, int lineCount, long dropped, bool waiting)
     {
         var notes = new List<string>(2);
-        if (status == StreamStatus.Ended && lineCount > 0)
+        if (waiting && lineCount > 0)
+            notes.Add(DetailPage.WaitingText);
+        else if (status == StreamStatus.Ended && lineCount > 0)
             notes.Add("The container stopped. These are its last lines.");
         if (dropped > 0)
             notes.Add(Dropped);
         return notes;
     }
+
+    /// <summary>Whether the log's error shows, with Retry: it failed, and the page is not waiting for the engine (Retry could not work).</summary>
+    public static bool ShowsError(StreamStatus status, bool waiting) => status == StreamStatus.Failed && !waiting;
 
     /// <summary>"3 of 17" for the 0-based <paramref name="current"/> match of <paramref name="count"/>; "No matches"; empty without a term.</summary>
     public static string Counter(string term, int current, int count)

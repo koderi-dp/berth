@@ -14,6 +14,9 @@ namespace Berth.Pages.Detail;
 /// <param name="ContainerId">The container, for Retry.</param>
 /// <param name="Stats">The samples so far; a new instance each second while they come, so the tab draws again only then.</param>
 /// <param name="Error">Why the stats stream failed, as the engine said, when <paramref name="Status"/> is Failed.</param>
+/// <param name="Waiting">
+/// The page waits for the engine (see <see cref="DetailPage.Waiting"/>): the charts stay, or the tab says it waits; no Retry.
+/// </param>
 /// <param name="CpuLimit">The container's CPU limit in CPUs, or null.</param>
 /// <param name="MachineMemory">The engine's memory in bytes (0 before its info is read): a memory limit below it is drawn.</param>
 internal sealed record StatsTabProps(
@@ -21,6 +24,7 @@ internal sealed record StatsTabProps(
     StatsHistory Stats,
     StreamStatus Status,
     string? Error,
+    bool Waiting,
     double? CpuLimit,
     long MachineMemory);
 
@@ -49,7 +53,7 @@ internal sealed class StatsTab : Component<StatsTabProps>
         var (width, setWidth) = UseState(0.0);
         var (height, setHeight) = UseState(0.0);
 
-        var view = StatsCharts.View(props.Status, props.Stats.Latest is not null);
+        var view = StatsCharts.View(props.Status, props.Stats.Latest is not null, props.Waiting);
         var charts = UseMemo(
             () => view == StatsView.Charts ? Charts(props, width, height, dark) : null,
             props.Stats,
@@ -65,6 +69,7 @@ internal sealed class StatsTab : Component<StatsTabProps>
             StatsView.Loading => Widgets.CenteredNote(StatsCharts.LoadingText).AutomationId("stats-loading"),
             StatsView.NotRunning => Widgets.CenteredNote(StatsCharts.NotRunningText).AutomationId("stats-not-running"),
             StatsView.Failed => FailureBar(props),
+            StatsView.Waiting => Widgets.CenteredNote(StatsCharts.WaitingText).AutomationId("stats-waiting"),
             _ => charts ?? Empty(),
         };
 

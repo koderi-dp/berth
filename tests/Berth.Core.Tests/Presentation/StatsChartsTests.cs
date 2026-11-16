@@ -27,13 +27,26 @@ public sealed class StatsChartsTests
     [InlineData(StreamStatus.Failed, false, StatsView.Failed)]
     [InlineData(StreamStatus.Failed, true, StatsView.Failed)]
     public void The_tab_shows_charts_only_while_samples_come(StreamStatus status, bool hasSample, StatsView view) =>
-        Assert.Equal(view, StatsCharts.View(status, hasSample));
+        Assert.Equal(view, StatsCharts.View(status, hasSample, waiting: false));
+
+    [Theory]
+    [InlineData(StreamStatus.Idle, false, StatsView.Waiting)]
+    [InlineData(StreamStatus.Loading, false, StatsView.Waiting)]
+    [InlineData(StreamStatus.Live, false, StatsView.Waiting)]
+    [InlineData(StreamStatus.Ended, false, StatsView.Waiting)]
+    [InlineData(StreamStatus.Failed, false, StatsView.Waiting)]
+    [InlineData(StreamStatus.Live, true, StatsView.Charts)]
+    [InlineData(StreamStatus.Ended, true, StatsView.Charts)]
+    [InlineData(StreamStatus.Failed, true, StatsView.Charts)]
+    public void While_waiting_for_the_engine_the_tab_keeps_its_charts_or_says_it_waits(StreamStatus status, bool hasSample, StatsView view) =>
+        Assert.Equal(view, StatsCharts.View(status, hasSample, waiting: true));
 
     [Fact]
     public void The_state_texts_say_what_is_going_on()
     {
         Assert.Equal("Getting container stats…", StatsCharts.LoadingText);
         Assert.Equal("Start the container to see its stats.", StatsCharts.NotRunningText);
+        Assert.Equal("Waiting for the engine…", StatsCharts.WaitingText);
     }
 
     [Theory]

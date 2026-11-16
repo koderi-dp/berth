@@ -40,6 +40,9 @@ public sealed record DetailState(
     /// </summary>
     public bool ConnectionLost { get; init; }
 
+    /// <summary>The latest inspect was asked for because a stream ended by itself, not by an open or a refresh.</summary>
+    public bool ReadAfterStreamEnded { get; init; }
+
     /// <summary>A page for <paramref name="containerId"/> that has not opened yet.</summary>
     public static DetailState Initial(string containerId) => new(
         containerId,

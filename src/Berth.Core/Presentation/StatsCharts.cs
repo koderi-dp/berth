@@ -4,8 +4,8 @@ using Berth.Session;
 
 namespace Berth.Presentation;
 
-/// <summary>What the detail page's Stats tab shows in place of its charts, or that it shows them.</summary>
-public enum StatsView { Loading, NotRunning, Failed, Charts }
+/// <summary>What the detail page's Stats tab shows in place of its charts (Waiting: for the engine), or that it shows them.</summary>
+public enum StatsView { Loading, NotRunning, Failed, Charts, Waiting }
 
 /// <summary>
 /// A chart's y-axis: from 0 to <see cref="Max"/>, in units of <see cref="UnitSize"/> (1 for a percentage, 1024 for KB, …)
@@ -37,20 +37,26 @@ public static class StatsCharts
 
     public const string NotRunningText = "Start the container to see its stats.";
 
+    public const string WaitingText = DetailPage.WaitingText;
+
     private const string Window = "in the last 2 minutes";
 
     private static readonly string[] ByteUnits = ["B", "KB", "MB", "GB", "TB", "PB"];
 
     /// <summary>
-    /// Failed: the error with Retry. Not following (Idle: the container was not running; Ended: it stopped): the note to start it.
-    /// Following: the charts once the first sample is in, the loading text until then.
+    /// While <paramref name="waiting"/> for the engine (see <see cref="DetailPage.Waiting"/>): the charts kept, or the waiting text
+    /// when there are none; never the error with a Retry that cannot work, nor that the container stopped. Otherwise: Failed, the
+    /// error with Retry; not following (Idle: the container was not running; Ended: it stopped), the note to start it; following,
+    /// the charts once the first sample is in, the loading text until then.
     /// </summary>
-    public static StatsView View(StreamStatus status, bool hasSample) => status switch
-    {
-        StreamStatus.Failed => StatsView.Failed,
-        StreamStatus.Idle or StreamStatus.Ended => StatsView.NotRunning,
-        _ => hasSample ? StatsView.Charts : StatsView.Loading,
-    };
+    public static StatsView View(StreamStatus status, bool hasSample, bool waiting) =>
+        waiting ? (hasSample ? StatsView.Charts : StatsView.Waiting)
+        : status switch
+        {
+            StreamStatus.Failed => StatsView.Failed,
+            StreamStatus.Idle or StreamStatus.Ended => StatsView.NotRunning,
+            _ => hasSample ? StatsView.Charts : StatsView.Loading,
+        };
 
     /// <summary>Where a point taken at <paramref name="time"/> sits on the time axis: seconds before the latest sample, 0 to the window.</summary>
     public static double SecondsAgo(DateTimeOffset latest, DateTimeOffset time) =>

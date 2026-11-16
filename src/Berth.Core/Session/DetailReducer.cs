@@ -26,7 +26,7 @@ public static class DetailReducer
         {
             case DetailOpenRequested when current && state.InspectGeneration == 0:
             case DetailRefreshRequested when current && state.InspectGeneration > 0 && !state.Removed:
-                return Inspect(state);
+                return Inspect(state, afterStreamEnded: false);
 
             case LogsClearRequested when state.Logs.Lines.Count > 0:
                 return (state with { Logs = state.Logs.Clear() }, None);
@@ -70,15 +70,19 @@ public static class DetailReducer
         }
     }
 
-    private static (DetailState, ImmutableArray<DetailEffect>) Inspect(DetailState state)
+    private static (DetailState, ImmutableArray<DetailEffect>) Inspect(DetailState state, bool afterStreamEnded)
     {
         var generation = state.InspectGeneration + 1;
-        return (state with { InspectGeneration = generation }, [new InspectContainerEffect(generation)]);
+        return (
+            state with { InspectGeneration = generation, ReadAfterStreamEnded = afterStreamEnded },
+            [new InspectContainerEffect(generation)]);
     }
 
     /// <summary>
     /// Shows the new details. The streams start after the first read, and start over (the log read again from its tail) when
-    /// the container was started again since the last one.
+    /// the container was started again since the last one, or when a refresh finds it running while a stream of it has ended
+    /// (a restart the read after the stream ended saw only half of). The read that follows a stream ending never starts the
+    /// streams for the second reason, so a stream that keeps ending cannot loop.
     /// </summary>
     private static (DetailState, ImmutableArray<DetailEffect>) Loaded(DetailState state, ContainerInspection inspection)
     {
@@ -88,16 +92,21 @@ public static class DetailReducer
             return StartStreams(next, details, None);
 
         var restarted = details.State.Running && details.State.StartedAt != state.Details?.State.StartedAt;
-        return restarted
+        var streamEnded = state.LogStatus == StreamStatus.Ended || state.StatsStatus is StreamStatus.Ended or StreamStatus.Idle;
+        var followAgain = !state.ReadAfterStreamEnded && IsRunning(details) && streamEnded;
+        return restarted || followAgain
             ? StartStreams(next with { Logs = LogBuffer.Empty }, details, [new StopDetailStreamsEffect()])
             : (next, None);
     }
+
+    /// <summary>Running and not waiting to start again after an exit (a restart policy's back-off reads as running and restarting).</summary>
+    private static bool IsRunning(ContainerDetails details) => details.State is { Running: true, Restarting: false };
 
     private static (DetailState, ImmutableArray<DetailEffect>) StartStreams(
         DetailState state, ContainerDetails details, ImmutableArray<DetailEffect> before)
     {
         var generation = state.StreamGeneration + 1;
-        var running = details.State.Running;
+        var running = IsRunning(details);
         var effects = before.Add(new FollowLogsEffect(generation, details.Tty, LogsRequest));
         if (running)
             effects = effects.Add(new FollowStatsEffect(generation));
@@ -120,7 +129,7 @@ public static class DetailReducer
     /// </summary>
     private static (DetailState, ImmutableArray<DetailEffect>) AfterStreamEnded(DetailState state, string? error) =>
         error is null && state.Details is { State.Running: true } && !state.Removed
-            ? Inspect(state)
+            ? Inspect(state, afterStreamEnded: true)
             : (state, None);
 
     /// <summary>Marks streams still loading or live as ended and drops anything they still send.</summary>
