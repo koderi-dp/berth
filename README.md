@@ -50,7 +50,8 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   When the container stops, the streams end and the page shows its new state; when it is
   removed, the page returns to the list and says so.
 - **Files: browse, download, upload.** The Files tab lists a folder of the container: name (a
-  folder, file or link glyph; a link shows its target), size, modified and mode, folders first.
+  folder, file or link glyph; a link shows its target), size, modified and mode, folders first;
+  Name, Size and Modified sort it (folders stay first).
   The path above it is a breadcrumb; the pencil turns it into a box to type a path (Enter goes
   there, Escape leaves it). Up, Refresh (F5), double click or Enter on a folder, Backspace or
   Alt+Up for the folder above, Ctrl+C copies the selected rows' paths; the right-click menu has
@@ -68,15 +69,20 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
     of `< > : " \ | ? *` and control characters becomes `_`, a trailing dot or space becomes `_`,
     and `CON`, `NUL`, `COM1` and the other device names get `_` in front) and counted; two names
     that are the same to Windows keep the first. Each item is written under a temporary name and
-    renamed at the end, so a cancelled or failed download leaves nothing partial. Nothing already
-    in the folder is replaced without asking (Cancel is the default); a folder that is already
-    there keeps its other files. The summary says what was saved and what was skipped and why;
-    "Show in folder" opens it in Explorer.
+    renamed at the end, so a cancelled or failed download, or Quit during one, leaves nothing
+    partial; only a crash can leave a `.berth-….partial` item, which is safe to delete. A download
+    stops when less than 200 MB would be free on the drive. Nothing already in the folder is
+    replaced without asking (Cancel is the default); a folder that is already there keeps its other
+    files (a merge that fails half way keeps the files it moved). The summary says what was saved
+    and what was skipped and why; "Show in folder" opens it in Explorer.
   - **Upload…** puts files, or a folder with everything under it, into the folder shown; files
-    dragged from Explorer onto the table do the same. It asks before it replaces something of the
-    same name. An upload cannot be undone: a cancelled one leaves in the container what the engine
-    already unpacked. Links and junctions inside an uploaded folder are skipped.
-  - Transfers show under the table with their progress and Cancel; several can run at once, and
+    dragged from Explorer onto the table do the same. Before it sends anything it checks that every
+    file can be read and asks the container whether something of the same name is there; if so it
+    asks before replacing it. An upload cannot be undone: a cancelled one leaves in the container
+    what the engine already unpacked. Symbolic links and junctions inside an uploaded folder are
+    skipped (OneDrive's cloud files are uploaded as ordinary files).
+  - Transfers show under the table (about three rows, then a scroll; "Clear finished" removes the
+    ended ones) with their progress and Cancel; several can run at once, and
     they go on while you look at other pages. A switch of connection ends them. Berth does not
     delete, rename or edit files in a container.
 - **Exec: a terminal in the container.** The Exec tab of a running container starts a shell

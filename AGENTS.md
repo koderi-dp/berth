@@ -451,10 +451,19 @@ exception type names only.
 `..`, no other top name; the joined path is checked against the folder again); symbolic and hard links are skipped and counted,
 never created or followed; devices, FIFOs and others are skipped and counted; names go through `WindowsNames` (forbidden and
 control characters and a trailing dot or space become `_`, device names get `_` in front) and Windows-equal names keep the first;
-content streams to disk; everything is written as `.berth-<hex>.partial` beside the target and moved at the end, removed on
-failure or cancel; nothing is replaced unless the user said yes (`TransferConfirmations`, Cancel the default), and then a folder
-merges file by file (a junction on the way is skipped). Upload: `PUT archive?noOverwriteDirNonDir=true` without `copyUIDGID`
-(files owned by root), `Expect: 100-continue` so a missing folder gives the engine's message; it cannot be undone.
+content streams to disk and stops under 200 MB free; everything is written as `.berth-<hex>.partial` beside the target and moved at
+the end, removed on failure, cancel and Quit (`EngineSession.StopTransfersAsync`, a second at most; a crash can leave one); nothing is
+replaced unless the user said yes (`TransferConfirmations`, Cancel the default), and then a folder merges file by file (a junction
+on the way or at the top is left alone; a merge that fails half way keeps what it moved). Selected items whose names meet on Windows
+keep the first. Links on this computer (`LocalFiles.IsLink`) are reparse points with a link target only: symbolic links and junctions;
+OneDrive's cloud files and deduplicated files are ordinary files.
+
+**Upload**: `PUT archive?noOverwriteDirNonDir=true` without `copyUIDGID` (files owned by root). Before anything is sent the folder must
+be there (a stat, then the archive call for the engine's own message), every local file must open (`LocalFiles.Inspect`; else Berth's
+own text, never a lost connection), and each top name is looked up in the container, four at a time: one there that the user has not
+agreed to replace makes the transfer wait (`TransferStatus.Asking`, `TransferNeedsAnswer`) and the panel asks; Replace sends it
+again with those names, and it looks again just before sending (`UploadCheck`). Never from the listing on screen. It cannot be undone.
+A timed-out call fails the transfer and keeps the connection.
 
 **Checks write only into `berth-check*` containers and only under `/tmp/berth-check/` there**, and download only under
 `%TEMP%\berth-check\` on the host; remove both afterwards. Never write into, delete from or upload to any other container. Debug
@@ -464,8 +473,8 @@ no dialog or keys. AutomationIds: `files-tab`, `files-up`, `files-refresh`, `fil
 `files-path-box`, `files-download`, `files-upload`, `files-table` (rows are named "Folder etc", "File hosts", "Link mtab → …"),
 `files-way-note`, `files-note`, `files-waiting`, `files-error`, `files-empty`, `files-loading`, `files-transfers`,
 `transfer-<id>`, `transfer-status-<id>`, `transfer-notes-<id>`, `cancel-transfer-<id>`, `show-transfer-<id>`,
-`dismiss-transfer-<id>`; the replace question is `confirm-text` with `PrimaryButton` and `CloseButton`. The tray icon's id for
-posted callbacks (see "The tray and the window") is 2.
+`dismiss-transfer-<id>`, `transfers-clear` (Clear finished), `sort-name`, `sort-size`, `sort-modified`; a replace question is
+`confirm-text` with `PrimaryButton` and `CloseButton`.
 
 ## Charts
 
