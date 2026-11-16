@@ -5,11 +5,12 @@ and remote engines). UI is pure C# with
 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`) on WinUI 3, .NET 11. There is no XAML: do not add `.xaml` files.
 
-Phases 1 and 2 are built: the shell, connections (TCP, TLS, named pipe), the engine client,
-the session, the Containers and Settings pages (phase 1), and a container's detail page with
-Logs, Inspect, Bind mounts and Stats tabs plus live CPU and memory on the list (phase 2).
-Images, volumes and networks, the exec terminal, engine control and tray, files and SSH
-are not built yet.
+Phases 1 to 3 are built: the shell, connections (TCP, TLS, named pipe), the engine client,
+the session, the Containers and Settings pages (phase 1), a container's detail page with
+Logs, Inspect, Bind mounts and Stats tabs plus live CPU and memory on the list (phase 2),
+and the Images, Volumes and Networks pages with pulls, the run dialog, image inspect, volume
+create, a volume's page and removes (phase 3). The exec terminal, engine control and tray,
+files and SSH are not built yet.
 
 ## Layout
 
@@ -42,7 +43,8 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
                             ResourceList/ListStatus/RemovalBatch (the images, volumes and networks lists and their
                             batches of removes), ImagePull (a pull's layers), DiskUsageState, ContainerRun (the run
-                            dialog's result), ImageInspect (the image read for the run dialog and Inspect)
+                            dialog's result), ImageInspect (the image read for the run dialog and Inspect), VolumeCreate
+                            (the create volume dialog's create and how it ended)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
                             stats), with ResourceEvents, ResourceEffects and SessionReducer.Resources for images, volumes,
                             networks, disk use, pulls, running a container and reading an image; EngineSession (runs the reducer and its
@@ -55,7 +57,9 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             RowActions (a container's, image's, volume's or network's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
-                            Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text), PullFigure (a pull's progress
+                            Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text; "Remove
+                            unused" waits for the container list: UnusedNotKnown), BackTarget (where a container's page
+                            goes back to and its button's label), RunOutcome (the run dialog's line), PullFigure (a pull's progress
                             line), PullReference (the pull dialog's field check), RunDraft (the run dialog's fields, checks
                             and create request); detail page: LogView, LogSearch,
                             InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
@@ -79,18 +83,18 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             thread-pool changes into one pending UI-thread callback), SettingsHook.cs (settings as an
                             external store), ListViewHook.cs (ListPageComponent, the base class of the four list pages:
                             UseListView keeps a list's search, filter, sort and collapsed groups by route in
-                            ListViewStore, so a page the navigation cache dropped starts again from them; UseListSearch)
+                            ListViewStore, so a page the navigation cache dropped starts again from them; UseListSearch;
+                            UseCheckedKeys; UseRemoveDialogs, the page's delete and "Remove unused …" confirmations)
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
                             above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
-                            row and the detail header), ListPage (a list page's sections, usage line, toolbar (its
-                            secondary buttons in a "more" menu below 1300 effective px), search box, bars and its shortcuts) and ListTable (columns with wide and compact widths, header with sortable
-                            titles, rows, the virtualized table, loading, failed-load and empty states, TableHandlers for a
-                            table component's callbacks), shared by the four lists;
+                            row and the detail header), ListPage and ListTable (the list scaffold, below), shared by
+                            the four lists;
                             ShellKeys (the app's shortcuts at the window root, Ctrl+F, F5, Delete, Escape, Alt+Left,
                             acting for the page shown through the PageKeys it registers), RemovalPanel (a list's batch of removes:
                             progress, then what was removed, refused or skipped), RemoveDialog (the confirmation of a delete
-                            or "Remove unused …" of images, volumes or networks, and what a confirmed one sends), DialogParts (a primary button that keeps
+                            or "Remove unused …" of images, volumes or networks, planned again at confirm, and what a
+                            confirmed one sends), DialogParts (a primary button that keeps
                             its dialog open, a wider dialog, stacks, field errors and hints), DeleteDialog, DetailHeader
                             (breadcrumb, name, ID, image, ports, status, actions), StatsStrip (total CPU and memory
                             above the list)
@@ -156,6 +160,29 @@ The detail page follows the same rule with its own pair: `DetailReducer.Reduce(D
 DetailEvent) -> (state, effects)` holds all its behaviour (tests in
 `tests/Berth.Core.Tests/Session/DetailReducerTests.cs`), and `ContainerDetailSession` only
 runs it.
+
+## The list scaffold
+
+The Images, Volumes and Networks pages (and Containers, for the parts it uses) are one shape,
+built from shared pieces; a new list uses them rather than copying a page:
+
+- `ListPageComponent` (`Hooks/ListViewHook.cs`): `UseListView` (search, filter and sort kept by
+  route), `UseListSearch`, `UseCheckedKeys` (a row that is gone cannot stay checked) and
+  `UseRemoveDialogs`.
+- `ListPage.Render(title, state, summary, toolbar, bars, table, dialog)`: the sections in order.
+  `ListPage.UsageLine`, `ListPage.Toolbar` (search box, filter, a primary action and secondary
+  actions that go into one "more" menu below 1300 effective px), `ListPage.Bars` (the batch
+  panel, the bulk bar), `ListPage.Keys` (Ctrl+F, F5, Delete for the page's `PageKeys`).
+- `ListTable`: columns with wide and compact widths, the header with sortable titles, rows, the
+  virtualized table, and `ListTable.States` (loading, failed first read with Retry, or the
+  empty text in the table's place). Each table is a component with record props and a
+  `TableHandlers` object kept by the page, so an unchanged table is not built again.
+- Removing: a page gives `UseRemoveDialogs` a function that plans a delete from the rows it
+  shows (`Confirmations.Remove*` over `*Rows.Shown(...)`). `RemoveDialog.For` is the one place
+  where a confirmed delete is planned again from the session as it is then, and a confirmed
+  "Remove unused …" keeps only what it named that is still unused
+  (`Confirmations.ConfirmPrune`). The session sends a batch a few items at a time, never
+  forced; `RemovalPanel` shows its progress and result.
 
 ## The detail session
 
@@ -240,11 +267,16 @@ $env:BERTH_ENGINE = 'tcp://127.0.0.1:2375'; dotnet test
 ```
 
 They need the docker CLI on PATH and `alpine:latest` on the engine; the CLI is run with
-`DOCKER_HOST` set to the same address. Each test makes its own container named
-`berth-it-<guid>` and removes it in `finally`. They wait on what they observe (lines
-arriving, a busy sample, a state change) with a 60 s safety net, never on fixed sleeps.
-They cover connect, list, actions, the event stream, the session, inspect, logs (framed and
-TTY), stats and the detail session ending its streams when the container stops.
+`DOCKER_HOST` set to the same address. Each test makes its own containers, volumes,
+networks and image tags named `berth-it-<guid>` and removes them in `finally`;
+`alpine:3.19` is pulled when it is missing and never removed. They wait on what they
+observe (lines arriving, a busy sample, a state change) with a 60 s safety net, never on
+fixed sleeps. They cover connect, list, actions, the event stream, the session, inspect,
+logs (framed and TTY), stats, the detail session ending its streams when the container
+stops, images (list, inspect, pull, removing a tag), volumes (create, list, remove),
+networks (list, remove), running a container from a request, and the session seeing a
+volume and network made by the CLI. `[DesktopEngineFact]` tests run only against Docker
+Desktop's pipe: removing unused volumes (narrowed to the test's own volumes).
 
 Run them against the daily engine and, when it is there, against the second engine on the
 named pipe (prepend Docker Desktop's `resources\bin` to PATH there, or image pulls fail on
@@ -257,7 +289,15 @@ $env:BERTH_ENGINE = 'npipe:////./pipe/dockerDesktopLinuxEngine'; dotnet test --f
 Remove-Item Env:BERTH_ENGINE                # without it they are reported as skipped
 ```
 
-Afterwards `docker ps -a --filter name=berth-it-` shows nothing on either engine.
+Afterwards `docker ps -a`, `docker volume ls`, `docker network ls` and `docker image ls`
+show nothing named `berth-it-` on either engine.
+
+**Checks and removing.** On the daily engine (`tcp://127.0.0.1:2375`) a test or a manual
+check creates and removes only things named `berth-check*` or `berth-it-*` (tag an image as
+`berth-check/alpine:test` rather than removing one that was there) and never runs a prune or
+"Remove unused …": the owner's unused images, volumes and networks would go. "Remove unused
+…" is confirmed only on Docker Desktop's connection, and only when everything its
+confirmation names is `berth-ref*` or made for that check; otherwise cancel it.
 
 ## Constraints
 
@@ -368,9 +408,16 @@ after expanding it, its items are in `winapp ui inspect -a Berth --type ListItem
 
 Above the list, `stats-total-cpu` and `stats-total-memory` carry the totals in their names;
 `sort-cpu` sorts by CPU. A row's name is the link `open-<name>`, which opens its detail page.
+The images, volumes and networks pages: `pull-image`, `create-volume`, `remove-unused-images`,
+`remove-unused-volumes`, `remove-unused-networks` (below 1300 effective px the secondary ones are in
+`toolbar-more`), `delete-selected`, `image-usage`, `volume-usage`; per row `run-<tag>`,
+`delete-<name>` (an image by its tag), `open-<volume>` (its page), `containers-<network>` (a menu of the attached
+containers). Dialogs: `pull-reference`, `pull-dialog-status`; `run-name`, `run-outcome`;
+`volume-name`, `volume-create-error`; a remove confirmation's text is `confirm-text`.
+
 On the detail page:
 
-- Header: `back-to-list` (Esc), `detail-status`, and the same row actions (`stop-<name>`,
+- Header: `back-to-list` (Esc; its name says where it goes), `detail-status`, and the same row actions (`stop-<name>`,
   `more-<name>`, `delete-<name>`, ...); below it `detail-error` (a failed read, with Retry). The navigation's `SettingsItem` and the title bar's
   `PART_BackButton` go to Settings and back to the page.
 - Tabs: the SelectorBar `detail-tabs`; select one with `winapp ui invoke Stats --type

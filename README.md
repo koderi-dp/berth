@@ -3,7 +3,8 @@
 Berth is a Windows desktop GUI for a Docker engine, used as a daily driver on a machine
 that runs docker-ce inside WSL. It is meant to cover containers, images, volumes and
 networks, and to manage engines on other machines too. This version covers connections,
-the containers list and each container's detail page.
+the containers list and each container's detail page, and the images, volumes and networks
+pages.
 
 The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`, pinned) on WinUI 3. There is no XAML.
@@ -44,8 +45,29 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
     with the CPU and memory limits when the container has them.
   When the container stops, the streams end and the page shows its new state; when it is
   removed, the page returns to the list and says so.
-- **Live updates.** The list follows the engine's event stream, so a container started from
-  the command line appears within a second without a refresh.
+- **Images.** The Images page lists a row per tag (and one per untagged image) with its
+  tag, ID, age, size and whether a container uses it, above a line with the engine's image
+  disk use. It can be searched, filtered (all, in use, unused, dangling) and sorted.
+  "Pull image" pulls a reference and shows each pull's layers and bytes in the list while it
+  runs, with Cancel. An image's Run opens a dialog for the container's name, host ports for
+  the ports the image exposes, volumes or bind mounts and environment variables; the new
+  container's page opens once it runs, and a refusal is shown in the dialog as the engine
+  gave it. Inspect shows an image's raw JSON.
+- **Volumes.** The Volumes page lists each volume with whether a container uses it, its age
+  and size, above the volume disk use. "Create" makes a named volume. A volume's name opens
+  its page: driver, mount point, size, age and the containers that mount it (each a link to
+  its page).
+- **Networks.** The Networks page lists each network with its driver, scope, age and the
+  containers attached to it (a menu of links to them). The built-in networks cannot be
+  deleted.
+- **Removing images, volumes and networks.** Delete (per row, for all checked rows, or with
+  the Delete key) and "Remove unused …" ask first and name everything that will go, with the
+  space freed when the engine tells it, and the containers that lose a network. Nothing is
+  forced: what the engine refuses stays, and the bar above the list says what was removed,
+  refused or skipped. "Remove unused …" waits until the container list has been read, since
+  that is what tells what is in use.
+- **Live updates.** The lists follow the engine's event stream, so a container, image,
+  volume or network made from the command line appears within a second without a refresh.
 - **Connection state.** The title bar shows whether Berth is connecting, connected (with
   the engine version) or disconnected; the status bar shows the engine's container counts.
   When the engine cannot be reached and no list has been loaded, the Containers page shows
@@ -71,11 +93,10 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 
 In the order they are planned:
 
-1. Images (pull, run, remove, prune), volumes and networks.
-2. A terminal in a running container.
-3. Starting and stopping a local engine, a tray icon, a single instance, start with Windows.
-4. Files: browse, download and upload in a running container.
-5. SSH connections: password and key sign-in, host key prompt, Credential Manager.
+1. A terminal in a running container.
+2. Starting and stopping a local engine, a tray icon, a single instance, start with Windows.
+3. Files: browse, download and upload in a running container.
+4. SSH connections: password and key sign-in, host key prompt, Credential Manager.
 
 For a later polish pass:
 
@@ -100,11 +121,13 @@ dotnet run --project src/Berth.App       # launches with package identity
 ```
 
 Integration tests run against a real engine when `BERTH_ENGINE` is set, and need the
-docker CLI on PATH and the `alpine:latest` image on the engine. They create and remove
-their own containers named `berth-it-<guid>`. Without the variable they are reported as
-skipped.
+docker CLI on PATH and the `alpine:latest` image on the engine (`alpine:3.19` is pulled
+when missing and kept). They create and remove only their own containers, volumes,
+networks and image tags named `berth-it-<guid>`, and never prune. The test of "Remove
+unused volumes" runs only against Docker Desktop's pipe. Without the variable they are
+reported as skipped.
 
 ```powershell
 $env:BERTH_ENGINE = 'tcp://127.0.0.1:2375'; dotnet test --filter "FullyQualifiedName~Integration"
-$env:BERTH_ENGINE = 'npipe:////./pipe/docker_engine'; dotnet test --filter "FullyQualifiedName~Integration"
+$env:BERTH_ENGINE = 'npipe:////./pipe/dockerDesktopLinuxEngine'; dotnet test --filter "FullyQualifiedName~Integration"
 ```
