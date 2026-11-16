@@ -45,7 +45,9 @@ internal sealed record WireInfo(
     [property: JsonPropertyName("ContainersRunning")] int ContainersRunning,
     [property: JsonPropertyName("ContainersPaused")] int ContainersPaused,
     [property: JsonPropertyName("ContainersStopped")] int ContainersStopped,
-    [property: JsonPropertyName("Images")] int Images);
+    [property: JsonPropertyName("Images")] int Images,
+    [property: JsonPropertyName("OperatingSystem")] string? OperatingSystem,
+    [property: JsonPropertyName("KernelVersion")] string? KernelVersion);
 
 internal sealed record WirePort(
     [property: JsonPropertyName("IP")] string? Ip,

@@ -111,12 +111,12 @@ public sealed class EngineClientTests
     {
         var (client, _) = await ConnectedAsync(stub => stub.On(
             "/v1.56/info",
-            """{"ID":"x","Name":"build-host","ServerVersion":"29.9.3","NCPU":16,"MemTotal":33554432000,"Containers":3,"ContainersRunning":2,"ContainersPaused":0,"ContainersStopped":1,"Images":75,"Driver":"overlayfs"}"""));
+            """{"ID":"x","Name":"build-host","ServerVersion":"29.9.3","NCPU":16,"MemTotal":33554432000,"Containers":3,"ContainersRunning":2,"ContainersPaused":0,"ContainersStopped":1,"Images":75,"Driver":"overlayfs","OperatingSystem":"Ubuntu 24.04.5 LTS","KernelVersion":"6.18.58.1-microsoft-standard-WSL2"}"""));
         await using var _client = client;
 
         var info = await client.GetInfoAsync(CancellationToken.None);
 
-        Assert.Equal(new EngineInfo("build-host", "29.9.3", 16, 33554432000, 2, 0, 1, 75), info);
+        Assert.Equal(new EngineInfo("build-host", "29.9.3", 16, 33554432000, 2, 0, 1, 75) { OperatingSystem = "Ubuntu 24.04.5 LTS", KernelVersion = "6.18.58.1-microsoft-standard-WSL2" }, info);
     }
 
     [Fact]

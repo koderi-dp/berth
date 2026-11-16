@@ -102,6 +102,33 @@ public static class ImageRows
             _ => "No images match the search.",
         };
 
+    /// <summary>
+    /// The line above the table: "67 MB in use of 1.2 GB · 12 images" (in use is the engine's total less what removing the unused
+    /// images would free), or "Calculating… · 12 images" until the disk use has been read. The count is of images, not tags.
+    /// </summary>
+    public static string UsageLine(EngineState state)
+    {
+        var count = state.Images.Items.Length;
+        var images = count == 1 ? "1 image" : $"{count} images";
+        if (state.DiskUsage.Usage is not { } usage)
+            return $"Calculating… · {images}";
+
+        var totals = usage.ImageTotals;
+        return $"{ByteFormat.Bytes(totals.TotalSize - totals.Reclaimable)} in use of {ByteFormat.Bytes(totals.TotalSize)} · {images}";
+    }
+
+    /// <summary>
+    /// How a line about a remove names its key: an image ID still listed by its tags ("web:1, web:latest"), or as an untagged image
+    /// ("&lt;none&gt;:&lt;none&gt; (0123456789ab)"); a tag, or an image no longer listed, as the key itself.
+    /// </summary>
+    public static string NameOfKey(EngineState state, string key)
+    {
+        var image = state.Images.Items.FirstOrDefault(i => i.Id == key);
+        return image is null ? key
+            : image.RepoTags.Count > 0 ? string.Join(", ", image.RepoTags)
+            : $"{None}:{None} ({ComposeGrouping.ShortId(image.Id)})";
+    }
+
     private static IEnumerable<ImageRow> Rows(ImageSummary image, IReadOnlyList<string> users, IReadOnlyDictionary<string, ItemAction> pending)
     {
         var shortId = ComposeGrouping.ShortId(image.Id);

@@ -24,6 +24,19 @@ public sealed class RemovalProgressTests
     }
 
     [Fact]
+    public void Each_line_can_name_the_item_as_the_list_does()
+    {
+        var batch = Ten with { Finished = 10, Refusals = [new RemovalRefusal("sha256:abc", "conflict: unable to delete abc (must be forced)")] } with
+        {
+            Skips = [new RemovalSkip("sha256:def", SkipReason.Gone)],
+        };
+
+        Assert.Equal(
+            ["web:1: conflict: unable to delete abc (must be forced)", "sha256:def: skipped, it is no longer listed."],
+            RemovalProgress.Details(batch, key => key == "sha256:abc" ? "web:1" : key));
+    }
+
+    [Fact]
     public void Each_skip_says_why()
     {
         var batch = Ten with { Finished = 10 } with

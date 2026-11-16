@@ -34,10 +34,13 @@ public static class RemovalProgress
     }
 
     /// <summary>One line per refusal ("v2: the engine's message") and per skip ("v3: skipped, it is no longer listed."), in order.</summary>
-    public static IReadOnlyList<string> Details(RemovalBatch batch) =>
+    public static IReadOnlyList<string> Details(RemovalBatch batch) => Details(batch, key => key);
+
+    /// <summary>As <see cref="Details(RemovalBatch)"/>, each item named by <paramref name="nameOf"/> its key (an image ID as its tags).</summary>
+    public static IReadOnlyList<string> Details(RemovalBatch batch, Func<string, string> nameOf) =>
     [
-        .. batch.Refusals.Select(r => $"{r.Key}: {r.Message}"),
-        .. batch.Skips.Select(s => $"{s.Id}: skipped, {Why(s.Reason)}"),
+        .. batch.Refusals.Select(r => $"{nameOf(r.Key)}: {r.Message}"),
+        .. batch.Skips.Select(s => $"{nameOf(s.Id)}: skipped, {Why(s.Reason)}"),
     ];
 
     private static string Problems(RemovalBatch batch)

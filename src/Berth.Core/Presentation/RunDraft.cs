@@ -27,8 +27,19 @@ public sealed record RunDraftErrors(string? Name, ImmutableArray<string?> Ports,
 /// </summary>
 public sealed partial record RunDraft(string Image, string Name, ImmutableArray<PortField> Ports, ImmutableArray<VolumeField> Volumes, ImmutableArray<EnvField> Env)
 {
-    /// <summary>What the dialog says under the volumes: an engine in WSL refuses a Windows path ("C:\...").</summary>
-    public const string HostPathNote = "For an engine in WSL, write a Windows folder as /mnt/c/... rather than C:\\...";
+    /// <summary>What the dialog says under the volumes for an engine in WSL, which refuses a Windows path ("C:\...").</summary>
+    public const string HostPathNote = "For this engine, write Windows folders as /mnt/c/…";
+
+    /// <summary>
+    /// <see cref="HostPathNote"/> when the engine runs in a WSL distribution itself (a WSL kernel, not Docker Desktop, which takes Windows
+    /// paths as they are); null otherwise, and before the engine has been read.
+    /// </summary>
+    public static string? HostPathNoteFor(EngineInfo? info) =>
+        info is not null
+        && info.KernelVersion.Contains("microsoft", StringComparison.OrdinalIgnoreCase)
+        && !info.OperatingSystem.Equals("Docker Desktop", StringComparison.OrdinalIgnoreCase)
+            ? HostPathNote
+            : null;
 
     public const string NameError = "Use letters, digits, _, . and -, starting with a letter or digit.";
     public const string PortError = "Enter a port from 1 to 65535, or 0 for any free port.";

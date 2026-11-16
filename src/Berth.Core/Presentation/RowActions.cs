@@ -4,8 +4,8 @@ using Berth.Text;
 
 namespace Berth.Presentation;
 
-/// <summary>Everything a row of the containers table, or the header of a container's detail page, can do.</summary>
-public enum RowActionKind { ViewDetails, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, CopyRunPowerShell, CopyRunBash, Delete }
+/// <summary>Everything a row of the containers or images table, or the header of a container's detail page, can do.</summary>
+public enum RowActionKind { ViewDetails, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, CopyRunPowerShell, CopyRunBash, Delete, Run, PullAgain, Inspect }
 
 /// <summary>When an action is a button on its row; when it is not, it is in the row's "more" menu.</summary>
 public enum ButtonWhen
@@ -122,6 +122,29 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
         return viewDetails
             ? new RowActions([[Local(RowActionKind.ViewDetails, "View details")], run, other, [delete]], browserUrl)
             : new RowActions([run, other, [delete]], browserUrl);
+    }
+
+    /// <summary>
+    /// An image's row (one tag, or an untagged image): Run, its button at every width; then Pull again and Inspect; then Copy name and
+    /// Copy ID; then Delete. Run, Pull again and Delete act while the row can act (<see cref="RowSelection.CanAct"/>), Inspect while
+    /// connected; an untagged image has no name to pull again or copy. Every action names the row's key.
+    /// </summary>
+    public static RowActions ForImage(ImageRow row, bool connected)
+    {
+        var canAct = RowSelection.CanAct(row, connected);
+        ImmutableArray<string> keys = [row.Key];
+
+        RowAction Action(RowActionKind kind, string label, bool enabled, ButtonWhen button = ButtonWhen.Never, bool main = false) =>
+            new(kind, label, enabled, button, main, EngineAction: null, keys);
+
+        return new RowActions(
+            [
+                [Action(RowActionKind.Run, "Run", canAct, ButtonWhen.Always, main: true)],
+                [Action(RowActionKind.PullAgain, "Pull again", canAct && row.IsTagged), Action(RowActionKind.Inspect, "Inspect", connected)],
+                [Action(RowActionKind.CopyName, "Copy name", row.IsTagged), Action(RowActionKind.CopyId, "Copy ID", enabled: true)],
+                [Action(RowActionKind.Delete, "Delete", canAct, ButtonWhen.Always)],
+            ],
+            BrowserUrl: null);
     }
 
     /// <summary>

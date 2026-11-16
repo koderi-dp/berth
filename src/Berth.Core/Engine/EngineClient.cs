@@ -81,7 +81,11 @@ public sealed class EngineClient : IEngineApi
             wire.ContainersRunning,
             wire.ContainersPaused,
             wire.ContainersStopped,
-            wire.Images);
+            wire.Images)
+        {
+            OperatingSystem = wire.OperatingSystem ?? "",
+            KernelVersion = wire.KernelVersion ?? "",
+        };
     }
 
     public async Task<IReadOnlyList<ContainerSummary>> ListContainersAsync(CancellationToken ct)
