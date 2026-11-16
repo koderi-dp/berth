@@ -202,8 +202,11 @@ internal sealed class ContainersPage : ListPageComponent
     {
         if (groups.Count == 0 && !state.ListLoaded)
         {
-            // The connection's first list has not arrived: an empty list here does not yet mean there are no containers.
-            return ListTable.Loading("Loading containers");
+            // The connection's first list has not arrived: an empty list here does not yet mean there are no containers. When its read
+            // failed, the engine's message and Retry take the ring's place.
+            return state.ContainersLoadError is { } error
+                ? ListTable.LoadFailed(error, () => AppServices.Current.Session.Dispatch(new ReloadRequested()))
+                : ListTable.Loading("Loading containers");
         }
 
         if (groups.Count == 0)

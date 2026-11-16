@@ -52,7 +52,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
-                            RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
+                            RowActions (a container's or an image's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
                             Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text), PullFigure (a pull's progress
@@ -72,8 +72,8 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   App.cs                    the window component: title bar, navigation (AppRoute: Containers, Images, Volumes, Networks,
                             ContainerDetail, Settings), status bar; switches list stats on and off (see below) and tells the
                             session which of the images, volumes and networks lists is wanted when its page is shown
-  Hooks/                    EngineStateHook.cs (EngineStateComponent, the base class for components that show the
-                            engine state), DetailStateHook.cs (the open detail session's state as an external store),
+  Hooks/                    EngineStateHook.cs (EngineStateComponent and EngineStateComponent<TProps>, the base classes
+                            for components that show the engine state), DetailStateHook.cs (the open detail session's state as an external store),
                             UiThreadSubscription.cs (shared by both: follows a replaceable source and coalesces its
                             thread-pool changes into one pending UI-thread callback), SettingsHook.cs (settings as an
                             external store), ListViewHook.cs (ListPageComponent, the base class of the four list pages:
@@ -84,14 +84,19 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
                             row and the detail header), ListPage (a list page's sections, toolbar, search box, bulk bar
                             and its shortcuts) and ListTable (columns with wide and compact widths, header with sortable
-                            titles, rows, the virtualized table, loading and empty states), shared by the four lists;
+                            titles, rows, the virtualized table, loading, failed-load and empty states), shared by the four lists;
                             ShellKeys (the app's shortcuts at the window root, Ctrl+F, F5, Delete, Escape, Alt+Left,
-                            acting for the page shown through the PageKeys it registers), DeleteDialog, DetailHeader
+                            acting for the page shown through the PageKeys it registers), RemovalPanel (a list's batch of removes:
+                            progress, then what was removed, refused or skipped), DialogParts (a primary button that keeps
+                            its dialog open, a wider dialog, stacks, field errors and hints), DeleteDialog, DetailHeader
                             (breadcrumb, name, ID, image, ports, status, actions), StatsStrip (total CPU and memory
                             above the list)
   Pages/                    ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage,
                             ConnectionEditor, ContainerDetailPage (header, tab strip, keeps a detail session open while
                             shown)
+    Images/                 ImageTable (the images table, a component with record props so a pull's progress does not
+                            build it again), PullRows (the pulls under way, at the top of the table), PullDialog, RunDialog
+                            (run a container from an image), InspectDialog (an image's raw JSON)
     Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
@@ -323,6 +328,10 @@ wrong or could be better before they do.
     the state dot), and a child's name drops what the parent row already says.
   - Destructive actions confirm, name what will be lost, and default to Cancel.
   - Light and dark working does not mean High Contrast works; that has not been checked yet.
+  - A Reactor `FlexRow` or `FlexColumn` takes all the room it is offered: a flex row of buttons in a toolbar left the search box
+    none, a flex column in a dialog made it as tall as the window, and a flex column in a grid cell kept long text from wrapping.
+    Use a `Grid`, `HStack` or `VStack` (`DialogParts.Stack`) there. A negative vertical margin in a flex column crashes its
+    layout ("Non-negative number required").
   - Keyboard shortcuts are registered with `ShellKeys` (a page's `PageKeys`), never with a `CommandHost`: Reactor's host takes its
     key even while its command is disabled (an inner disabled Escape kept the page's Escape from running) and works only while the
     focus is inside it (not after a click in the sidebar).

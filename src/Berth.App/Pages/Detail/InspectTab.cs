@@ -170,9 +170,9 @@ internal sealed class InspectTab : Component<InspectTabProps>
 
     /// <summary>
     /// The engine's whole answer: monospace, selectable, scrollable both ways. A read-only text box: it scrolls and selects across
-    /// lines (Ctrl+A, Ctrl+C) and lays out tens of kilobytes quickly.
+    /// lines (Ctrl+A, Ctrl+C) and lays out tens of kilobytes quickly. Also the image Inspect dialog's view. Build it once per answer.
     /// </summary>
-    private static Element RawView(string json) =>
+    internal static Element RawView(string json) =>
         TextBox(json)
             .IsReadOnly()
             .AcceptsReturn()

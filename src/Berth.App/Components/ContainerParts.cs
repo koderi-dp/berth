@@ -170,6 +170,9 @@ internal static class ContainerParts
         RowActionKind.Delete => Glyphs.Delete,
         RowActionKind.OpenInBrowser => Glyphs.Globe,
         RowActionKind.CopyRunPowerShell or RowActionKind.CopyRunBash => Glyphs.CommandPrompt,
+        RowActionKind.Run => Glyphs.Play,
+        RowActionKind.PullAgain => Glyphs.Download,
+        RowActionKind.Inspect => Glyphs.Code,
         _ => Glyphs.Copy,
     };
 

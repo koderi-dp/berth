@@ -117,6 +117,9 @@ internal sealed class App : EngineStateComponent
             {
                 if (WantedEvent(nav.CurrentRoute) is { } wanted)
                     AppServices.Current.Session.Dispatch(wanted);
+                // The Images page's usage line: read again each time the page is shown (Remove unused names the space it frees from it).
+                if (nav.CurrentRoute == AppRoute.Images)
+                    AppServices.Current.Session.Dispatch(new DiskUsageRequested());
             },
             nav.CurrentRoute,
             AppServices.Current.SessionNumber);

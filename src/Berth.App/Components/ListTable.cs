@@ -164,6 +164,14 @@ internal static class ListTable
             .Margin(0, 24, 0, 0)
             .Flex(grow: 1, basis: 0);
 
+    /// <summary>
+    /// In the table's place when the connection's first read of the list failed: the engine's <paramref name="message"/> as it is, and
+    /// Retry (<paramref name="onRetry"/>), which reads the list again.
+    /// </summary>
+    public static Element LoadFailed(string message, Action onRetry) =>
+        (FlexColumn(Widgets.RetryBar(message, onRetry).AutomationId("list-error")) with { RowGap = 0 })
+            .Flex(grow: 1, basis: 0);
+
     /// <summary>In the table's place when it has no rows: why (<paramref name="text"/>: nothing on the engine, or nothing matches).</summary>
     public static Element EmptyState(string text) =>
         Body(text).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);

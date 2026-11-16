@@ -38,3 +38,11 @@ internal abstract class EngineStateComponent : Component
     protected EngineState UseEngineState() =>
         UseExternalStore(EngineStateHook.Subscribe, EngineStateHook.Snapshot, EngineStateHook.SameState);
 }
+
+/// <summary>A component with props that shows the engine state.</summary>
+internal abstract class EngineStateComponent<TProps> : Component<TProps>
+{
+    /// <inheritdoc cref="EngineStateComponent.UseEngineState"/>
+    protected EngineState UseEngineState() =>
+        UseExternalStore(EngineStateHook.Subscribe, EngineStateHook.Snapshot, EngineStateHook.SameState);
+}

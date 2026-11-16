@@ -34,6 +34,8 @@ internal sealed class NetworksPage : ListPageComponent
             // Until the table is built: the loading state until the list arrives, then how many there are.
             state.Networks.Loaded
                 ? ListTable.EmptyState(count == 1 ? "1 network on this engine." : $"{count} networks on this engine.")
-                : ListTable.Loading("Loading networks"));
+                : state.Networks.LoadError is { } error
+                    ? ListTable.LoadFailed(error, () => AppServices.Current.Session.Dispatch(new NetworksWanted()))
+                    : ListTable.Loading("Loading networks"));
     }
 }

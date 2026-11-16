@@ -67,21 +67,31 @@ internal static class ListPage
     /// </summary>
     public static Element Toolbar(Element search, Element? filter, params Element[] buttons)
     {
-        var children = new List<Element?> { search, filter };
-        if (buttons.Length > 0)
+        if (buttons.Length == 0)
         {
-            children.Add(Empty().Flex(grow: 1, basis: 0));
-            children.Add((FlexRow(buttons) with { AlignItems = FlexAlign.Center, ColumnGap = 8 }).Flex(shrink: 0));
+            return (FlexRow(search, filter)
+                with
+                {
+                    AlignItems = FlexAlign.Center,
+                    ColumnGap = 24,
+                })
+                .Flex(shrink: 0);
         }
 
-        return (FlexRow([.. children])
-            with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 24,
-            })
+        // A grid, not a flex row: a flex row of buttons takes the whole width it is offered, which left the search box and the filter
+        // none. The buttons take what they need at the right end; the search and the filter keep their widths at the left.
+        return Grid(
+                ToolbarColumns,
+                ToolbarRows,
+                search.VAlign(VerticalAlignment.Center).Margin(0, 0, 24, 0).Grid(column: 0),
+                filter?.VAlign(VerticalAlignment.Center).Margin(0, 0, 24, 0).Grid(column: 1),
+                HStack(8, buttons).VAlign(VerticalAlignment.Center).Grid(column: 3))
             .Flex(shrink: 0);
     }
+
+    private static readonly GridSize[] ToolbarColumns = [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto];
+
+    private static readonly GridSize[] ToolbarRows = [GridSize.Auto];
 
     /// <summary>
     /// The list's search box (AutomationId <c>search</c>): uncontrolled (<see cref="Widgets.SearchBox"/>), so a page that comes

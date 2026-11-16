@@ -34,6 +34,8 @@ internal sealed class VolumesPage : ListPageComponent
             // Until the table is built: the loading state until the list arrives, then how many there are.
             state.Volumes.Loaded
                 ? ListTable.EmptyState(count == 1 ? "1 volume on this engine." : $"{count} volumes on this engine.")
-                : ListTable.Loading("Loading volumes"));
+                : state.Volumes.LoadError is { } error
+                    ? ListTable.LoadFailed(error, () => AppServices.Current.Session.Dispatch(new VolumesWanted()))
+                    : ListTable.Loading("Loading volumes"));
     }
 }
