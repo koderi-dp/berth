@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
+using Berth.Presentation;
 using Berth.Session;
+using Berth.Tests.Presentation;
 
 namespace Berth.Tests.Session;
 
@@ -443,6 +445,70 @@ public sealed class SessionReducerTests
         Assert.Empty(effects);
     }
 
+    // Copy docker run from the list: the list does not have the container's settings, so the session inspects it first.
+
+    [Theory]
+    [InlineData(ShellKind.PowerShell)]
+    [InlineData(ShellKind.Posix)]
+    public void Copying_the_run_command_inspects_the_container_for_that_shell(ShellKind shell)
+    {
+        var connected = Connected();
+
+        var (state, effects) = Reduce(connected, new RunCommandRequested("a", shell));
+
+        Assert.Same(connected, state);
+        Assert.Equal([new InspectForRunCommandEffect("a", shell)], effects);
+    }
+
+    [Fact]
+    public void Copying_the_run_command_while_an_action_runs_on_the_container_still_inspects_it()
+    {
+        var (pending, _) = Reduce(Connected(), new ActionRequested(["a"], ContainerAction.Stop));
+
+        var (state, effects) = Reduce(pending, new RunCommandRequested("a", ShellKind.Posix));
+
+        Assert.Same(pending, state);
+        Assert.Equal([new InspectForRunCommandEffect("a", ShellKind.Posix)], effects);
+    }
+
+    [Theory]
+    [InlineData(ShellKind.PowerShell)]
+    [InlineData(ShellKind.Posix)]
+    public void An_inspected_container_has_its_run_command_copied(ShellKind shell)
+    {
+        var connected = Connected();
+        var details = DetailsFixtures.Details("a") with { Env = ["GREETING=it's here"] };
+
+        var (state, effects) = Reduce(connected, new RunCommandInspected("a", shell, details));
+
+        Assert.Same(connected, state);
+        Assert.Equal([new CopyTextEffect(DockerRunCommand.Build(details, shell))], effects);
+    }
+
+    [Fact]
+    public void A_failed_inspect_for_the_run_command_shows_the_engine_message_as_is()
+    {
+        var connected = Connected();
+
+        var (state, effects) = Reduce(connected, new RunCommandFailed("a", "No such container: a", EngineUnreachable: false));
+
+        Assert.Equal(connected with { ActionError = "No such container: a" }, state);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void A_failed_inspect_for_the_run_command_that_cannot_reach_the_engine_becomes_connection_lost()
+    {
+        var connected = Connected();
+
+        var (state, effects) = Reduce(connected, new RunCommandFailed("a", "connection refused", EngineUnreachable: true));
+
+        Assert.Equal(ConnectionStatus.Disconnected, state.Status);
+        Assert.Equal("connection refused", state.ConnectionError);
+        Assert.Null(state.ActionError);
+        Assert.Equal([new StopStreamsEffect(), new ScheduleRetryEffect(TimeSpan.FromSeconds(1))], effects);
+    }
+
     [Fact]
     public void Events_other_than_connect_are_ignored_while_disconnected()
     {
@@ -461,6 +527,10 @@ public sealed class SessionReducerTests
             new ActionSucceeded("a"),
             new ActionFailed("a", "No such container: a", EngineUnreachable: false),
             new ActionFailed("a", "connection refused", EngineUnreachable: true),
+            new RunCommandRequested("a", ShellKind.PowerShell),
+            new RunCommandInspected("a", ShellKind.PowerShell, DetailsFixtures.Details("a")),
+            new RunCommandFailed("a", "No such container: a", EngineUnreachable: false),
+            new RunCommandFailed("a", "connection refused", EngineUnreachable: true),
         ];
 
         foreach (var e in events)

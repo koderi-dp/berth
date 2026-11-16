@@ -131,9 +131,35 @@ internal sealed class AppServices
     private static ConnectionProfile ActiveConnection(AppSettings settings) =>
         settings.Connections.FirstOrDefault(connection => connection.Id == settings.ActiveConnectionId) ?? settings.Connections[0];
 
-    /// <summary>A session for <paramref name="connection"/> whose failures go to the log (fixed wording and exception type names only).</summary>
-    private static EngineSession CreateSession(ConnectionProfile connection) =>
-        new(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error);
+    /// <summary>
+    /// A session for <paramref name="connection"/> whose failures go to the log (fixed wording and exception type names only), and whose
+    /// text to copy (a <c>docker run</c> command read for the list) goes to the clipboard.
+    /// </summary>
+    private EngineSession CreateSession(ConnectionProfile connection)
+    {
+        var session = new EngineSession(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error);
+        session.CopyRequested += text => CopyFromSession(session, text);
+        return session;
+    }
+
+    /// <summary>
+    /// Puts <paramref name="text"/> on the clipboard on the UI thread, unless <paramref name="session"/> was replaced in the meantime (the
+    /// user switched to another engine). The text is never logged: it may hold environment values.
+    /// </summary>
+    private void CopyFromSession(EngineSession session, string text) =>
+        Microsoft.UI.Reactor.ReactorApp.UIDispatcher?.TryEnqueue(() =>
+        {
+            if (!ReferenceEquals(session, Session))
+                return;
+            try
+            {
+                Components.ContainerParts.CopyToClipboard(text);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("copying to the clipboard failed", ex);
+            }
+        });
 
     private void ReplaceDetail(ContainerDetailSession? next)
     {

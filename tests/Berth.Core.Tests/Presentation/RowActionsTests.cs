@@ -27,7 +27,7 @@ public sealed class RowActionsTests
             [
                 [RowActionKind.ViewDetails],
                 [RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Pause],
-                [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId],
+                [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
                 [RowActionKind.Delete],
             ],
             Kinds(actions.Sections));
@@ -43,7 +43,7 @@ public sealed class RowActionsTests
             [
                 [RowActionKind.ViewDetails],
                 [RowActionKind.Start, RowActionKind.Restart, RowActionKind.Pause],
-                [RowActionKind.CopyName, RowActionKind.CopyId],
+                [RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
                 [RowActionKind.Delete],
             ],
             Kinds(actions.Sections));
@@ -64,7 +64,7 @@ public sealed class RowActionsTests
         var actions = RowActions.ForContainer(Row("web", published: true), connected: true);
 
         Assert.Equal(
-            ["View details", "Stop", "Restart", "Pause", "Open in browser", "Copy name", "Copy ID", "Delete"],
+            ["View details", "Stop", "Restart", "Pause", "Open in browser", "Copy name", "Copy ID", "Copy docker run (PowerShell)", "Copy docker run (bash)", "Delete"],
             actions.Sections.SelectMany(s => s).Select(a => a.Label));
         Assert.Equal("Resume", Find(RowActions.ForContainer(Row("p", RowState.Paused), connected: true), RowActionKind.Resume).Label);
         Assert.Equal("Start", Find(RowActions.ForContainer(Row("s", RowState.Stopped), connected: true), RowActionKind.Start).Label);
@@ -80,15 +80,73 @@ public sealed class RowActionsTests
         Assert.False(Find(RowActions.ForContainer(Row("x", RowState.Restarting), connected: true), RowActionKind.Pause).IsEnabled);
     }
 
-    [Theory]
-    [InlineData(false, null)]
-    [InlineData(true, ContainerAction.Stop)]
-    public void Engine_actions_are_disabled_while_not_connected_or_busy_and_the_rest_stay_enabled(bool connected, ContainerAction? pending)
+    [Fact]
+    public void While_not_connected_only_the_actions_that_stay_on_this_machine_are_enabled()
     {
-        var actions = RowActions.ForContainer(Row("web", RowState.Paused, pending, published: true), connected);
+        var actions = RowActions.ForContainer(Row("web", RowState.Paused, published: true), connected: false);
 
         var enabled = actions.Sections.SelectMany(s => s).Where(a => a.IsEnabled).Select(a => a.Kind);
         Assert.Equal([RowActionKind.ViewDetails, RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId], enabled);
+    }
+
+    [Fact]
+    public void While_busy_the_engine_actions_are_disabled_and_copying_the_run_command_is_not()
+    {
+        var actions = RowActions.ForContainer(Row("web", RowState.Paused, ContainerAction.Stop, published: true), connected: true);
+
+        var enabled = actions.Sections.SelectMany(s => s).Where(a => a.IsEnabled).Select(a => a.Kind);
+        Assert.Equal(
+            [
+                RowActionKind.ViewDetails, RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId,
+                RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash,
+            ],
+            enabled);
+    }
+
+    // Copy docker run: one item per shell, because quoting differs; it reads the container from the engine, so it needs the connection.
+
+    [Fact]
+    public void Copy_docker_run_comes_for_each_shell_with_its_shell()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: true);
+
+        Assert.Equal(ShellKind.PowerShell, Find(actions, RowActionKind.CopyRunPowerShell).RunCommandShell);
+        Assert.Equal(ShellKind.Posix, Find(actions, RowActionKind.CopyRunBash).RunCommandShell);
+        Assert.All(
+            actions.Sections.SelectMany(s => s).Where(a => a.Kind is not (RowActionKind.CopyRunPowerShell or RowActionKind.CopyRunBash)),
+            a => Assert.Null(a.RunCommandShell));
+        Assert.Null(Find(actions, RowActionKind.CopyRunPowerShell).EngineAction);
+        Assert.Equal<string>(["web"], Find(actions, RowActionKind.CopyRunBash).Ids);
+    }
+
+    [Fact]
+    public void Copy_docker_run_for_PowerShell_says_which_PowerShell_it_is_for()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: true);
+
+        Assert.Equal(
+            "For PowerShell 7. Windows PowerShell 5.1 drops double quotes inside values.",
+            Find(actions, RowActionKind.CopyRunPowerShell).Description);
+        Assert.Null(Find(actions, RowActionKind.CopyRunBash).Description);
+        Assert.Null(Find(actions, RowActionKind.CopyName).Description);
+    }
+
+    [Fact]
+    public void Copy_docker_run_is_disabled_while_not_connected()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: false);
+
+        Assert.False(Find(actions, RowActionKind.CopyRunPowerShell).IsEnabled);
+        Assert.False(Find(actions, RowActionKind.CopyRunBash).IsEnabled);
+    }
+
+    [Fact]
+    public void Copy_docker_run_is_never_a_button()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: true);
+
+        Assert.DoesNotContain(actions.Buttons(compact: false), a => a.RunCommandShell is not null);
+        Assert.DoesNotContain(actions.Buttons(compact: true), a => a.RunCommandShell is not null);
     }
 
     [Fact]
@@ -114,7 +172,10 @@ public sealed class RowActionsTests
 
         Assert.Equal([RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Pause], actions.Buttons(compact: false).Select(a => a.Kind));
         Assert.Equal(
-            [[RowActionKind.ViewDetails], [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId]],
+            [
+                [RowActionKind.ViewDetails],
+                [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
+            ],
             Kinds(actions.MoreMenu(compact: false)));
         Assert.Equal(RowActionKind.Delete, actions.Delete.Kind);
     }
@@ -126,7 +187,11 @@ public sealed class RowActionsTests
 
         Assert.Equal([RowActionKind.Stop], actions.Buttons(compact: true).Select(a => a.Kind));
         Assert.Equal(
-            [[RowActionKind.ViewDetails], [RowActionKind.Restart, RowActionKind.Pause], [RowActionKind.CopyName, RowActionKind.CopyId]],
+            [
+                [RowActionKind.ViewDetails],
+                [RowActionKind.Restart, RowActionKind.Pause],
+                [RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
+            ],
             Kinds(actions.MoreMenu(compact: true)));
     }
 
@@ -169,7 +234,7 @@ public sealed class RowActionsTests
         var list = RowActions.ForContainer(row, connected: true);
         var page = RowActions.ForContainer(row, connected: true, viewDetails: false);
 
-        static object Shape(RowAction a) => (a.Kind, a.Label, a.IsEnabled, a.Button, a.IsMain, a.EngineAction, string.Join(",", a.Ids));
+        static object Shape(RowAction a) => (a.Kind, a.Label, a.IsEnabled, a.Button, a.IsMain, a.EngineAction, string.Join(",", a.Ids), a.Description, a.RunCommandShell);
         Assert.Equal(list.Sections.Skip(1).Select(s => s.Select(Shape).ToArray()), page.Sections.Select(s => s.Select(Shape).ToArray()));
         Assert.Equal(list.Buttons(compact: false).Select(Shape), page.Buttons(compact: false).Select(Shape));
         Assert.Equal(list.BrowserUrl, page.BrowserUrl);

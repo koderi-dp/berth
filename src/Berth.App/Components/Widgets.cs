@@ -30,6 +30,8 @@ internal static class Glyphs
     public const string Wrap = ""; // ReturnKey: the arrow that carries a line on to the next
     public const string Erase = ""; // EraseTool
     public const string Close = ""; // Cancel
+    public const string CommandPrompt = "";
+    public const string OpenFolder = ""; // OpenLocal
 }
 
 /// <summary>Small pieces shared by the shell and the pages.</summary>

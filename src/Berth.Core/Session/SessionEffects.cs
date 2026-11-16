@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Berth.Presentation;
 
 namespace Berth.Session;
 
@@ -44,3 +45,12 @@ public sealed record WatchStatsEffect(ImmutableArray<string> ContainerIds) : Ses
         return hash.ToHashCode();
     }
 }
+
+/// <summary>Inspect one container for its <c>docker run</c> command; answers with RunCommandInspected or RunCommandFailed.</summary>
+public sealed record InspectForRunCommandEffect(string Id, ShellKind Shell) : SessionEffect;
+
+/// <summary>
+/// Hand <see cref="Text"/> to the app for the clipboard (<see cref="EngineSession.CopyRequested"/>). It may hold environment values:
+/// it is never logged.
+/// </summary>
+public sealed record CopyTextEffect(string Text) : SessionEffect;

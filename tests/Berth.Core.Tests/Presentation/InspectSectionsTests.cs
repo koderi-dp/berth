@@ -278,6 +278,40 @@ public sealed class InspectSectionsTests
         Assert.Empty(InspectSections.BindMounts(Details()));
     }
 
+    [Theory]
+    [InlineData(true, "Read-write")]
+    [InlineData(false, "Read-only")]
+    public void A_bind_mount_says_whether_the_container_can_write_to_it(bool readWrite, string expected)
+    {
+        Assert.Equal(expected, InspectSections.Access(new MountDetails("bind", "/srv", "/data", "", readWrite, null)));
+    }
+
+    [Theory]
+    [InlineData("/mnt/c/Users/me/site", @"C:\Users\me\site")]
+    [InlineData("/mnt/d", @"D:\")]
+    [InlineData("/mnt/d/", @"D:\")]
+    [InlineData("/run/desktop/mnt/host/c/work/app", @"C:\work\app")]
+    [InlineData(@"C:\work\app", @"C:\work\app")]
+    [InlineData("c:/work/app", @"C:\work\app")]
+    [InlineData(@"\\server\share\app", @"\\server\share\app")]
+    public void A_host_path_on_a_Windows_drive_or_share_reads_as_a_Windows_path(string source, string expected)
+    {
+        Assert.Equal(expected, InspectSections.WindowsPath(source));
+    }
+
+    [Theory]
+    [InlineData("/srv/data")]
+    [InlineData("/home/me/app")]
+    [InlineData("/mnt/wsl/shared")]
+    [InlineData("/mnt/host/c/work")]
+    [InlineData("/var/run/docker.sock")]
+    [InlineData("")]
+    [InlineData("relative/path")]
+    public void A_host_path_inside_the_engine_has_no_Windows_path(string source)
+    {
+        Assert.Null(InspectSections.WindowsPath(source));
+    }
+
     private static InspectSection Section(ContainerDetails details, string title) =>
         Assert.Single(InspectSections.Build(details), s => s.Title == title);
 }

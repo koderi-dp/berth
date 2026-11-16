@@ -1,4 +1,6 @@
+using Berth.Engine.Models;
 using Berth.Presentation;
+using Berth.Session;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Layout;
@@ -56,10 +58,21 @@ internal static class ContainerParts
 
     /// <summary>
     /// Carries out the actions that stay on this machine for <paramref name="row"/>: opening the first published port, copying its
-    /// name or ID. Any other action goes to <paramref name="other"/>.
+    /// name or ID, and copying its <c>docker run</c> command: from <paramref name="details"/> when the container has been read (its
+    /// detail page), otherwise the engine session reads it first and hands the command over (<see cref="RunCommandRequested"/>; a
+    /// failure shows in the error bar). Any other action goes to <paramref name="other"/>.
     /// </summary>
-    public static void Run(RowAction action, ContainerRow row, RowActions actions, Action<RowAction> other)
+    public static void Run(RowAction action, ContainerRow row, RowActions actions, Action<RowAction> other, ContainerDetails? details = null)
     {
+        if (action.RunCommandShell is { } shell)
+        {
+            if (details is not null)
+                CopyToClipboard(DockerRunCommand.Build(details, shell));
+            else
+                AppServices.Current.Session.Dispatch(new RunCommandRequested(row.Id, shell));
+            return;
+        }
+
         switch (action.Kind)
         {
             case RowActionKind.OpenInBrowser when actions.BrowserUrl is { } url:
@@ -109,7 +122,12 @@ internal static class ContainerParts
         .. sections.SelectMany((section, i) => (MenuEntry[])
         [
             .. i > 0 ? (MenuEntry[])[MenuSeparator()] : [],
-            .. section.Select(a => MenuItem(a.Label, () => run(a)) with { IconElement = Widgets.MenuGlyph(Glyph(a.Kind)), IsEnabled = a.IsEnabled }),
+            .. section.Select(a => MenuItem(a.Label, () => run(a)) with
+            {
+                IconElement = Widgets.MenuGlyph(Glyph(a.Kind)),
+                IsEnabled = a.IsEnabled,
+                Description = a.Description,
+            }),
         ]),
     ];
 
@@ -124,6 +142,7 @@ internal static class ContainerParts
         RowActionKind.Resume => Glyphs.Resume,
         RowActionKind.Delete => Glyphs.Delete,
         RowActionKind.OpenInBrowser => Glyphs.Globe,
+        RowActionKind.CopyRunPowerShell or RowActionKind.CopyRunBash => Glyphs.CommandPrompt,
         _ => Glyphs.Copy,
     };
 

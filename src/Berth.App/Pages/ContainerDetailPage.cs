@@ -130,13 +130,13 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
 
         // The page renders on every batch of log lines (ten a second while a log floods). The header and the tab strip are built again
         // only when what they show changes; the header's "Running (52 minutes ago)" at most once a minute.
-        var inspected = mine?.Details?.State;
+        var details = mine?.Details;
         // One scalar for the rest of what the header shows: the minute, whether connected, whether compact.
         var headerKey = (DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0);
         var header = UseMemo(
-            () => row is null ? null : DetailHeader.Render(row, inspected, connected, compact, () => leave(null), Run),
+            () => row is null ? null : DetailHeader.Render(row, details, connected, compact, () => leave(null), Run),
             row,
-            inspected,
+            details,
             headerKey);
         var tabStrip = UseMemo(() => SelectorBar(Tabs, tab, setTab).AutomationId("detail-tabs").Flex(shrink: 0), tab);
 
@@ -169,7 +169,10 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 .IsClosable(false)
                 .Flex(shrink: 0);
 
-    /// <summary>The chosen tab, once the container has been read; a ring until then.</summary>
+    /// <summary>
+    /// The chosen tab, once the container has been read; a ring until then. Each tab is a component whose props are what it shows, so
+    /// it renders again only when that changes, not on every batch of log lines.
+    /// </summary>
     private static Element Content(DetailState? detail, bool listed, int tab, Action<bool> logsClaimEscape)
     {
         if (detail?.Details is null)
@@ -181,8 +184,8 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
 
         return tab switch
         {
-            1 => InspectTab.Render(detail),
-            2 => BindMountsTab.Render(detail),
+            1 => Component<InspectTab, InspectTabProps>(new(detail.Details, detail.RawJson ?? "")),
+            2 => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
             3 => StatsTab.Render(detail),
             _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs, logsClaimEscape)),
         };

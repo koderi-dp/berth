@@ -44,6 +44,34 @@ public static class InspectSections
     public static IReadOnlyList<MountDetails> BindMounts(ContainerDetails details) =>
         [.. details.Mounts.Where(m => m.Type == "bind")];
 
+    /// <summary>"Read-only" or "Read-write": what the container may do with a mount.</summary>
+    public static string Access(MountDetails mount) => mount.ReadWrite ? "Read-write" : "Read-only";
+
+    /// <summary>
+    /// Where a bind mount's host path is on this Windows machine: a Windows path or share as it is (with backslashes), and a Windows
+    /// drive as a Linux engine sees it (<c>/mnt/c/...</c> in WSL, <c>/run/desktop/mnt/host/c/...</c> in Docker Desktop) as
+    /// <c>C:\...</c>. Null for a path inside the engine's own file system, which Explorer cannot open by that name.
+    /// </summary>
+    public static string? WindowsPath(string source)
+    {
+        if (source.Length >= 3 && char.IsAsciiLetter(source[0]) && source[1] == ':' && source[2] is '\\' or '/')
+            return char.ToUpperInvariant(source[0]) + source[1..].Replace('/', '\\');
+        if (source.StartsWith(@"\\", StringComparison.Ordinal))
+            return source;
+
+        foreach (var prefix in (string[])["/mnt/", "/run/desktop/mnt/host/"])
+        {
+            if (!source.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+            var rest = source[prefix.Length..];
+            if (rest.Length == 0 || !char.IsAsciiLetter(rest[0]) || (rest.Length > 1 && rest[1] != '/'))
+                return null;
+            return $"{char.ToUpperInvariant(rest[0])}:\\{rest[Math.Min(2, rest.Length)..].Replace('/', '\\')}";
+        }
+
+        return null;
+    }
+
     private static List<InspectRow> State(ContainerStateDetails state)
     {
         var rows = new List<InspectRow>

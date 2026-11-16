@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
+using Berth.Presentation;
 
 namespace Berth.Session;
 
@@ -43,3 +44,12 @@ public sealed record StatsWantedChanged(bool Wanted) : SessionEvent;
 
 /// <summary>The latest stats sample of each watched container that sent one since the last batch.</summary>
 public sealed record StatsBatchArrived(ImmutableDictionary<string, StatsSample> Latest) : SessionEvent;
+
+/// <summary>The user asked to copy the <c>docker run</c> command of a listed container, written for <paramref name="Shell"/>.</summary>
+public sealed record RunCommandRequested(string Id, ShellKind Shell) : SessionEvent;
+
+/// <summary>The container was read for its <c>docker run</c> command.</summary>
+public sealed record RunCommandInspected(string Id, ShellKind Shell, ContainerDetails Details) : SessionEvent;
+
+/// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
+public sealed record RunCommandFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent;

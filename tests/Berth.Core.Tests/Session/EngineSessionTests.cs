@@ -119,6 +119,44 @@ public sealed class EngineSessionTests
     }
 
     [Fact]
+    public async Task Copying_the_run_command_inspects_the_container_and_hands_over_the_command()
+    {
+        var api = new FakeEngineApi();
+        var inspection = FakeEngineApi.Inspection("a");
+        api.SetInspection(inspection);
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        var copied = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Session.CopyRequested += text => copied.TrySetResult(text);
+
+        h.Session.Dispatch(new RunCommandRequested("a", Berth.Presentation.ShellKind.Posix));
+        var text = await copied.Task.WaitAsync(Patience);
+
+        Assert.Equal(Berth.Presentation.DockerRunCommand.Build(inspection.Details, Berth.Presentation.ShellKind.Posix), text);
+        Assert.Contains("Inspect a", api.Calls);
+        Assert.Null(h.Session.State.ActionError);
+    }
+
+    [Fact]
+    public async Task Copying_the_run_command_of_a_container_that_is_gone_shows_the_engine_message_as_is()
+    {
+        var api = new FakeEngineApi();
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        var copies = 0;
+        h.Session.CopyRequested += _ => Interlocked.Increment(ref copies);
+
+        h.Session.Dispatch(new RunCommandRequested("gone", Berth.Presentation.ShellKind.PowerShell));
+        var state = await h.WaitFor(s => s.ActionError is not null);
+
+        Assert.Equal("No such container: gone", state.ActionError);
+        Assert.Equal(ConnectionStatus.Connected, state.Status);
+        Assert.Equal(0, copies);
+        var (what, _) = await h.WaitForError();
+        Assert.Equal("inspecting a container for its run command failed", what);
+    }
+
+    [Fact]
     public async Task An_action_that_cannot_reach_the_engine_moves_to_disconnected()
     {
         var api = new FakeEngineApi();

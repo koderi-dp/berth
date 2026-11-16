@@ -30,14 +30,14 @@ internal static class DetailHeader
     private static readonly GridSize[] IdColumns = [GridSize.Auto, GridSize.Auto, GridSize.Star()];
     private static readonly GridSize[] OneRow = [GridSize.Star()];
 
-    /// <param name="inspected">The state from the last read of the container, for since when it runs; null before the first.</param>
+    /// <param name="details">The last read of the container: since when it runs, and its <c>docker run</c> command; null before the first.</param>
     /// <param name="compact">A narrow window: Restart and Pause go into the "more" menu, as on a list row.</param>
     /// <param name="onBack">Returns to the list.</param>
     /// <param name="run">Carries out an engine action or Delete (which the page confirms first).</param>
-    public static Element Render(ContainerRow row, ContainerStateDetails? inspected, bool connected, bool compact, Action onBack, Action<RowAction> run)
+    public static Element Render(ContainerRow row, ContainerDetails? details, bool connected, bool compact, Action onBack, Action<RowAction> run)
     {
         var actions = RowActions.ForContainer(row, connected, viewDetails: false);
-        void Run(RowAction action) => ContainerParts.Run(action, row, actions, run);
+        void Run(RowAction action) => ContainerParts.Run(action, row, actions, run, details);
 
         var breadcrumb = BreadcrumbBar(
                 Crumbs(row.Name),
@@ -66,7 +66,7 @@ internal static class DetailHeader
             .VAlign(VerticalAlignment.Center)
             .Margin(0, 0, 24, 0);
 
-        var headline = ContainerStatus.Headline(row.State, row.Status, inspected, DateTimeOffset.UtcNow);
+        var headline = ContainerStatus.Headline(row.State, row.Status, details?.State, DateTimeOffset.UtcNow);
         var status = (FlexColumn(
                 Caption("STATUS").Foreground(Theme.SecondaryText),
                 Body(headline).Foreground(ContainerStatus.IsFailedExit(row.Status) ? Theme.SystemCritical : Theme.PrimaryText)

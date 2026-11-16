@@ -4,7 +4,7 @@ using Berth.Session;
 namespace Berth.Presentation;
 
 /// <summary>Everything a row of the containers table, or the header of a container's detail page, can do.</summary>
-public enum RowActionKind { ViewDetails, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, Delete }
+public enum RowActionKind { ViewDetails, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, CopyRunPowerShell, CopyRunBash, Delete }
 
 /// <summary>When an action is a button on its row; when it is not, it is in the row's "more" menu.</summary>
 public enum ButtonWhen
@@ -30,7 +30,19 @@ public sealed record RowAction(
     ButtonWhen Button,
     bool IsMain,
     ContainerAction? EngineAction,
-    ImmutableArray<string> Ids);
+    ImmutableArray<string> Ids)
+{
+    /// <summary>More about the action, for its tooltip in a menu; null when the label says it all.</summary>
+    public string? Description { get; init; }
+
+    /// <summary>The shell a "Copy docker run" action writes the command for; null for any other action.</summary>
+    public ShellKind? RunCommandShell => Kind switch
+    {
+        RowActionKind.CopyRunPowerShell => ShellKind.PowerShell,
+        RowActionKind.CopyRunBash => ShellKind.Posix,
+        _ => null,
+    };
+}
 
 /// <summary>
 /// The actions of one row of the containers table, from which the view draws its buttons, its "more" menu and its context menu,
@@ -41,6 +53,12 @@ public sealed record RowAction(
 /// <param name="BrowserUrl">The first published port's address, which Open in browser opens; null when there is none.</param>
 public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections, Uri? BrowserUrl)
 {
+    /// <summary>
+    /// The PowerShell command is quoted for PowerShell 7. Windows PowerShell 5.1 passes arguments to programs by older rules and loses a
+    /// double quote inside a value.
+    /// </summary>
+    private const string PowerShellNote = "For PowerShell 7. Windows PowerShell 5.1 drops double quotes inside values.";
+
     /// <summary>Delete: always the last action, a button set apart from the others.</summary>
     public RowAction Delete => Sections[^1].Single(a => a.Kind == RowActionKind.Delete);
 
@@ -63,7 +81,8 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
 
     /// <summary>
     /// A container: View details (on its own, first, always enabled); then Start (stopped) or Stop (active), Restart, Pause (enabled
-    /// only while running) or Resume (paused); then Open in browser (only with a published port), Copy name, Copy ID; then Delete.
+    /// only while running) or Resume (paused); then Open in browser (only with a published port), Copy name, Copy ID, and Copy docker
+    /// run for PowerShell and for bash (enabled while connected, since the list has to read the container first); then Delete.
     /// </summary>
     /// <param name="viewDetails">False on the container's detail page, which has the same actions but View details.</param>
     public static RowActions ForContainer(ContainerRow row, bool connected, bool viewDetails = true)
@@ -76,8 +95,8 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
         RowAction Engine(RowActionKind kind, string label, ContainerAction action, ButtonWhen button, bool enabled = true, bool main = false) =>
             new(kind, label, canAct && enabled, button, main, action, ids);
 
-        RowAction Local(RowActionKind kind, string label) =>
-            new(kind, label, IsEnabled: true, ButtonWhen.Never, IsMain: false, EngineAction: null, ids);
+        RowAction Local(RowActionKind kind, string label, bool enabled = true) =>
+            new(kind, label, enabled, ButtonWhen.Never, IsMain: false, EngineAction: null, ids);
 
         RowAction[] run =
         [
@@ -94,6 +113,8 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
             .. browserUrl is null ? (RowAction[])[] : [Local(RowActionKind.OpenInBrowser, "Open in browser")],
             Local(RowActionKind.CopyName, "Copy name"),
             Local(RowActionKind.CopyId, "Copy ID"),
+            Local(RowActionKind.CopyRunPowerShell, "Copy docker run (PowerShell)", enabled: connected) with { Description = PowerShellNote },
+            Local(RowActionKind.CopyRunBash, "Copy docker run (bash)", enabled: connected),
         ];
         RowAction delete = new(RowActionKind.Delete, "Delete", canAct, ButtonWhen.Always, IsMain: false, EngineAction: null, ids);
 

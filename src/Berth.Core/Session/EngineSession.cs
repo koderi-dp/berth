@@ -25,6 +25,7 @@ public sealed class EngineSession : IAsyncDisposable
     private const string StreamFailedReport = "the engine event stream failed";
     private const string ActionFailedReport = "a container action failed";
     private const string StatsFailedReport = "a container stats stream failed";
+    private const string RunCommandFailedReport = "inspecting a container for its run command failed";
     private const string HandlerFailedReport = "a state change handler failed";
     private const string LoopFailedReport = "handling a session event failed";
 
@@ -79,6 +80,12 @@ public sealed class EngineSession : IAsyncDisposable
     /// under way when it is raised.
     /// </summary>
     public event Action<EngineState>? StateChanged;
+
+    /// <summary>
+    /// Raised on the loop with text the user asked to copy (a <c>docker run</c> command read from the engine), for the app to put on
+    /// the clipboard. The text may hold environment values: never log it.
+    /// </summary>
+    public event Action<string>? CopyRequested;
 
     /// <summary>Raised on the loop when an event from an older connection or timer is dropped. For tests.</summary>
     internal event Action<SessionEvent>? StaleEventDropped;
@@ -228,6 +235,14 @@ public sealed class EngineSession : IAsyncDisposable
                 connection.Run(ct => RunActionAsync(connection, action, ct));
                 break;
 
+            case InspectForRunCommandEffect inspect when _connection is { } connection:
+                connection.Run(ct => InspectForRunCommandAsync(connection, inspect, ct));
+                break;
+
+            case CopyTextEffect copy:
+                Raise(CopyRequested, copy.Text);
+                break;
+
             case ScheduleRetryEffect retry:
             {
                 _retryTimer?.Dispose();
@@ -363,6 +378,27 @@ public sealed class EngineSession : IAsyncDisposable
         {
             Report(ActionFailedReport, ex);
             result = new ActionFailed(action.Id, ex.Message, IsUnreachable(ex));
+        }
+
+        Post(result, connection);
+    }
+
+    private async Task InspectForRunCommandAsync(Connection connection, InspectForRunCommandEffect inspect, CancellationToken ct)
+    {
+        SessionEvent result;
+        try
+        {
+            var inspection = await connection.Api!.InspectContainerAsync(inspect.Id, ct).ConfigureAwait(false);
+            result = new RunCommandInspected(inspect.Id, inspect.Shell, inspection.Details);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Report(RunCommandFailedReport, ex);
+            result = new RunCommandFailed(inspect.Id, ex.Message, IsUnreachable(ex));
         }
 
         Post(result, connection);

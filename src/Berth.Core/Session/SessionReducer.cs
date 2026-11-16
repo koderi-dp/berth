@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
+using Berth.Presentation;
 
 namespace Berth.Session;
 
@@ -125,6 +126,17 @@ public static class SessionReducer
                 return failure.EngineUnreachable
                     ? Lose(state, failure.Message)
                     : RequestReload(state with { Pending = state.Pending.Remove(failure.Id), ActionError = failure.Message });
+
+            case RunCommandRequested request when connected:
+                return (state, [new InspectForRunCommandEffect(request.Id, request.Shell)]);
+
+            case RunCommandInspected inspected when connected:
+                return (state, [new CopyTextEffect(DockerRunCommand.Build(inspected.Details, inspected.Shell))]);
+
+            case RunCommandFailed failure when connected:
+                return failure.EngineUnreachable
+                    ? Lose(state, failure.Message)
+                    : (state with { ActionError = failure.Message }, None);
 
             case ActionErrorDismissed when state.ActionError is not null:
                 return (state with { ActionError = null }, None);
