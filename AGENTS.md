@@ -13,7 +13,8 @@ create, a volume's page and removes (phase 3), and the Exec tab: a terminal (xte
 WebView2) on a shell in the container, the shell picker, "Open terminal" on a row, "Open in
 external terminal" and "Copy command" (phase 4), engine control (start and stop commands a
 connection stores), the tray icon and its menu, closing to the tray, one instance and start with
-Windows (phase 5). Files and SSH are not built yet.
+Windows (phase 5), and the Files tab: browse a container's files, download and upload through the engine's archive (tar)
+calls (phase 6). SSH is not built yet.
 
 ## Layout
 
@@ -33,7 +34,8 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
   Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list (with each container's mounts and
                             network names), actions, create, event stream, inspect, logs (StreamLogsAsync), stats
-                            (StreamStatsAsync); exec: create (a TTY exec with Berth's detach keys, ExecDetachKeys), start
+                            (StreamStatsAsync); the archive calls and the non-TTY exec that returns its output (EngineClient.Archive:
+                            StatPathAsync, GetArchiveAsync, PutArchiveAsync with Expect: 100-continue, RunExecForOutputAsync); exec: create (a TTY exec with Berth's detach keys, ExecDetachKeys), start
                             on a connection switched to a two-way raw stream (HttpUpgrade writes the upgrade request by
                             hand on the transport's own stream; ExecStream/UpgradedExecStream, whose write side can be
                             closed alone on TCP and TLS), resize, inspect, and a detached run (RunDetachedExecAsync); images (list, inspect with the raw answer, remove, pull as a stream of PullProgress),
@@ -50,6 +52,11 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             Models/ (ContainerSummary, ContainerDetails/ContainerInspection, ContainerCreateRequest/
                             PortBinding, ImageSummary/ImageDetails/ImageDeleteResult/PullProgress, VolumeSummary,
                             NetworkSummary, DiskUsage, LogLine, StatsSample, Exec: TerminalSize, ExecInspection)
+  Files/                    the Files tab's container side (see "The Files tab"): ContainerPath (a POSIX path, never above /),
+                            ArchiveReader (a streaming tar reader on System.Formats.Tar; sparse refused), ArchiveWriter (an upload's
+                            tar), ArchiveExtractor (a download saved by the safety rules), WindowsNames, TransferSummary, ExecListing and
+                            ArchiveListing (the two ways to list a folder), ListingChoice (which one, and the fall-back), ArchiveTransfer
+                            (a download or an upload against IEngineApi)
   Text/                     text made from engine records for the user to paste or run: DockerRunCommand (the `docker run`
                             command of an inspected container, PowerShell or bash quoting; ShellKind), ShellQuote,
                             DockerExecCommand (the `docker -H ... exec -it` command for a connection, as an argument list
@@ -73,7 +80,10 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             (runs the detail reducer: inspect, log and stats streams of one container); the shell:
                             ExecState (its status and command, never its bytes), DetailReducer.Exec, ContainerDetailSession.Exec (the stream's
                             owner and both pumps), ExecInput (the 2 MiB input cap), IExecOutput (the terminal's end, which
-                            the app attaches), ExecCleanUp (the BERTH_EXEC marker and the clean-up command)
+                            the app attaches), ExecCleanUp (the BERTH_EXEC marker and the clean-up command); the Files tab:
+                            FilesState (DetailState.Files), DetailReducer.Files, ContainerDetailSession.Files (runs a listing);
+                            transfers: FileTransfers (EngineState.Transfers, by ticket), TransferEvents, SessionReducer.Transfers,
+                            EngineSession.Transfers (progress batched to ten state changes a second per transfer)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
                             RowActions (a container's, image's, volume's or network's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
@@ -90,7 +100,8 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             choices and a custom command's parse), ExecInputNotes, TerminalProtocol (the page's messages),
                             TerminalFlow (output in flight), TerminalScreen (which shell's output is shown), TerminalTheme
                             (the sixteen colours), TerminalRecovery (what a failed browser process does), ShortcutFocus
-                            (when the window's shortcuts give way to the terminal)
+                            (when the window's shortcuts give way to the terminal); the Files tab: FilesView (rows, notes,
+                            breadcrumb; TransferConfirmations, the questions before replacing), TransferView (a transfer's line)
   Logging/, Storage/        FileLog, AtomicFile
 src/Berth.App/              UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
   Program.cs                entry point: log, services, first connect, window; a Release build first removes every
@@ -147,6 +158,9 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             bridge, with stable handlers), TerminalView (the WebView2 host component and its
                             TerminalHandle), TerminalBridge (bytes from the session's pump to the page, with flow
                             control), DetailTabRequest (a row's "Open terminal" asks the page for its Exec tab)
+    Detail/ (files)         FilesTab (toolbar, breadcrumb or typed path, notes, pickers, drop target, the replace question, and in
+                            Debug the files-debug-command box), FilesTable (the table, selection and keys), TransferRows (the
+                            container's transfers under the table)
   Assets/Terminal/          the terminal page: index.html, terminal.js, terminal.css, and xterm.js 6.0.0, its fit addon
                             0.11.0 and its licence, vendored unchanged (THIRD-PARTY-NOTICES.txt at the root)
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
@@ -165,8 +179,9 @@ the table or a file's namespace is not its folder's.
 | `Engine` | `Connections`, `Transport` |
 | `Text` | `Connections` (the connection a `docker` command names with `-H` and its TLS files), `Engine` (the model records it formats) |
 | `State` | `Engine` |
-| `Session` | `Engine`, `State`, `Text` |
-| `Presentation` | `Engine`, `State`, `Session`, `Text` |
+| `Files` | `Engine` |
+| `Session` | `Engine`, `State`, `Text`, `Files` |
+| `Presentation` | `Engine`, `State`, `Session`, `Text`, `Files` |
 | `Settings` | `Connections`, `State`, `Storage` |
 | `Logging` | nothing |
 | `Storage` | nothing |
@@ -417,6 +432,41 @@ path (page, host, session, engine), and `berthTerminal.buffer.active` reads the 
 Release build clears every `WEBVIEW2_*` variable at start and has neither switch nor
 `berthDebug` (check the trimmed `Berth.dll` for the strings).
 
+## The Files tab
+
+**Listing.** `DetailReducer.Files` picks the way (`ListingChoice`): in a running container (not paused, not restarting) one
+non-TTY exec of `sh -c <script> sh <path>` (`ExecListing`: the path is an argument, never in the script; `find` + `stat -c
+'%f/%s/%Y/%n/'` then a NUL then each link's name and `readlink` target, NUL-ended; parsed without guessing because no name holds
+"/" or NUL; checked identical on alpine, ubuntu 24.04 and busybox 1.36). Every failure of it (exit 3: cannot enter; 127: tools
+missing; the engine refusing the exec; output that does not parse) falls back to the archive listing under the same generation;
+a refused exec or missing tools mark the container `ExecUnavailable`. The archive listing (`ArchiveListing`) reads only headers
+of `GET archive`, the first level under the top entry, within 256 MiB and 15 s, and says when it stopped early; a path whose stat is a
+link is read again as `path/.`; a path whose stat is not a folder is "… is not a folder." without reading it. 10,000 entries at most.
+
+**Transfers** live in `EngineSession` (not the detail session), so they go on while another page is shown; a switch of connection
+drops them and a lost connection interrupts them. `ArchiveTransfer` runs them. Paths and names are never logged: fixed words and
+exception type names only.
+
+**Download safety** (`ArchiveExtractor`; the archive is untrusted): entries must lie under the top entry (no absolute path, no
+`..`, no other top name; the joined path is checked against the folder again); symbolic and hard links are skipped and counted,
+never created or followed; devices, FIFOs and others are skipped and counted; names go through `WindowsNames` (forbidden and
+control characters and a trailing dot or space become `_`, device names get `_` in front) and Windows-equal names keep the first;
+content streams to disk; everything is written as `.berth-<hex>.partial` beside the target and moved at the end, removed on
+failure or cancel; nothing is replaced unless the user said yes (`TransferConfirmations`, Cancel the default), and then a folder
+merges file by file (a junction on the way is skipped). Upload: `PUT archive?noOverwriteDirNonDir=true` without `copyUIDGID`
+(files owned by root), `Expect: 100-continue` so a missing folder gives the engine's message; it cannot be undone.
+
+**Checks write only into `berth-check*` containers and only under `/tmp/berth-check/` there**, and download only under
+`%TEMP%\berth-check\` on the host; remove both afterwards. Never write into, delete from or upload to any other container. Debug
+builds have a `files-debug-command` box and `files-debug-run` button on the tab: `browse <path>`, `download <path>[;…]|<local
+folder>`, `upload <local path>[;…]` (into the folder shown), each through the same questions as the pickers, so a check needs
+no dialog or keys. AutomationIds: `files-tab`, `files-up`, `files-refresh`, `files-path` (breadcrumb), `files-edit-path`,
+`files-path-box`, `files-download`, `files-upload`, `files-table` (rows are named "Folder etc", "File hosts", "Link mtab → …"),
+`files-way-note`, `files-note`, `files-waiting`, `files-error`, `files-empty`, `files-loading`, `files-transfers`,
+`transfer-<id>`, `transfer-status-<id>`, `transfer-notes-<id>`, `cancel-transfer-<id>`, `show-transfer-<id>`,
+`dismiss-transfer-<id>`; the replace question is `confirm-text` with `PrimaryButton` and `CloseButton`. The tray icon's id for
+posted callbacks (see "The tray and the window") is 2.
+
 ## Charts
 
 The Stats tab's four charts (CPU, memory, disk read/write, network I/O, two by two from 760
@@ -626,7 +676,7 @@ On the detail page:
   `more-<name>`, `delete-<name>`, ...); below it `detail-error` (a failed read, with Retry). The navigation's `SettingsItem` and the title bar's
   `PART_BackButton` go to Settings and back to the page.
 - Tabs: the SelectorBar `detail-tabs`; select one with `winapp ui invoke Stats --type
-  ListItem -a Berth` (`Logs`, `Inspect`, `Bind mounts`, `Exec`, `Stats`).
+  ListItem -a Berth` (`Logs`, `Inspect`, `Bind mounts`, `Exec`, `Files`, `Stats`).
 - Logs: `log-lines` (the log), `log-notes`, `log-empty`, `log-error`, `log-latest`; toolbar
   `log-search-toggle`, `log-timestamps`, `log-wrap`, `log-copy`, `log-clear`; search
   `log-search` (an Edit: `set-value`/`get-value`), `log-match-count`, `log-previous`,

@@ -44,10 +44,41 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
     path and access; a host path on this machine (such as `/mnt/c/...` in WSL) opens in
     File Explorer.
   - **Exec** is a terminal with a shell in the container (see below).
+  - **Files** browses the container's files, downloads and uploads (see below).
   - **Stats** draws CPU, memory, disk read/write and network I/O over the last two minutes,
     with the CPU and memory limits when the container has them.
   When the container stops, the streams end and the page shows its new state; when it is
   removed, the page returns to the list and says so.
+- **Files: browse, download, upload.** The Files tab lists a folder of the container: name (a
+  folder, file or link glyph; a link shows its target), size, modified and mode, folders first.
+  The path above it is a breadcrumb; the pencil turns it into a box to type a path (Enter goes
+  there, Escape leaves it). Up, Refresh (F5), double click or Enter on a folder, Backspace or
+  Alt+Up for the folder above, Ctrl+C copies the selected rows' paths; the right-click menu has
+  Open, Download… and Copy path. In a running container the folder is listed by a short command
+  run in it (`sh` with `find`, `stat` and `readlink`, present in busybox and GNU images); in a
+  stopped container, or one without those tools, from the engine's archive of the folder, which
+  the tab says ("Listing through the archive"). A folder over 10,000 entries shows the first
+  10,000 and says so; a large folder listed through the archive may stop early and says so too.
+  The engine's message is shown as it is for a path that is missing or not a folder.
+  - **Download…** saves the selected files and folders (a folder with everything under it) into
+    a folder you choose. What comes from the container is not trusted: nothing is written outside
+    that folder (a path with `..`, an absolute path or another top folder is skipped); symbolic
+    and hard links are never created or followed, only skipped and counted; devices, FIFOs and
+    sockets are skipped and counted; a name Windows cannot hold is saved under a safe name (each
+    of `< > : " \ | ? *` and control characters becomes `_`, a trailing dot or space becomes `_`,
+    and `CON`, `NUL`, `COM1` and the other device names get `_` in front) and counted; two names
+    that are the same to Windows keep the first. Each item is written under a temporary name and
+    renamed at the end, so a cancelled or failed download leaves nothing partial. Nothing already
+    in the folder is replaced without asking (Cancel is the default); a folder that is already
+    there keeps its other files. The summary says what was saved and what was skipped and why;
+    "Show in folder" opens it in Explorer.
+  - **Upload…** puts files, or a folder with everything under it, into the folder shown; files
+    dragged from Explorer onto the table do the same. It asks before it replaces something of the
+    same name. An upload cannot be undone: a cancelled one leaves in the container what the engine
+    already unpacked. Links and junctions inside an uploaded folder are skipped.
+  - Transfers show under the table with their progress and Cancel; several can run at once, and
+    they go on while you look at other pages. A switch of connection ends them. Berth does not
+    delete, rename or edit files in a container.
 - **Exec: a terminal in the container.** The Exec tab of a running container starts a shell
   and shows it in a terminal (xterm.js, bundled with the app; it works with no network). The
   picker above it chooses `sh` (the default), `bash`, `ash` or a custom command; choosing
@@ -176,8 +207,7 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 
 In the order they are planned:
 
-1. Files: browse, download and upload in a running container.
-2. SSH connections: password and key sign-in, host key prompt, Credential Manager.
+1. SSH connections: password and key sign-in, host key prompt, Credential Manager.
 
 For a later polish pass:
 
