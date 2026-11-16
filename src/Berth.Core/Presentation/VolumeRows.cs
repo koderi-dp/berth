@@ -86,7 +86,7 @@ public static partial class VolumeRows
     public static IReadOnlyList<VolumeRow> From(EngineState state)
     {
         var users = state.Containers
-            .SelectMany(c => c.Mounts.Where(IsVolume).Select(m => (Volume: m.Name!, Container: ComposeGrouping.NameOf(c))))
+            .SelectMany(c => c.Mounts.Where(InUse.IsVolumeMount).Select(m => (Volume: m.Name!, Container: ComposeGrouping.NameOf(c))))
             .GroupBy(u => u.Volume, StringComparer.Ordinal)
             .ToDictionary(
                 g => g.Key,
@@ -122,7 +122,7 @@ public static partial class VolumeRows
     [
         .. state.Containers
             .SelectMany(c => c.Mounts
-                .Where(m => IsVolume(m) && m.Name == name)
+                .Where(m => InUse.IsVolumeMount(m) && m.Name == name)
                 .Select(m => new VolumeUser(c.Id, ComposeGrouping.NameOf(c), m.Destination, m.ReadWrite)))
             .OrderBy(u => u.ContainerName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(u => u.Destination, StringComparer.Ordinal),
@@ -183,8 +183,6 @@ public static partial class VolumeRows
 
     /// <summary>Why the table is empty: no volumes at all, nothing matching the search, or nothing the filter keeps.</summary>
     public static string EmptyText(bool engineHasVolumes, UsageFilter filter) => filter.EmptyText("volumes", engineHasVolumes);
-
-    private static bool IsVolume(Engine.Models.MountDetails mount) => mount.Type == "volume" && !string.IsNullOrEmpty(mount.Name);
 
     private static Comparison<VolumeRow> Comparison(VolumeColumn column) => column switch
     {

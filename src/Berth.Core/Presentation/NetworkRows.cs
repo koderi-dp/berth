@@ -73,7 +73,7 @@ public static class NetworkRows
     public static IReadOnlyList<NetworkMember> Members(EngineState state, string name) =>
     [
         .. state.Containers
-            .Where(c => c.Networks.Contains(name, StringComparer.Ordinal))
+            .Where(c => InUse.JoinsNetwork(c, name))
             .Select(c => new NetworkMember(c.Id, ComposeGrouping.NameOf(c)))
             .OrderBy(m => m.ContainerName, StringComparer.OrdinalIgnoreCase),
     ];

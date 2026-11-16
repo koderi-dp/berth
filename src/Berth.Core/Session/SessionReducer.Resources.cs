@@ -399,16 +399,14 @@ public static partial class SessionReducer
                 if (item.Keys.Any(k => k != image.Id && !image.RepoTags.Contains(k))
                     || item.Tags is { } seen && !seen.ToHashSet(StringComparer.Ordinal).SetEquals(image.RepoTags))
                     return SkipReason.TagsChanged;
-                var used = (image.Containers ?? 0) > 0 || state.Containers.Any(c => c.ImageId == image.Id);
-                return item.OnlyIfUnused && used ? SkipReason.InUse : null;
+                return item.OnlyIfUnused && InUse.Image(image, state.Containers) ? SkipReason.InUse : null;
             }
 
             case ResourceKind.Volumes:
             {
                 if (!state.Volumes.Items.Any(v => v.Name == item.Id))
                     return SkipReason.Gone;
-                var used = state.Containers.Any(c => c.Mounts.Any(m => m.Type == "volume" && m.Name == item.Id));
-                return item.OnlyIfUnused && used ? SkipReason.InUse : null;
+                return item.OnlyIfUnused && InUse.Volume(item.Id, state.Containers) ? SkipReason.InUse : null;
             }
 
             default:
@@ -416,8 +414,7 @@ public static partial class SessionReducer
                 var network = state.Networks.Items.FirstOrDefault(n => n.Id == item.Id);
                 if (network is null)
                     return SkipReason.Gone;
-                var used = state.Containers.Any(c => c.Networks.Contains(network.Name));
-                return item.OnlyIfUnused && used ? SkipReason.InUse : null;
+                return item.OnlyIfUnused && InUse.Network(network.Name, state.Containers) ? SkipReason.InUse : null;
             }
         }
     }
