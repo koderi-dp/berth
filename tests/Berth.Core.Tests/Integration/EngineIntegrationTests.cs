@@ -153,6 +153,209 @@ public sealed class EngineIntegrationTests
         }
     }
 
+    [EngineFact]
+    public async Task Inspect_matches_the_cli()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        try
+        {
+            var id = await engine.Cli.RunAsync(
+                "run", "-d", "--name", name, "--stop-timeout", "1", "--cpus", "0.5", "-w", "/tmp", "--label", "berth.it=inspect",
+                "alpine:latest", "sleep", "300");
+            await using var client = engine.CreateClient();
+            using var cts = new CancellationTokenSource(Patience);
+            await client.ConnectAsync(cts.Token);
+
+            var inspection = await client.InspectContainerAsync(id, cts.Token);
+
+            var details = inspection.Details;
+            var cli = (await engine.Cli.RunAsync(
+                "inspect", "--format",
+                "{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.Image}}|{{.State.Status}}|{{.State.Running}}|{{.Config.Tty}}|{{.Config.WorkingDir}}|{{.HostConfig.RestartPolicy.Name}}|{{.Path}}",
+                name)).Split('|');
+            Assert.Equal(cli[0], details.Id);
+            Assert.Equal(cli[1].TrimStart('/'), details.Name);
+            Assert.Equal(cli[2], details.Image);
+            Assert.Equal(cli[3], details.ImageId);
+            Assert.Equal(cli[4], details.State.Status);
+            Assert.Equal(bool.Parse(cli[5]), details.State.Running);
+            Assert.Equal(bool.Parse(cli[6]), details.Tty);
+            Assert.Equal(cli[7], details.WorkingDir);
+            Assert.Equal(cli[8], details.RestartPolicy);
+            Assert.Equal(cli[9], details.Path);
+            Assert.Equal(["300"], details.Args);
+            Assert.Equal("inspect", details.Labels["berth.it"]);
+            Assert.Equal(0.5, details.CpuLimit);
+            Assert.NotNull(details.State.StartedAt);
+            Assert.Contains(id, inspection.RawJson, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    [EngineFact]
+    public async Task Logs_follow_a_container_that_prints()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        try
+        {
+            var id = await engine.Cli.RunAsync(
+                "run", "-d", "--name", name, "--stop-timeout", "1", "alpine:latest", "sh", "-c", CountingScript("echo line $i"));
+            await using var client = engine.CreateClient();
+            using var cts = new CancellationTokenSource(Patience);
+            await client.ConnectAsync(cts.Token);
+
+            // Followed from the first line; ten lines take about two seconds to arrive, so most come while following.
+            var lines = await FirstLinesAsync(client.StreamLogsAsync(id, tty: false, new LogRequest(Tail: -1, Follow: true), cts.Token), 10);
+
+            Assert.Equal(Enumerable.Range(1, 10).Select(i => $"line {i}"), lines.Select(l => l.Text));
+            Assert.All(lines, l => Assert.Equal(LogStream.Stdout, l.Stream));
+            Assert.All(lines, l => Assert.NotNull(l.Timestamp));
+            var times = lines.Select(l => l.Timestamp!.Value).ToList();
+            Assert.Equal(times.Order(), times);
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    [EngineFact]
+    public async Task Logs_of_a_tty_container_are_readable()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        try
+        {
+            // Coloured output through a terminal: the log is plain text with \r\n line ends and ANSI codes, not framed.
+            var id = await engine.Cli.RunAsync(
+                "run", "-d", "-t", "--name", name, "--stop-timeout", "1", "alpine:latest",
+                "sh", "-c", CountingScript(@"printf '\033[32mline %d\033[0m\n' $i"));
+            await using var client = engine.CreateClient();
+            using var cts = new CancellationTokenSource(Patience);
+            await client.ConnectAsync(cts.Token);
+            var details = (await client.InspectContainerAsync(id, cts.Token)).Details;
+
+            var lines = await FirstLinesAsync(client.StreamLogsAsync(id, details.Tty, new LogRequest(Tail: -1, Follow: true), cts.Token), 5);
+
+            Assert.True(details.Tty);
+            Assert.Equal(Enumerable.Range(1, 5).Select(i => $"line {i}"), lines.Select(l => l.Text));
+            Assert.All(lines, l => Assert.NotNull(l.Timestamp));
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    [EngineFact]
+    public async Task Stats_report_cpu_and_memory_for_a_busy_container()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        try
+        {
+            var id = await engine.Cli.RunAsync(
+                "run", "-d", "--name", name, "--stop-timeout", "1", "--cpus", "0.5", "alpine:latest", "sh", "-c", "while true; do :; done");
+            await using var client = engine.CreateClient();
+            using var cts = new CancellationTokenSource(Patience);
+            await client.ConnectAsync(cts.Token);
+
+            // The first sample has no previous one to measure CPU against; wait for one that shows the loop running.
+            StatsSample? busy = null;
+            await foreach (var sample in client.StreamStatsAsync(id, cts.Token))
+            {
+                if (sample.CpuPercent > 25)
+                {
+                    busy = sample;
+                    break;
+                }
+            }
+
+            Assert.NotNull(busy);
+            Assert.InRange(busy.CpuPercent, 25, 75);
+            Assert.True(busy.MemoryBytes > 0, $"Memory {busy.MemoryBytes}");
+            Assert.True(busy.MemoryLimitBytes >= busy.MemoryBytes, $"Limit {busy.MemoryLimitBytes}, memory {busy.MemoryBytes}");
+            Assert.True(busy.Pids >= 1, $"Pids {busy.Pids}");
+            Assert.NotEqual(DateTimeOffset.MinValue, busy.Time);
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    [EngineFact]
+    public async Task A_detail_session_ends_its_streams_when_the_container_stops()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        var errors = new List<string>();
+        var live = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ended = new TaskCompletionSource<DetailState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var id = await engine.Cli.RunAsync(
+                "run", "-d", "--name", name, "--stop-timeout", "1", "alpine:latest", "sh", "-c", CountingScript("echo line $i"));
+            await using var client = engine.CreateClient();
+            using var cts = new CancellationTokenSource(Patience);
+            await client.ConnectAsync(cts.Token);
+
+            await using var session = new ContainerDetailSession(client, id, TimeProvider.System, (what, _) =>
+            {
+                lock (errors)
+                    errors.Add(what);
+            });
+            session.StateChanged += state =>
+            {
+                if (state is { LogStatus: StreamStatus.Live, StatsStatus: StreamStatus.Live })
+                    live.TrySetResult();
+                if (state is { LogStatus: StreamStatus.Ended, StatsStatus: StreamStatus.Ended, Details.State.Running: false })
+                    ended.TrySetResult(state);
+            };
+
+            session.Open();
+            await live.Task.WaitAsync(cts.Token);
+            await engine.Cli.RunAsync("stop", name);
+            var final = await ended.Task.WaitAsync(cts.Token);
+
+            Assert.Equal("exited", final.Details!.State.Status);
+            Assert.Null(final.LogError);
+            Assert.Null(final.StatsError);
+            Assert.False(final.Removed);
+            Assert.False(final.ConnectionLost);
+            Assert.NotEmpty(final.Logs.Lines);
+            Assert.NotNull(final.Stats.Latest);
+            lock (errors)
+                Assert.Empty(errors);
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    /// <summary>A shell loop that runs <paramref name="print"/> with <c>$i</c> counting up from 1, five times a second.</summary>
+    private static string CountingScript(string print) => $"i=0; while true; do i=$((i+1)); {print}; sleep 0.2; done";
+
+    /// <summary>The first <paramref name="count"/> lines of a log stream; the stream is left once they are read.</summary>
+    private static async Task<List<LogLine>> FirstLinesAsync(IAsyncEnumerable<LogLine> log, int count)
+    {
+        var lines = new List<LogLine>();
+        await foreach (var line in log)
+        {
+            lines.Add(line);
+            if (lines.Count == count)
+                return lines;
+        }
+
+        throw new InvalidOperationException($"The log ended after {lines.Count} of {count} lines.");
+    }
+
     private static async Task<EngineEventMessage> FirstStartAsync(IAsyncEnumerable<EngineEventMessage> events, string name)
     {
         await foreach (var message in events)
