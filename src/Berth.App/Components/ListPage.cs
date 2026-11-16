@@ -86,13 +86,14 @@ internal static class ListPage
     /// <summary>
     /// The row under the title: the <paramref name="search"/> box, an optional <paramref name="filter"/> control beside it, and the
     /// page's buttons at the right end: its <paramref name="primary"/> action (accent) and the <paramref name="secondary"/> ones. When
-    /// <paramref name="compact"/> (a window narrower than <see cref="ToolbarWideMinWidth"/>) the secondary actions move into one "more"
+    /// <paramref name="compact"/> (a window narrower than <see cref="ToolbarWideMinWidth"/>) and there is a primary action, the secondary ones move into one "more"
     /// menu (AutomationId <c>toolbar-more</c>) and the search box narrows down to <see cref="SearchMinWidth"/>; nothing is dropped.
     /// </summary>
     public static Element Toolbar(Element search, Element? filter, bool compact, ToolbarAction? primary, params ToolbarAction[] secondary)
     {
         var main = primary is null ? null : ActionButton(primary, accent: true);
-        Element?[] buttons = compact && secondary.Length > 0
+        // Without a primary action the secondary ones stay buttons (the networks toolbar has one; a menu of one would hide it for nothing).
+        Element?[] buttons = compact && secondary.Length > 0 && primary is not null
             ? [main, More(secondary)]
             : [main, .. secondary.Select(a => (Element?)ActionButton(a))];
 

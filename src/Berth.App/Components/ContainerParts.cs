@@ -19,6 +19,9 @@ namespace Berth.Components;
 /// </summary>
 internal static class ContainerParts
 {
+    /// <summary>What the divider and Delete take on a row, gaps included, kept free on a row that has no Delete.</summary>
+    private const double NoDeleteWidth = 52;
+
     /// <summary>
     /// The buttons: the actions that are buttons at this width (the main one in the accent colour), the "more" menu with the rest
     /// when there is any, a divider and Delete. AutomationIds are the action and <paramref name="name"/>: <c>stop-web-1</c>,
@@ -39,8 +42,9 @@ internal static class ContainerParts
                 .WithFlyout(MenuItems(MenuEntries(menu, run)))
                 .IsEnabled(menu.Any(s => s.Any(a => a.IsEnabled)));
 
-        // A row without Delete (a built-in network) has neither the button nor the divider before it.
-        Element?[] delete = [];
+        // A row without Delete (a built-in network) has neither the button nor the divider before it; a space as wide keeps its other
+        // buttons in line with the rows above and below.
+        Element?[] delete = [Border(Empty()).Width(NoDeleteWidth).Flex(shrink: 0)];
         if (actions.HasDelete)
         {
             var action = actions.Delete;

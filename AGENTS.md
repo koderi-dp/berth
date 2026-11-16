@@ -101,6 +101,8 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             build it again), PullRows (the pulls under way, at the top of the table), PullDialog, RunDialog
                             (run a container from an image), InspectDialog (an image's raw JSON)
     Volumes/                VolumeTable (the volumes table, a component with record props), CreateVolumeDialog
+    Networks/               NetworkTable (the networks table: attached containers as a menu of links, no Delete for the
+                            built-in networks)
     Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
