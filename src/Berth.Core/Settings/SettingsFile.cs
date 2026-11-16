@@ -48,8 +48,13 @@ internal sealed class SettingsFile
             Logs = new LogViewOptions(
                 Logs?.Timestamps ?? LogViewOptions.Default.Timestamps,
                 Logs?.Wrap ?? LogViewOptions.Default.Wrap),
+            Tray = new TrayOptions(
+                Tray?.KeepRunningWhenClosed ?? TrayOptions.Default.KeepRunningWhenClosed,
+                Tray?.StillRunningNoticeShown ?? TrayOptions.Default.StillRunningNoticeShown),
         };
     }
+
+    public TrayEntry? Tray { get; set; }
 
     internal sealed class ConnectionEntry
     {
@@ -67,8 +72,12 @@ internal sealed class SettingsFile
 
         public TlsEntry? Tls { get; set; }
 
+        public EngineControlEntry? EngineControl { get; set; }
+
         /// <summary>The profile this entry describes, or null when it is not usable (see <see cref="SettingsFile.ToSettings"/>).</summary>
-        public ConnectionProfile? ToProfile()
+        public ConnectionProfile? ToProfile() => ToBareProfile() is { } profile ? profile with { EngineControl = EngineControl?.ToControl() } : null;
+
+        private ConnectionProfile? ToBareProfile()
         {
             if (string.IsNullOrWhiteSpace(Id) || string.IsNullOrWhiteSpace(Name))
                 return null;
@@ -110,6 +119,32 @@ internal sealed class SettingsFile
         public string? CertPath { get; set; }
 
         public string? KeyPath { get; set; }
+    }
+
+    /// <summary>
+    /// Engine control is kept only when both commands are there and each parses (<see cref="CommandLine"/>); otherwise it is dropped and
+    /// the connection is kept without it, as a file from before engine control reads.
+    /// </summary>
+    internal sealed class EngineControlEntry
+    {
+        public string? StartCommand { get; set; }
+
+        public string? StopCommand { get; set; }
+
+        public EngineControl? ToControl()
+        {
+            if (StartCommand is not { } start || StopCommand is not { } stop
+                || CommandLine.Parse(start).Error is not null || CommandLine.Parse(stop).Error is not null)
+                return null;
+            return new EngineControl(start, stop);
+        }
+    }
+
+    internal sealed class TrayEntry
+    {
+        public bool? KeepRunningWhenClosed { get; set; }
+
+        public bool? StillRunningNoticeShown { get; set; }
     }
 
     internal sealed class ContainerListEntry

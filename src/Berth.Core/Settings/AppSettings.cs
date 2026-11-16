@@ -17,9 +17,21 @@ public sealed record LogViewOptions(bool Timestamps, bool Wrap)
     public static readonly LogViewOptions Default = new(Timestamps: false, Wrap: true);
 }
 
-/// <summary>Everything in <c>settings.json</c>: the saved connections, which one is active, and the containers list and log options.</summary>
+/// <summary>What closing the window does, and whether Berth has already said once that it is still running in the tray.</summary>
+/// <param name="KeepRunningWhenClosed">Closing the window hides it to the tray instead of quitting.</param>
+/// <param name="StillRunningNoticeShown">The one-time notification that Berth is still running in the tray was shown.</param>
+public sealed record TrayOptions(bool KeepRunningWhenClosed, bool StillRunningNoticeShown)
+{
+    /// <summary>Keep running in the tray; the notice not shown yet.</summary>
+    public static readonly TrayOptions Default = new(KeepRunningWhenClosed: true, StillRunningNoticeShown: false);
+}
+
+/// <summary>Everything in <c>settings.json</c>: the saved connections, which one is active, the containers list, log and tray options.</summary>
 public sealed record AppSettings(IReadOnlyList<ConnectionProfile> Connections, string? ActiveConnectionId, ContainerListOptions ContainerList)
 {
     /// <summary>How the detail page's Logs tab shows a log.</summary>
     public LogViewOptions Logs { get; init; } = LogViewOptions.Default;
+
+    /// <summary>What closing the window does.</summary>
+    public TrayOptions Tray { get; init; } = TrayOptions.Default;
 }

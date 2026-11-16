@@ -11,6 +11,17 @@ public sealed record ConnectionDraft(string Name, string Address, bool UseTls, s
     public const string NameMissing = "Enter a name.";
     public const string CaMissing = "Choose the CA certificate file.";
     public const string ClientPairIncomplete = "Set both the client certificate and the client key, or neither.";
+    public const string StartCommandMissing = "Enter the start command, or turn engine control off.";
+    public const string StopCommandMissing = "Enter the stop command, or turn engine control off.";
+
+    /// <summary>Whether Berth starts and stops this connection's engine with <see cref="StartCommand"/> and <see cref="StopCommand"/>.</summary>
+    public bool EngineControlOn { get; init; }
+
+    /// <summary>The start command as typed (<see cref="CommandLine"/>); kept while engine control is off, but not saved.</summary>
+    public string StartCommand { get; init; } = "";
+
+    /// <summary>The stop command as typed; kept while engine control is off, but not saved.</summary>
+    public string StopCommand { get; init; } = "";
 
     /// <summary>A new connection: no name, the local engine's TCP address, no TLS.</summary>
     public static ConnectionDraft Empty { get; } = new("", "tcp://127.0.0.1:" + EngineAddress.DefaultPort, false, "", "", "");
@@ -22,7 +33,22 @@ public sealed record ConnectionDraft(string Name, string Address, bool UseTls, s
             profile.Tls is not null,
             profile.Tls?.CaPath ?? "",
             profile.Tls?.CertPath ?? "",
-            profile.Tls?.KeyPath ?? "");
+            profile.Tls?.KeyPath ?? "")
+        {
+            EngineControlOn = profile.EngineControl is not null,
+            StartCommand = profile.EngineControl?.StartCommand ?? "",
+            StopCommand = profile.EngineControl?.StopCommand ?? "",
+        };
+
+    /// <summary>Engine control on, with the two commands of <paramref name="control"/> (the WSL default the editor offers).</summary>
+    public ConnectionDraft WithEngineControl(EngineControl control) =>
+        this with { EngineControlOn = true, StartCommand = control.StartCommand, StopCommand = control.StopCommand };
+
+    /// <summary>What is wrong with the start command while engine control is on, or null.</summary>
+    public string? StartCommandError => EngineControlOn ? CommandError(StartCommand, StartCommandMissing, "Start command: ") : null;
+
+    /// <summary>What is wrong with the stop command while engine control is on, or null.</summary>
+    public string? StopCommandError => EngineControlOn ? CommandError(StopCommand, StopCommandMissing, "Stop command: ") : null;
 
     /// <summary>What is wrong with <see cref="Address"/>, in a sentence for the user, or null when it parses.</summary>
     public string? AddressError => EngineAddress.TryParse(Address, out _, out _, out _, out _, out var error) ? null : error;
@@ -46,7 +72,7 @@ public sealed record ConnectionDraft(string Name, string Address, bool UseTls, s
 
     /// <summary>
     /// The profile with id <paramref name="id"/> when every field is valid; otherwise false and <paramref name="error"/> says, in a
-    /// sentence for the user, what to fix first (the name, then the address, then the TLS files).
+    /// sentence for the user, what to fix first (the name, then the address, then the TLS files, then the engine control commands).
     /// </summary>
     public bool TryBuild(string id, out ConnectionProfile profile, out string error)
     {
@@ -83,9 +109,25 @@ public sealed record ConnectionDraft(string Name, string Address, bool UseTls, s
             tls = new TlsOptions(ca, cert, key);
         }
 
-        profile = new ConnectionProfile(id, name, kind, host, port, pipeName, tls);
+        if ((StartCommandError ?? StopCommandError) is { } commandError)
+        {
+            error = commandError;
+            return false;
+        }
+
+        profile = new ConnectionProfile(id, name, kind, host, port, pipeName, tls)
+        {
+            EngineControl = EngineControlOn ? new EngineControl(StartCommand.Trim(), StopCommand.Trim()) : null,
+        };
         return true;
     }
 
     private static string? NullIfBlank(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private static string? CommandError(string text, string missing, string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return missing;
+        return CommandLine.Parse(text).Error is { } error ? prefix + error : null;
+    }
 }
