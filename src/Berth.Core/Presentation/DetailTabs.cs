@@ -1,14 +1,14 @@
 namespace Berth.Presentation;
 
 /// <summary>A tab of a container's page.</summary>
-public enum DetailTab { Logs, Inspect, BindMounts, Exec, Stats }
+public enum DetailTab { Logs, Inspect, BindMounts, Exec, Files, Stats }
 
 /// <summary>Which tabs a container's page shows, in Docker Desktop's order, and what they are called.</summary>
 public static class DetailTabs
 {
-    /// <summary>Logs, Inspect, Bind mounts, Exec, Stats. One list, so a strip built from it can be kept.</summary>
+    /// <summary>Logs, Inspect, Bind mounts, Exec, Files, Stats. One list, so a strip built from it can be kept.</summary>
     public static IReadOnlyList<DetailTab> Shown { get; } =
-        [DetailTab.Logs, DetailTab.Inspect, DetailTab.BindMounts, DetailTab.Exec, DetailTab.Stats];
+        [DetailTab.Logs, DetailTab.Inspect, DetailTab.BindMounts, DetailTab.Exec, DetailTab.Files, DetailTab.Stats];
 
     /// <summary>The tab's title on the strip.</summary>
     public static string Title(DetailTab tab) => tab switch
@@ -16,6 +16,7 @@ public static class DetailTabs
         DetailTab.Inspect => "Inspect",
         DetailTab.BindMounts => "Bind mounts",
         DetailTab.Exec => "Exec",
+        DetailTab.Files => "Files",
         DetailTab.Stats => "Stats",
         _ => "Logs",
     };

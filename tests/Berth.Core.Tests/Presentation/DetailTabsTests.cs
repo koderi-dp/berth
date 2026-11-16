@@ -6,9 +6,9 @@ namespace Berth.Tests.Presentation;
 public sealed class DetailTabsTests
 {
     [Fact]
-    public void Shown_puts_exec_before_stats() =>
+    public void Shown_puts_exec_then_files_before_stats() =>
         Assert.Equal(
-            [DetailTab.Logs, DetailTab.Inspect, DetailTab.BindMounts, DetailTab.Exec, DetailTab.Stats],
+            [DetailTab.Logs, DetailTab.Inspect, DetailTab.BindMounts, DetailTab.Exec, DetailTab.Files, DetailTab.Stats],
             DetailTabs.Shown);
 
     [Fact]
@@ -18,6 +18,7 @@ public sealed class DetailTabsTests
         Assert.Equal("Inspect", DetailTabs.Title(DetailTab.Inspect));
         Assert.Equal("Bind mounts", DetailTabs.Title(DetailTab.BindMounts));
         Assert.Equal("Exec", DetailTabs.Title(DetailTab.Exec));
+        Assert.Equal("Files", DetailTabs.Title(DetailTab.Files));
         Assert.Equal("Stats", DetailTabs.Title(DetailTab.Stats));
     }
 
@@ -26,8 +27,8 @@ public sealed class DetailTabsTests
     {
         var shown = DetailTabs.Shown;
 
-        Assert.Equal(DetailTab.Stats, DetailTabs.At(shown, 4));
-        Assert.Equal(DetailTab.Logs, DetailTabs.At(shown, 5));
+        Assert.Equal(DetailTab.Stats, DetailTabs.At(shown, 5));
+        Assert.Equal(DetailTab.Logs, DetailTabs.At(shown, 6));
         Assert.Equal(DetailTab.Logs, DetailTabs.At(shown, -1));
     }
 
@@ -37,7 +38,7 @@ public sealed class DetailTabsTests
         IReadOnlyList<DetailTab> withoutExec = [DetailTab.Logs, DetailTab.Stats];
 
         Assert.Equal(0, DetailTabs.IndexOf(withoutExec, DetailTab.Exec));
-        Assert.Equal(4, DetailTabs.IndexOf(DetailTabs.Shown, DetailTab.Stats));
+        Assert.Equal(5, DetailTabs.IndexOf(DetailTabs.Shown, DetailTab.Stats));
     }
 
     [Fact]
