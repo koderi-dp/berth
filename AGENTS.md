@@ -283,7 +283,16 @@ A connection may carry `EngineControl`: a start and a stop command line. `Sessio
 `EngineControlState.StoppedByBerth`); `EngineSession` runs the command through `IEngineControl`, which the app gives each
 session (`EngineCommands`). Commands run with no shell (`CommandRunner`: `UseShellExecute=false`, no window, standard input
 closed, the last 20 lines kept, the process tree ended on timeout, returning when the program exits even if a program it
-started holds the output). Neither a command line nor its output is ever logged: fixed words and the exit code only.
+started holds the output), in the user profile folder (so a bare program name is never found in whatever folder Berth was
+started from; it is looked up in Berth's folder, System32, Windows and PATH). A `.bat` or `.cmd` program is refused
+(`CommandLine.BatchFile`): Windows would run it through cmd.exe, which acts on `&`, `|` and `%`; `cmd.exe /c file.bat` runs
+it with the shell in plain sight. Neither a command line nor its output is ever logged: fixed words and the exit code only.
+
+A command belongs to the connection it was started for: it runs to its end or its 60 s limit even when its session is
+replaced (a switch, an edit) or Berth quits, and a replaced session drops its result. The editor refuses to save the active
+connection while its command runs ("Wait for the engine command to finish."). Reconnects pause while a stop runs. An edit of
+a connection whose engine Berth stopped keeps it stopped when the address is unchanged (`EngineStoppedCarriedOver`); an
+address change starts over. A stop question or a tray action sends nothing when the connection was switched since it opened.
 
 **Never stop, restart or reconfigure a real engine in a check** (the daily engine, Docker Desktop's). Check engine control
 with a stand-in: a small TCP forwarder (a spare local port to `127.0.0.1:2375`) added as a connection whose start command
@@ -302,8 +311,10 @@ is-active|is-enabled|cat`); nothing that changes it.
 - The menu (`TrayFlyout`) is a Reactor component in Reactor's tray flyout window; `TrayFlyoutWindow` fits that window to the
   menu (Reactor makes it a fixed size in physical pixels). Container actions from it go through the session like the list's;
   a failure shows in the error bar and as a notification (`Notifications`). A stop of the engine asks first in the menu.
-- `Shell/MainWindow`: closing the window hides it to the tray only while "Keep running in the tray" is on **and the tray icon
-  is open** (a hidden window with no icon would strand Berth). Quit closes the window for good; the exit path (a shell ended
+- `Shell/MainWindow`: closing the window hides it to the tray only for the user's close (`WindowCloseReason.UserClosed`, and
+  not after `WM_QUERYENDSESSION`: shutdown, sign-out and the Restart Manager before a package update close it for real),
+  while "Keep running in the tray" is on **and the tray icon is open** (a hidden window with no icon would strand Berth).
+  Start with Windows is read again when Settings is shown and when the window is activated. Quit closes the window for good; the exit path (a shell ended
   within one second, the icon removed) is the same as before.
 - One instance: `SingleInstance.Claim` (Windows App SDK `AppInstance` redirection) runs first in `Program`; a second launch
   hands its activation to the first, which shows its window, and exits. `dotnet run` re-registers the package and ends a
