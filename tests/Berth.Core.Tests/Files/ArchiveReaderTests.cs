@@ -152,7 +152,7 @@ public sealed class ArchiveReaderTests
 
         var entries = await ReadAllAsync(new MemoryStream(tar));
 
-        Assert.Equal([ArchiveEntryKind.Device, ArchiveEntryKind.Device, ArchiveEntryKind.Fifo], entries.Select(e => e.Entry.Kind));
+        Assert.Equal([ArchiveEntryKind.Device, ArchiveEntryKind.BlockDevice, ArchiveEntryKind.Fifo], entries.Select(e => e.Entry.Kind));
         Assert.All(entries, e => Assert.Null(e.Data));
     }
 

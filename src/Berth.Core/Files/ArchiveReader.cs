@@ -3,7 +3,7 @@ using System.Formats.Tar;
 namespace Berth.Files;
 
 /// <summary>What one tar entry is.</summary>
-public enum ArchiveEntryKind { File, Folder, SymbolicLink, HardLink, Device, Fifo, Other }
+public enum ArchiveEntryKind { File, Folder, SymbolicLink, HardLink, Device, BlockDevice, Fifo, Other }
 
 /// <summary>
 /// One entry's header: its name as the archive spells it (a folder's usually ends with "/"), what it is, its content's size, its
@@ -77,7 +77,8 @@ public sealed class ArchiveReader(Stream archive) : IAsyncDisposable
         TarEntryType.Directory => ArchiveEntryKind.Folder,
         TarEntryType.SymbolicLink => ArchiveEntryKind.SymbolicLink,
         TarEntryType.HardLink => ArchiveEntryKind.HardLink,
-        TarEntryType.CharacterDevice or TarEntryType.BlockDevice => ArchiveEntryKind.Device,
+        TarEntryType.CharacterDevice => ArchiveEntryKind.Device,
+        TarEntryType.BlockDevice => ArchiveEntryKind.BlockDevice,
         TarEntryType.Fifo => ArchiveEntryKind.Fifo,
         _ => ArchiveEntryKind.Other,
     };
