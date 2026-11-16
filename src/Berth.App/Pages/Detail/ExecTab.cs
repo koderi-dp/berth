@@ -264,7 +264,9 @@ internal sealed class ExecTab : Component<ExecTabProps>
             : Border(Component<TerminalView, TerminalViewProps>(
                     new(props.Name, colors.Background, link.OnMessage, link.OnReady, link.OnFailed, link.PageLost)))
                 .Background(colors.Background)
-                .CornerRadius(4)
+                .BorderBrush(Theme.CardStroke)
+                .BorderThickness(1)
+                .CornerRadius(8)
                 .Padding(8);
 
         var noteText = ExecInputNotes.Shown(note, exec);
@@ -495,7 +497,8 @@ internal sealed class ExecTab : Component<ExecTabProps>
 
     /// <summary>
     /// The terminal's colours from Presentation, over the card fill the app's other cards use (blended over the theme's solid
-    /// background, so xterm and the area around it are one solid colour) and primary text; under a Windows contrast theme, over the
+    /// background, so xterm and the area around it are one solid colour; the area has the Stats cards' edge and corners) and primary
+    /// text; under a Windows contrast theme, over the
     /// system's window colours.
     /// </summary>
     internal static TerminalColors Colors(bool dark, bool highContrast)
