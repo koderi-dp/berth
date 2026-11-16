@@ -1,5 +1,18 @@
 namespace Berth.Session;
 
+/// <summary>What became of a piece of input sent to a shell.</summary>
+public enum ExecInputOutcome
+{
+    /// <summary>Taken: it goes to the shell (an empty piece counts as taken).</summary>
+    Sent,
+
+    /// <summary>Dropped whole because the shell is not reading and <see cref="ExecInput.QueueLimit"/> would be passed.</summary>
+    Dropped,
+
+    /// <summary>Not for the live shell (an older one, one still starting, or none): nothing was lost that the user expects to arrive.</summary>
+    Ignored,
+}
+
 /// <summary>
 /// How much typed or pasted input waits for a shell. A shell that does not read its input (a program busy printing, or stopped)
 /// would otherwise let it pile up without end: repeated pastes, and the terminal's own automatic replies to queries in the output.

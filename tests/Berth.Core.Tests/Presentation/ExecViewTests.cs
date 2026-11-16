@@ -181,4 +181,31 @@ public sealed class ExecViewTests
         Assert.Equal(ExecViewKind.Waiting, ExecView.For(unread, waiting: false, startedOnce: false).Kind);
         Assert.Equal(ExecViewKind.Waiting, ExecView.For(removed, waiting: false, startedOnce: false).Kind);
     }
+
+    [Fact]
+    public void A_lost_terminal_page_says_so_in_berths_words_and_offers_to_start_again()
+    {
+        var view = ExecView.For(Detail(Exec(ExecStatus.Running)), waiting: false, startedOnce: true, terminalStopped: true);
+
+        Assert.Equal(ExecViewKind.Failed, view.Kind);
+        Assert.Equal("The terminal stopped working. Start again.", view.Text);
+        Assert.Equal(ExecButton.StartAgain, view.Button);
+        Assert.True(view.ShowTerminal);
+        Assert.False(view.AcceptsInput);
+    }
+
+    [Fact]
+    public void The_containers_state_wins_over_a_lost_terminal_page()
+    {
+        var view = ExecView.For(Detail(running: false), waiting: false, startedOnce: true, terminalStopped: true);
+
+        Assert.Equal(ExecViewKind.NotRunning, view.Kind);
+    }
+
+    [Fact]
+    public void The_size_is_shown_and_named()
+    {
+        Assert.Equal("120 × 30", ExecView.SizeText(new TerminalSize(120, 30)));
+        Assert.Equal("Terminal size: 120 columns, 30 rows", ExecView.SizeName(new TerminalSize(120, 30)));
+    }
 }

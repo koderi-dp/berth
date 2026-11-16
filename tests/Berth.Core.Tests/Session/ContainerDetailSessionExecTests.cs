@@ -400,14 +400,18 @@ public sealed class ContainerDetailSessionExecTests
 
         // Three mebibytes for a shell that reads nothing (the first piece is held in the write): only the first two are kept.
         var pieces = 3 * ExecInput.QueueLimit / 2 / Piece;
+        var outcomes = new List<ExecInputOutcome>();
         for (var i = 0; i < pieces; i++)
         {
-            h.Session.SendExecInput(1, Enumerable.Repeat((byte)i, Piece).ToArray());
+            outcomes.Add(h.Session.SendExecInput(1, Enumerable.Repeat((byte)i, Piece).ToArray()));
             if (i == 0)
                 await held.Entered.WaitAsync(Patience);
         }
 
         Assert.Equal(ExecInput.QueueLimit, h.Session.QueuedExecInput);
+        // Each piece says whether it was taken, so the tab can tell the user that input was dropped.
+        var taken = ExecInput.QueueLimit / Piece;
+        Assert.Equal([.. Enumerable.Repeat(ExecInputOutcome.Sent, taken), .. Enumerable.Repeat(ExecInputOutcome.Dropped, pieces - taken)], outcomes);
 
         held.Release();
         var kept = ExecInput.QueueLimit / Piece;
@@ -416,8 +420,18 @@ public sealed class ContainerDetailSessionExecTests
 
         // Once the queue has drained input is taken again, and nothing of what was dropped comes before it.
         Assert.True(SpinWait.SpinUntil(() => h.Session.QueuedExecInput == 0, Patience));
-        h.Session.SendExecInput(1, "Z"u8.ToArray());
+        Assert.Equal(ExecInputOutcome.Sent, h.Session.SendExecInput(1, "Z"u8.ToArray()));
         Assert.Equal("Z"u8.ToArray(), await shell.ReadInputAsync(1).WaitAsync(Patience));
+    }
+
+    [Fact]
+    public async Task Input_for_a_shell_that_is_not_the_live_one_is_not_counted_as_dropped()
+    {
+        await using var h = new Harness();
+        await h.RunningAsync();
+
+        Assert.Equal(ExecInputOutcome.Ignored, h.Session.SendExecInput(2, "a"u8.ToArray()));
+        Assert.Equal(ExecInputOutcome.Sent, h.Session.SendExecInput(1, "a"u8.ToArray()));
     }
 
     [Fact]

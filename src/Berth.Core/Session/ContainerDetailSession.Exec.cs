@@ -69,12 +69,13 @@ public sealed partial class ContainerDetailSession
     /// <summary>
     /// Sends what was typed or pasted to the shell of <paramref name="generation"/>. The bytes are copied. Dropped unless that shell
     /// is the latest one and its stream is open, and dropped whole when it would take the bytes waiting for the shell past
-    /// <see cref="ExecInput.QueueLimit"/>.
+    /// <see cref="ExecInput.QueueLimit"/>, which the result says.
     /// </summary>
-    public void SendExecInput(int generation, ReadOnlyMemory<byte> bytes)
+    public ExecInputOutcome SendExecInput(int generation, ReadOnlyMemory<byte> bytes)
     {
-        if (!bytes.IsEmpty && Volatile.Read(ref _exec) is { } run && run.Generation == generation)
-            run.Send(bytes.ToArray());
+        if (bytes.IsEmpty)
+            return ExecInputOutcome.Sent;
+        return Volatile.Read(ref _exec) is { } run && run.Generation == generation ? run.Send(bytes.ToArray()) : ExecInputOutcome.Ignored;
     }
 
     /// <summary>Sets the terminal the shell's output goes to, or none: output that arrives with none attached is dropped.</summary>
@@ -382,17 +383,19 @@ public sealed partial class ContainerDetailSession
                 _started = true;
         }
 
-        public void Send(byte[] bytes)
+        public ExecInputOutcome Send(byte[] bytes)
         {
             lock (_lock)
             {
-                if (!_started || _finished || IsStopRequested || !ExecInput.Accepts(_queued, bytes.Length))
-                    return;
-                if (_input.Writer.TryWrite(bytes))
-                {
-                    _queued += bytes.Length;
-                    _hadInput = true;
-                }
+                if (!_started || _finished || IsStopRequested)
+                    return ExecInputOutcome.Ignored;
+                if (!ExecInput.Accepts(_queued, bytes.Length))
+                    return ExecInputOutcome.Dropped;
+                if (!_input.Writer.TryWrite(bytes))
+                    return ExecInputOutcome.Ignored;
+                _queued += bytes.Length;
+                _hadInput = true;
+                return ExecInputOutcome.Sent;
             }
         }
 

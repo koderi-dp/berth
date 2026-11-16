@@ -38,14 +38,20 @@ public static class ExecView
 
     private static readonly ExecViewModel RunningView = new(ExecViewKind.Running, null, ExecButton.None, true, AcceptsInput: true, false);
 
+    private static readonly ExecViewModel TerminalStoppedView = new(
+        ExecViewKind.Failed, ContainerDetailSession.TerminalFailedText, ExecButton.StartAgain, true, false, IsError: true);
+
     /// <param name="detail">The detail state the page shows.</param>
     /// <param name="waiting"><see cref="DetailPage.Waiting"/>: the session is closed, reopening or its connection is lost.</param>
     /// <param name="startedOnce">The tab has already started a shell since it was shown.</param>
+    /// <param name="terminalStopped">
+    /// The terminal page was lost (its browser process ended) since the tab last started a shell: that shell was ended with it.
+    /// </param>
     /// <remarks>
     /// The container's state wins over the shell's: a shell that ended because the container stopped shows NotRunning. Before the
     /// first read, and for a removed container (the page is leaving), the tab waits.
     /// </remarks>
-    public static ExecViewModel For(DetailState detail, bool waiting, bool startedOnce)
+    public static ExecViewModel For(DetailState detail, bool waiting, bool startedOnce, bool terminalStopped = false)
     {
         ArgumentNullException.ThrowIfNull(detail);
         if (waiting || detail.Removed || detail.Details is not { State: var container })
@@ -56,6 +62,9 @@ public static class ExecView
             return NotRunningView;
         if (container.Paused)
             return PausedView;
+
+        if (terminalStopped)
+            return TerminalStoppedView;
 
         var exec = detail.Exec;
         return exec.Status switch
@@ -68,6 +77,14 @@ public static class ExecView
             _ => startedOnce ? LostView : ReadyView,
         };
     }
+
+    /// <summary>The terminal's size as the toolbar shows it: "120 × 30".</summary>
+    public static string SizeText(Engine.Models.TerminalSize size) =>
+        string.Create(CultureInfo.InvariantCulture, $"{size.Columns} × {size.Rows}");
+
+    /// <summary>The terminal's size as a screen reader says it: "Terminal size: 120 columns, 30 rows".</summary>
+    public static string SizeName(Engine.Models.TerminalSize size) =>
+        string.Create(CultureInfo.InvariantCulture, $"Terminal size: {size.Columns} columns, {size.Rows} rows");
 
     /// <summary>Whether the tab starts a shell itself: when it is ready and has not started one since it was shown.</summary>
     public static bool ShouldStartByItself(ExecViewModel view, bool startedOnce)
