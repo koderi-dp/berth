@@ -32,6 +32,8 @@
 
   <ItemGroup>
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- The terminal page: xterm.js and its fit addon (vendored, MIT; see THIRD-PARTY-NOTICES.txt) and Berth's page around them. -->
+    <Content Include="Assets\Terminal\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 

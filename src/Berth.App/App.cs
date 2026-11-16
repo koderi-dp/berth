@@ -133,6 +133,17 @@ internal sealed class App : EngineStateComponent
             },
             nav.CurrentRoute);
 
+#if DEBUG
+        // BERTH_OPEN_EXEC: the named container's page, on its Exec tab, once its row is listed.
+        UseEffect(
+            () =>
+            {
+                if (DebugStart.TakeContainerToOpen(state.Containers) is { } id)
+                    nav.Navigate(new AppRoute.ContainerDetail(id, AppServices.Current.SessionNumber));
+            },
+            state.Containers);
+#endif
+
         // List stats (the containers list's CPU column and totals) are followed while the list is the page shown and the window is
         // not minimized; not on a container's page, which follows its own. The page kept in the navigation cache does not render when
         // another page shows, so the window decides. Sent again to the new session after a switch of connection.

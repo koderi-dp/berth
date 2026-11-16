@@ -19,7 +19,7 @@ namespace Berth.Pages;
 internal sealed record DetailPageProps(AppRoute.ContainerDetail Route, Action<string?> Leave);
 
 /// <summary>
-/// One container: its header with its state and actions, and the Logs, Inspect, Bind mounts and Stats tabs. While the page is the
+/// One container: its header with its state and actions, and the Logs, Inspect, Bind mounts, Exec and Stats tabs. While the page is the
 /// one shown it keeps a detail session open for its container (<see cref="AppServices.OpenDetail"/>), opens it again on the new
 /// connection when the engine reconnects, and has it read the container again when a list load shows it may have run again. A
 /// container that is removed sends the page back to the list. What to do when is decided in <see cref="DetailPage"/>.
@@ -34,7 +34,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     private static readonly object SessionLost = new();
 
     // The tabs on the strip, built once: a new item array on every render leaks native memory.
-    private static readonly IReadOnlyList<DetailTab> ShownTabs = DetailTabs.Shown(exec: false);
+    private static readonly IReadOnlyList<DetailTab> ShownTabs = DetailTabs.Shown(exec: true);
     private static readonly SelectorBarItemData[] TabItems = [.. ShownTabs.Select(t => SelectorBarItem(DetailTabs.Title(t)))];
 
     public override Element Render()
@@ -59,6 +59,16 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var lastList = UseRef(default(ImmutableArray<ContainerSummary>));
         var lastRow = UseRef<ContainerRow?>(null);
         var lastLive = UseRef<DetailState?>(null);
+#if DEBUG
+        // BERTH_OPEN_EXEC opened this page: it starts on the Exec tab.
+        UseEffect(
+            () =>
+            {
+                if (DebugStart.TakeExecTab(id))
+                    setTab(DetailTab.Exec);
+            },
+            Array.Empty<object>());
+#endif
 
         // Reactor keeps a page it navigated away from, so the list keeps its search and scroll; such a page does nothing.
         var active = nav.CurrentRoute == Props.Route;
@@ -176,7 +186,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
                 LoadErrorBar(mine?.LoadError, connected ? id : null)?.WithKey("load-error"),
                 tabStrip,
-                Content(shown, waiting, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), state.Info?.MemoryBytes ?? 0)
+                Content(shown, waiting, row is not null, tab, name, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), state.Info?.MemoryBytes ?? 0)
                     .Flex(grow: 1, basis: 0)
                     .WithKey("content"),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null))?.WithKey("delete-dialog"))
@@ -224,7 +234,8 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     /// it renders again only when that changes, not on every batch of log lines. While <paramref name="waiting"/> for the engine the
     /// Logs and Stats tabs say so instead of what their streams say (see <see cref="DetailPage.Waiting"/>).
     /// </summary>
-    private static Element Content(DetailState? detail, bool waiting, bool listed, DetailTab tab, LogsTabHooks logs, long machineMemory)
+    private static Element Content(
+        DetailState? detail, bool waiting, bool listed, DetailTab tab, string name, LogsTabHooks logs, long machineMemory)
     {
         if (detail?.Details is null)
         {
@@ -237,6 +248,8 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         {
             DetailTab.Inspect => Component<InspectTab, InspectTabProps>(new(detail.Details, detail.RawJson ?? "")),
             DetailTab.BindMounts => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
+            // A page left stays in the navigation cache without rendering: the terminal closes its browser itself when it leaves the window.
+            DetailTab.Exec => Component<ExecSpikeTab, ExecSpikeTabProps>(new(name)),
             DetailTab.Stats => Component<StatsTab, StatsTabProps>(new(
                 detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, waiting, detail.Details.CpuLimit, machineMemory)),
             _ => Component<LogsTab, LogsTabProps>(new(detail, waiting, ClearLogs, logs.Search, logs.UpdateSearch, logs.Keys, logs.SearchRequests)),

@@ -1,1 +1,6 @@
 * text=auto
+# Vendored files stay byte for byte as published (their hashes are in THIRD-PARTY-NOTICES.txt).
+src/Berth.App/Assets/Terminal/xterm.js -text
+src/Berth.App/Assets/Terminal/xterm.css -text
+src/Berth.App/Assets/Terminal/addon-fit.js -text
+src/Berth.App/Assets/Terminal/LICENSE-xterm.txt -text
