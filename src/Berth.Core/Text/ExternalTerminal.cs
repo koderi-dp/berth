@@ -30,7 +30,9 @@ public sealed record ExternalLaunchPlan(ProcessLaunch? First, ProcessLaunch? Fal
 /// <c>%VARIABLES%</c> in that line; docker then splits the line by the C runtime's rules. Every <c>;</c> is therefore written
 /// <c>\;</c>, and an argument that one of these steps would change in a way escaping cannot undo is refused (<see cref="Refusal"/>)
 /// rather than guessed at. The console window has none of those steps: docker is started directly and gets the list .NET joined,
-/// so it refuses only what no command line can hold (<see cref="ConsoleRefusal"/>). Both clear the variables that would point
+/// so it refuses only what no command line can hold (<see cref="ConsoleRefusal"/>). The console is used only when Windows Terminal is
+/// not on <c>PATH</c> or fails to start: with Windows Terminal there, a command it cannot carry is refused, not handed to the console
+/// (<see cref="Plan"/>). Both clear the variables that would point
 /// docker at another engine or change its TLS (<see cref="DockerVariables"/>); the command names its engine with <c>-H</c> anyway.
 /// </remarks>
 public static class ExternalTerminal
