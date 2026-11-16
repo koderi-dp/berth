@@ -22,7 +22,6 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, ContainerInspection> _inspections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ImageInspection> _images = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<PullProgress>> _pullsOf = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, NetworkDetails> _networks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _cancelledWaiters = new(StringComparer.Ordinal);
     private readonly Channel<EngineEventMessage> _events = Channel.CreateUnbounded<EngineEventMessage>();
@@ -179,9 +178,6 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>What <see cref="RemoveImageAsync"/> answers.</summary>
     public IReadOnlyList<ImageDeleteResult> ImageRemoval { get; set; } = [];
 
-    /// <summary>What every prune answers.</summary>
-    public PruneResult Prune { get; set; } = new([], 0);
-
     /// <summary>The pull stream: push progress lines, end it, or fail it (an error line or a dropped connection).</summary>
     public ScriptedStream<PullProgress> Pulls { get; } = new();
 
@@ -214,9 +210,6 @@ internal sealed class FakeEngineApi : IEngineApi
     public static ImageDetails ImageDetails(string id, params string[] ports) => new(
         id, [], [], null, 1000, "amd64", "linux", ports, [], [], [], "/", new Dictionary<string, string>());
 
-    /// <summary>Makes later inspects of <paramref name="id"/> answer with <paramref name="details"/>.</summary>
-    public void SetNetwork(string id, NetworkDetails details) => _networks[id] = details;
-
     public async Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct)
     {
         await EnterAsync("ListImages", "ListImages", ct);
@@ -232,16 +225,10 @@ internal sealed class FakeEngineApi : IEngineApi
             : throw new EngineException(404, $"No such image: {idOrName}");
     }
 
-    public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct)
+    public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, CancellationToken ct)
     {
-        await EnterAsync("RemoveImage", $"RemoveImage {idOrName} force={force}", ct);
+        await EnterAsync("RemoveImage", $"RemoveImage {idOrName}", ct);
         return ImageRemoval;
-    }
-
-    public async Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct)
-    {
-        await EnterAsync("PruneImages", $"PruneImages danglingOnly={danglingOnly}", ct);
-        return Prune;
     }
 
     /// <summary>
@@ -270,14 +257,7 @@ internal sealed class FakeEngineApi : IEngineApi
         return new VolumeSummary(name, "local", $"/var/lib/docker/volumes/{name}/_data", null, new Dictionary<string, string>(), "local");
     }
 
-    public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) =>
-        EnterAsync("RemoveVolume", $"RemoveVolume {name} force={force}", ct);
-
-    public async Task<PruneResult> PruneVolumesAsync(CancellationToken ct)
-    {
-        await EnterAsync("PruneVolumes", "PruneVolumes", ct);
-        return Prune;
-    }
+    public Task RemoveVolumeAsync(string name, CancellationToken ct) => EnterAsync("RemoveVolume", $"RemoveVolume {name}", ct);
 
     public async Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct)
     {
@@ -285,22 +265,7 @@ internal sealed class FakeEngineApi : IEngineApi
         return Networks;
     }
 
-    /// <summary>Answers with the details set for <paramref name="id"/>, or the engine's 404 when none are.</summary>
-    public async Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct)
-    {
-        await EnterAsync("InspectNetwork", $"InspectNetwork {id}", ct);
-        return _networks.TryGetValue(id, out var details)
-            ? details
-            : throw new EngineException(404, $"network {id} not found");
-    }
-
     public Task RemoveNetworkAsync(string id, CancellationToken ct) => EnterAsync("RemoveNetwork", $"RemoveNetwork {id}", ct);
-
-    public async Task<PruneResult> PruneNetworksAsync(CancellationToken ct)
-    {
-        await EnterAsync("PruneNetworks", "PruneNetworks", ct);
-        return Prune;
-    }
 
     public async Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct)
     {

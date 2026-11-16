@@ -14,8 +14,3 @@ public sealed record NetworkSummary(
     IReadOnlyDictionary<string, string> Labels,
     IReadOnlyList<string> Subnets);
 
-/// <summary>A container attached to a network, with its addresses on it ("172.18.0.2/16"; empty when it has none).</summary>
-public sealed record NetworkEndpoint(string ContainerId, string Name, string IPv4Address, string IPv6Address, string MacAddress);
-
-/// <summary>A network's inspect answer: the network and the containers attached to it.</summary>
-public sealed record NetworkDetails(NetworkSummary Network, IReadOnlyList<NetworkEndpoint> Containers);

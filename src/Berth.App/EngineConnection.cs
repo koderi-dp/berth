@@ -59,10 +59,7 @@ internal sealed class EngineConnection : IEngineApi
 
     public Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct) => _client.InspectImageAsync(idOrName, ct);
 
-    public Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct) =>
-        _client.RemoveImageAsync(idOrName, force, ct);
-
-    public Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct) => _client.PruneImagesAsync(danglingOnly, ct);
+    public Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, CancellationToken ct) => _client.RemoveImageAsync(idOrName, ct);
 
     public IAsyncEnumerable<PullProgress> PullImageAsync(string reference, CancellationToken ct) => _client.PullImageAsync(reference, ct);
 
@@ -70,17 +67,11 @@ internal sealed class EngineConnection : IEngineApi
 
     public Task<VolumeSummary> CreateVolumeAsync(string name, CancellationToken ct) => _client.CreateVolumeAsync(name, ct);
 
-    public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) => _client.RemoveVolumeAsync(name, force, ct);
-
-    public Task<PruneResult> PruneVolumesAsync(CancellationToken ct) => _client.PruneVolumesAsync(ct);
+    public Task RemoveVolumeAsync(string name, CancellationToken ct) => _client.RemoveVolumeAsync(name, ct);
 
     public Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct) => _client.ListNetworksAsync(ct);
 
-    public Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct) => _client.InspectNetworkAsync(id, ct);
-
     public Task RemoveNetworkAsync(string id, CancellationToken ct) => _client.RemoveNetworkAsync(id, ct);
-
-    public Task<PruneResult> PruneNetworksAsync(CancellationToken ct) => _client.PruneNetworksAsync(ct);
 
     public Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct) => _client.GetDiskUsageAsync(ct);
 

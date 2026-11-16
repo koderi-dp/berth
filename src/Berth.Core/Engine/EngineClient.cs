@@ -236,22 +236,12 @@ public sealed class EngineClient : IEngineApi
             config?.Labels ?? new Dictionary<string, string>());
     }
 
-    public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct)
+    public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, CancellationToken ct)
     {
-        var path = ImagePath(idOrName, force ? "?force=true" : "");
+        var path = ImagePath(idOrName, "");
         using var response = await SendAsync(HttpMethod.Delete, path, LongTimeout, ct).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.ListWireImageDelete, ct).ConfigureAwait(false);
         return wire.ConvertAll(d => new ImageDeleteResult(d.Untagged, d.Deleted));
-    }
-
-    public async Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct)
-    {
-        var filters = Uri.EscapeDataString($$"""{"dangling":["{{(danglingOnly ? "true" : "false")}}"]}""");
-        var path = Versioned($"/images/prune?filters={filters}");
-        using var response = await OpenStreamAsync(HttpMethod.Post, path, ct).ConfigureAwait(false);
-        var wire = await ReadAsync(response, EngineJson.Default.WireImagePrune, ct).ConfigureAwait(false);
-        var deleted = wire.ImagesDeleted?.Select(d => d.Deleted).OfType<string>().ToList() ?? [];
-        return new PruneResult(deleted, wire.SpaceReclaimed);
     }
 
     /// <summary>
@@ -299,17 +289,8 @@ public sealed class EngineClient : IEngineApi
         return ToVolume(await ReadAsync(response, EngineJson.Default.WireVolume, ct).ConfigureAwait(false));
     }
 
-    public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) =>
-        ActAsync(HttpMethod.Delete, Versioned($"/volumes/{Uri.EscapeDataString(name)}{(force ? "?force=true" : "")}"), LongTimeout, ct);
-
-    public async Task<PruneResult> PruneVolumesAsync(CancellationToken ct)
-    {
-        // Without the "all" filter the engine removes only anonymous volumes.
-        var path = Versioned($"/volumes/prune?filters={Uri.EscapeDataString("""{"all":["true"]}""")}");
-        using var response = await OpenStreamAsync(HttpMethod.Post, path, ct).ConfigureAwait(false);
-        var wire = await ReadAsync(response, EngineJson.Default.WireVolumePrune, ct).ConfigureAwait(false);
-        return new PruneResult(wire.VolumesDeleted ?? [], wire.SpaceReclaimed);
-    }
+    public Task RemoveVolumeAsync(string name, CancellationToken ct) =>
+        ActAsync(HttpMethod.Delete, Versioned($"/volumes/{Uri.EscapeDataString(name)}"), LongTimeout, ct);
 
     public async Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct)
     {
@@ -318,23 +299,7 @@ public sealed class EngineClient : IEngineApi
         return wire.ConvertAll(ToNetwork);
     }
 
-    public async Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct)
-    {
-        using var response = await SendAsync(HttpMethod.Get, NetworkPath(id), PlainTimeout, ct).ConfigureAwait(false);
-        var wire = await ReadAsync(response, EngineJson.Default.WireNetwork, ct).ConfigureAwait(false);
-        var containers = wire.Containers?.Select(c => new NetworkEndpoint(
-            c.Key, c.Value?.Name ?? "", c.Value?.IPv4Address ?? "", c.Value?.IPv6Address ?? "", c.Value?.MacAddress ?? "")).ToList();
-        return new NetworkDetails(ToNetwork(wire), containers ?? []);
-    }
-
     public Task RemoveNetworkAsync(string id, CancellationToken ct) => ActAsync(HttpMethod.Delete, NetworkPath(id), PlainTimeout, ct);
-
-    public async Task<PruneResult> PruneNetworksAsync(CancellationToken ct)
-    {
-        using var response = await OpenStreamAsync(HttpMethod.Post, Versioned("/networks/prune"), ct).ConfigureAwait(false);
-        var wire = await ReadAsync(response, EngineJson.Default.WireNetworkPrune, ct).ConfigureAwait(false);
-        return new PruneResult(wire.NetworksDeleted ?? [], 0);
-    }
 
     /// <summary>
     /// Reads the disk use of images and volumes with no deadline (only those two kinds are asked for: build cache is the slow one).

@@ -95,7 +95,7 @@ public sealed partial class EngineSessionTests
     }
 
     [Fact]
-    public async Task Removes_and_creates_reach_the_engine_and_an_images_tags_go_in_order_never_forced()
+    public async Task Removes_and_creates_reach_the_engine_and_an_images_tags_go_in_order()
     {
         var api = new FakeEngineApi { Images = [Image("sha256:a", "a:1", "a:2", "a:3")], Volumes = [Volume("data")], Networks = [Network("n1")] };
         await using var h = Harness.With(api);
@@ -110,11 +110,10 @@ public sealed partial class EngineSessionTests
             s.Images.Removal is { IsRunning: false } && s.Volumes.Removal is { IsRunning: false } && s.Networks.Removal is { IsRunning: false }
             && s.Volumes.Pending.IsEmpty);
 
-        Assert.Equal(["RemoveImage a:1 force=False", "RemoveImage a:2 force=False", "RemoveImage a:3 force=False"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
-        Assert.Contains("RemoveVolume data force=False", api.Calls);
+        Assert.Equal(["RemoveImage a:1", "RemoveImage a:2", "RemoveImage a:3"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
+        Assert.Contains("RemoveVolume data", api.Calls);
         Assert.Contains("RemoveNetwork n1", api.Calls);
         Assert.Contains("CreateVolume berth-it-v", api.Calls);
-        Assert.DoesNotContain(api.Calls, c => c.StartsWith("Prune", StringComparison.Ordinal));
         Assert.Empty(state.Images.Removal!.Refusals);
         Assert.Null(state.ActionError);
     }
@@ -152,7 +151,7 @@ public sealed partial class EngineSessionTests
         h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:a", ["a:1", "a:2"])]));
         var state = await h.WaitFor(s => s.Images.Removal is { IsRunning: false });
 
-        Assert.Equal(["RemoveImage a:1 force=False"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
+        Assert.Equal(["RemoveImage a:1"], api.Calls.Where(c => c.StartsWith("RemoveImage", StringComparison.Ordinal)));
         var refusal = Assert.Single(state.Images.Removal!.Refusals);
         Assert.Equal("a:1", refusal.Key);
         Assert.Equal("conflict: unable to remove repository reference \"a:1\" (must force) - container c1 is using its referenced image", refusal.Message);

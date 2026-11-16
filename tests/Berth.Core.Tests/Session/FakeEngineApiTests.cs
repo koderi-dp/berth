@@ -66,22 +66,20 @@ public sealed class FakeEngineApiTests
     public async Task Each_call_answers_what_the_test_set_and_fails_when_told()
     {
         var image = new ImageSummary("sha256:a", ["alpine:latest"], [], 1, 2, 0);
-        var prune = new PruneResult(["sha256:a"], 2);
-        var api = new FakeEngineApi { Images = [image], Prune = prune, CreatedId = "new" };
+        var api = new FakeEngineApi { Images = [image], CreatedId = "new" };
         var request = new ContainerCreateRequest("alpine", "berth-it-x", [], [], []);
 
         Assert.Equal([image], await api.ListImagesAsync(CancellationToken.None));
-        Assert.Same(prune, await api.PruneImagesAsync(danglingOnly: false, CancellationToken.None));
         Assert.Equal("new", await api.CreateContainerAsync(request, CancellationToken.None));
         Assert.Equal([request], api.CreateRequests);
         Assert.Equal(404, (await Assert.ThrowsAsync<EngineException>(() => api.InspectImageAsync("nope", CancellationToken.None))).StatusCode);
 
         api.Fail("RemoveVolume", new EngineException(409, "volume is in use"));
-        var error = await Assert.ThrowsAsync<EngineException>(() => api.RemoveVolumeAsync("v", force: false, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<EngineException>(() => api.RemoveVolumeAsync("v", CancellationToken.None));
 
         Assert.Equal("volume is in use", error.Message);
         Assert.Equal(
-            ["ListImages", "PruneImages danglingOnly=False", "CreateContainer alpine name=berth-it-x", "InspectImage nope", "RemoveVolume v force=False"],
+            ["ListImages", "CreateContainer alpine name=berth-it-x", "InspectImage nope", "RemoveVolume v"],
             api.Calls);
     }
 }

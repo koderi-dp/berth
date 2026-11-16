@@ -413,7 +413,7 @@ public sealed partial class EngineIntegrationTests
             Assert.Equal(["bridge"], listed.Networks);
 
             await client.RemoveContainerAsync(id, force: true, cts.Token);
-            await client.RemoveVolumeAsync(volume, force: false, cts.Token);
+            await client.RemoveVolumeAsync(volume, cts.Token);
             Assert.DoesNotContain(await client.ListVolumesAsync(cts.Token), v => v.Name == volume);
         }
         finally

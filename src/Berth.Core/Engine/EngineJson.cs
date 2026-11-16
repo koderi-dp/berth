@@ -16,15 +16,11 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(List<WireImage>))]
 [JsonSerializable(typeof(WireImageInspect))]
 [JsonSerializable(typeof(List<WireImageDelete>))]
-[JsonSerializable(typeof(WireImagePrune))]
 [JsonSerializable(typeof(WirePullLine))]
 [JsonSerializable(typeof(WireVolumeList))]
 [JsonSerializable(typeof(WireVolume))]
 [JsonSerializable(typeof(WireVolumeCreate))]
-[JsonSerializable(typeof(WireVolumePrune))]
 [JsonSerializable(typeof(List<WireNetwork>))]
-[JsonSerializable(typeof(WireNetwork))]
-[JsonSerializable(typeof(WireNetworkPrune))]
 [JsonSerializable(typeof(WireDiskUsage))]
 [JsonSerializable(typeof(WireCreateContainer))]
 [JsonSerializable(typeof(WireCreated))]
@@ -221,14 +217,10 @@ internal sealed record WireImageInspect(
     [property: JsonPropertyName("Os")] string? Os,
     [property: JsonPropertyName("Config")] WireConfig? Config);
 
-/// <summary>One line of an image removal's answer, and one entry of an image prune's.</summary>
+/// <summary>One line of an image removal's answer.</summary>
 internal sealed record WireImageDelete(
     [property: JsonPropertyName("Untagged")] string? Untagged,
     [property: JsonPropertyName("Deleted")] string? Deleted);
-
-internal sealed record WireImagePrune(
-    [property: JsonPropertyName("ImagesDeleted")] List<WireImageDelete>? ImagesDeleted,
-    [property: JsonPropertyName("SpaceReclaimed")] long SpaceReclaimed);
 
 /// <summary>One line of a pull (<c>/images/create</c>): progress, or a failure in <c>error</c> and <c>errorDetail</c>.</summary>
 internal sealed record WirePullLine(
@@ -262,11 +254,7 @@ internal sealed record WireVolumeUsage(
 /// <summary>The body of <c>/volumes/create</c>.</summary>
 internal sealed record WireVolumeCreate([property: JsonPropertyName("Name")] string Name);
 
-internal sealed record WireVolumePrune(
-    [property: JsonPropertyName("VolumesDeleted")] List<string>? VolumesDeleted,
-    [property: JsonPropertyName("SpaceReclaimed")] long SpaceReclaimed);
-
-/// <summary>A network, from <c>/networks</c> or its inspect answer (which adds <c>Containers</c>, keyed by container ID).</summary>
+/// <summary>A network, from <c>/networks</c>.</summary>
 internal sealed record WireNetwork(
     [property: JsonPropertyName("Id")] string? Id,
     [property: JsonPropertyName("Name")] string? Name,
@@ -275,20 +263,11 @@ internal sealed record WireNetwork(
     [property: JsonPropertyName("Created")] string? Created,
     [property: JsonPropertyName("Internal")] bool Internal,
     [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels,
-    [property: JsonPropertyName("IPAM")] WireIpam? Ipam,
-    [property: JsonPropertyName("Containers")] Dictionary<string, WireNetworkContainer?>? Containers);
+    [property: JsonPropertyName("IPAM")] WireIpam? Ipam);
 
 internal sealed record WireIpam([property: JsonPropertyName("Config")] List<WireIpamConfig?>? Config);
 
 internal sealed record WireIpamConfig([property: JsonPropertyName("Subnet")] string? Subnet);
-
-internal sealed record WireNetworkContainer(
-    [property: JsonPropertyName("Name")] string? Name,
-    [property: JsonPropertyName("MacAddress")] string? MacAddress,
-    [property: JsonPropertyName("IPv4Address")] string? IPv4Address,
-    [property: JsonPropertyName("IPv6Address")] string? IPv6Address);
-
-internal sealed record WireNetworkPrune([property: JsonPropertyName("NetworksDeleted")] List<string>? NetworksDeleted);
 
 /// <summary>
 /// <c>/system/df</c>. Engines before API 1.52 send only <c>LayersSize</c> and the lists; later ones add their own totals with the

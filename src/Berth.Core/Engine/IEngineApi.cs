@@ -53,14 +53,10 @@ public interface IEngineApi : IAsyncDisposable
     /// <summary>Inspects one image by ID or name: its details and the engine's whole answer, indented. An image that does not exist throws the engine's 404.</summary>
     Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct);
 
-    /// <summary>Removes an image, or one of its tags when it has several; the answer lists each tag removed and image deleted.</summary>
-    Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct);
-
     /// <summary>
-    /// Removes the untagged images no container uses (<paramref name="danglingOnly"/>), or every image no container uses. No
-    /// deadline: a prune can run for minutes.
+    /// Removes an image, or one of its tags when it has several, never forced; the answer lists each tag removed and image deleted.
     /// </summary>
-    Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct);
+    Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, CancellationToken ct);
 
     /// <summary>
     /// Pulls an image, read with no deadline: one item per progress line the engine sends. A failure the engine reports in the
@@ -73,23 +69,12 @@ public interface IEngineApi : IAsyncDisposable
 
     Task<VolumeSummary> CreateVolumeAsync(string name, CancellationToken ct);
 
-    Task RemoveVolumeAsync(string name, bool force, CancellationToken ct);
-
-    /// <summary>Removes every volume no container uses, named or anonymous. No deadline: a prune can run for minutes.</summary>
-    Task<PruneResult> PruneVolumesAsync(CancellationToken ct);
+    /// <summary>Removes a volume, never forced: the engine refuses one a container uses.</summary>
+    Task RemoveVolumeAsync(string name, CancellationToken ct);
 
     Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct);
 
-    /// <summary>Inspects one network with the containers attached to it. A network that does not exist throws the engine's 404.</summary>
-    Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct);
-
     Task RemoveNetworkAsync(string id, CancellationToken ct);
-
-    /// <summary>
-    /// Removes every network no container uses (the engine never removes its own bridge, host and none). No deadline: a prune can
-    /// run for minutes.
-    /// </summary>
-    Task<PruneResult> PruneNetworksAsync(CancellationToken ct);
 
     /// <summary>The disk use of images and volumes, read with no deadline (the engine can take long on a large store).</summary>
     Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct);

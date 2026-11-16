@@ -136,8 +136,8 @@ public sealed partial class EngineSession
             {
                 await (remove.Kind switch
                 {
-                    ResourceKind.Images => api.RemoveImageAsync(key, force: false, ct),
-                    ResourceKind.Volumes => api.RemoveVolumeAsync(key, force: false, ct),
+                    ResourceKind.Images => api.RemoveImageAsync(key, ct),
+                    ResourceKind.Volumes => api.RemoveVolumeAsync(key, ct),
                     _ => api.RemoveNetworkAsync(key, ct),
                 }).ConfigureAwait(false);
             }

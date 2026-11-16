@@ -38,7 +38,7 @@ public sealed partial class EngineIntegrationTests
             await engine.Cli.RunAsync("tag", PulledImage, tag);
             Assert.Contains(tag, Assert.Single(await client.ListImagesAsync(cts.Token), i => i.Id == image.Id).RepoTags);
 
-            var removed = await client.RemoveImageAsync(tag, force: false, cts.Token);
+            var removed = await client.RemoveImageAsync(tag, cts.Token);
 
             Assert.Contains(removed, r => r.Untagged == tag);
             Assert.DoesNotContain(removed, r => r.Deleted is not null);
@@ -66,7 +66,7 @@ public sealed partial class EngineIntegrationTests
             Assert.Contains(await client.ListVolumesAsync(cts.Token), v => v.Name == volume);
             Assert.Equal(volume, await engine.Cli.RunAsync("volume", "inspect", "--format", "{{.Name}}", volume));
 
-            await client.RemoveVolumeAsync(volume, force: false, cts.Token);
+            await client.RemoveVolumeAsync(volume, cts.Token);
 
             Assert.DoesNotContain(await client.ListVolumesAsync(cts.Token), v => v.Name == volume);
             Assert.Equal("", await engine.Cli.RunAsync("volume", "ls", "-q", "--filter", $"name={volume}"));

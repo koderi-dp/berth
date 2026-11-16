@@ -48,6 +48,6 @@ public sealed class EngineRemoveDeadlineTests
     }
 
     private static Task Remove(EngineClient client, string kind) => kind == "image"
-        ? client.RemoveImageAsync("big", force: false, CancellationToken.None)
-        : client.RemoveVolumeAsync("big", force: false, CancellationToken.None);
+        ? client.RemoveImageAsync("big", CancellationToken.None)
+        : client.RemoveVolumeAsync("big", CancellationToken.None);
 }

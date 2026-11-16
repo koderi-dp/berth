@@ -197,22 +197,17 @@ public sealed class EngineImagesTests
     }
 
     [Fact]
-    public async Task Remove_lists_what_was_untagged_and_deleted_and_sends_force_when_asked()
+    public async Task Remove_lists_what_was_untagged_and_deleted_and_never_forces()
     {
         const string answer = $$"""[{"Untagged":"alpine:3.19"},{"Untagged":"alpine@{{AlpineId}}"},{"Deleted":"{{AlpineId}}"}]""";
-        var (client, stub) = await ConnectedAsync(stub => stub
-            .On("/v1.56/images/alpine%3A3.19", answer)
-            .On("/v1.56/images/alpine%3A3.19?force=true", "[]"));
+        var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/images/alpine%3A3.19", answer));
         await using var _client = client;
 
-        var removed = await client.RemoveImageAsync("alpine:3.19", force: false, CancellationToken.None);
+        var removed = await client.RemoveImageAsync("alpine:3.19", CancellationToken.None);
         Assert.Equal(("DELETE", "/v1.56/images/alpine%3A3.19"), stub.Requests[^1]);
         Assert.Equal(
             [new ImageDeleteResult("alpine:3.19", null), new ImageDeleteResult($"alpine@{AlpineId}", null), new ImageDeleteResult(null, AlpineId)],
             removed);
-
-        Assert.Empty(await client.RemoveImageAsync("alpine:3.19", force: true, CancellationToken.None));
-        Assert.Equal(("DELETE", "/v1.56/images/alpine%3A3.19?force=true"), stub.Requests[^1]);
     }
 
     [Fact]
@@ -223,45 +218,9 @@ public sealed class EngineImagesTests
             "/v1.56/images/alpine%3A3.19", HttpStatusCode.Conflict, $$"""{"message":"{{message.Replace("\"", "\\\"", StringComparison.Ordinal)}}"}"""));
         await using var _client = client;
 
-        var error = await Assert.ThrowsAsync<EngineException>(() => client.RemoveImageAsync("alpine:3.19", force: false, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<EngineException>(() => client.RemoveImageAsync("alpine:3.19", CancellationToken.None));
 
         Assert.Equal(409, error.StatusCode);
         Assert.Equal(message, error.Message);
-    }
-
-    // filters={"dangling":["true"]} and {"dangling":["false"]}, escaped.
-    private const string PruneDangling = "/v1.56/images/prune?filters=%7B%22dangling%22%3A%5B%22true%22%5D%7D";
-    private const string PruneUnused = "/v1.56/images/prune?filters=%7B%22dangling%22%3A%5B%22false%22%5D%7D";
-
-    [Fact]
-    public async Task Prune_sends_the_dangling_filter_and_lists_the_deleted_images()
-    {
-        var (client, stub) = await ConnectedAsync(stub => stub
-            .On(PruneDangling, $$"""{"ImagesDeleted":[{"Untagged":"berth-check/alpine:test"},{"Deleted":"{{DanglingId}}"},{"Deleted":"sha256:2"}],"SpaceReclaimed":123456}""")
-            .On(PruneUnused, """{"ImagesDeleted":null,"SpaceReclaimed":0}"""));
-        await using var _client = client;
-
-        var dangling = await client.PruneImagesAsync(danglingOnly: true, CancellationToken.None);
-        Assert.Equal(("POST", PruneDangling), stub.Requests[^1]);
-        Assert.Equal([DanglingId, "sha256:2"], dangling.Deleted);
-        Assert.Equal(123456, dangling.SpaceReclaimed);
-
-        var unused = await client.PruneImagesAsync(danglingOnly: false, CancellationToken.None);
-        Assert.Equal(("POST", PruneUnused), stub.Requests[^1]);
-        Assert.Empty(unused.Deleted);
-        Assert.Equal(0, unused.SpaceReclaimed);
-    }
-
-    [Fact]
-    public async Task Prune_while_another_runs_carries_the_engines_409()
-    {
-        var (client, _) = await ConnectedAsync(stub => stub.On(
-            PruneDangling, HttpStatusCode.Conflict, """{"message":"a prune operation is already running"}"""));
-        await using var _client = client;
-
-        var error = await Assert.ThrowsAsync<EngineException>(() => client.PruneImagesAsync(danglingOnly: true, CancellationToken.None));
-
-        Assert.Equal(409, error.StatusCode);
-        Assert.Equal("a prune operation is already running", error.Message);
     }
 }

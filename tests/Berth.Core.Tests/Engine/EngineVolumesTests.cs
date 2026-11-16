@@ -35,8 +35,6 @@ public sealed class EngineVolumesTests
         }
         """;
 
-    private const string PruneAll = "/v1.56/volumes/prune?filters=%7B%22all%22%3A%5B%22true%22%5D%7D";
-
     private static async Task<(EngineClient Client, StubHandler Stub)> ConnectedAsync(Action<StubHandler> setup)
     {
         var stub = new StubHandler().WithVersion("1.56");
@@ -104,18 +102,14 @@ public sealed class EngineVolumesTests
     }
 
     [Fact]
-    public async Task Remove_escapes_the_name_and_sends_force_when_asked()
+    public async Task Remove_escapes_the_name_and_never_forces()
     {
-        var (client, stub) = await ConnectedAsync(stub => stub
-            .On("/v1.56/volumes/shop_data", HttpStatusCode.NoContent, "")
-            .On("/v1.56/volumes/shop_data?force=true", HttpStatusCode.NoContent, ""));
+        var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/volumes/shop%2Bdata%3Fforce%3Dtrue", HttpStatusCode.NoContent, ""));
         await using var _client = client;
 
-        await client.RemoveVolumeAsync("shop_data", force: false, CancellationToken.None);
-        Assert.Equal(("DELETE", "/v1.56/volumes/shop_data"), stub.Requests[^1]);
+        await client.RemoveVolumeAsync("shop+data?force=true", CancellationToken.None);
 
-        await client.RemoveVolumeAsync("shop_data", force: true, CancellationToken.None);
-        Assert.Equal(("DELETE", "/v1.56/volumes/shop_data?force=true"), stub.Requests[^1]);
+        Assert.Equal(("DELETE", "/v1.56/volumes/shop%2Bdata%3Fforce%3Dtrue"), stub.Requests[^1]);
     }
 
     [Theory]
@@ -127,34 +121,9 @@ public sealed class EngineVolumesTests
             "/v1.56/volumes/berth-check-nope", (HttpStatusCode)status, $$"""{"message":"{{message}}"}"""));
         await using var _client = client;
 
-        var error = await Assert.ThrowsAsync<EngineException>(() => client.RemoveVolumeAsync("berth-check-nope", force: false, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<EngineException>(() => client.RemoveVolumeAsync("berth-check-nope", CancellationToken.None));
 
         Assert.Equal(status, error.StatusCode);
         Assert.Equal(message, error.Message);
-    }
-
-    [Fact]
-    public async Task Prune_removes_every_unused_volume_and_lists_them()
-    {
-        var (client, stub) = await ConnectedAsync(stub => stub.On(PruneAll, """{"VolumesDeleted":["shop_data","bare"],"SpaceReclaimed":9298}"""));
-        await using var _client = client;
-
-        var result = await client.PruneVolumesAsync(CancellationToken.None);
-
-        Assert.Equal(("POST", PruneAll), stub.Requests[^1]);
-        Assert.Equal(["shop_data", "bare"], result.Deleted);
-        Assert.Equal(9298, result.SpaceReclaimed);
-    }
-
-    [Fact]
-    public async Task Prune_tolerates_a_null_list()
-    {
-        var (client, _) = await ConnectedAsync(stub => stub.On(PruneAll, """{"VolumesDeleted":null,"SpaceReclaimed":0}"""));
-        await using var _client = client;
-
-        var result = await client.PruneVolumesAsync(CancellationToken.None);
-
-        Assert.Empty(result.Deleted);
-        Assert.Equal(0, result.SpaceReclaimed);
     }
 }

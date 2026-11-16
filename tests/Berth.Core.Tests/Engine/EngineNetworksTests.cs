@@ -51,34 +51,6 @@ public sealed class EngineNetworksTests
         ]
         """;
 
-    // A network's inspect answer with two containers attached.
-    private const string ShopInspect = $$"""
-        {
-          "Name": "shop_default",
-          "Id": "{{ShopId}}",
-          "Created": "2026-11-15T18:00:00Z",
-          "Scope": "local",
-          "Driver": "bridge",
-          "IPAM": { "Driver": "default", "Config": [{ "Subnet": "172.20.0.0/16", "Gateway": "172.20.0.1" }] },
-          "Internal": false,
-          "Labels": {},
-          "Containers": {
-            "1f0c2a9e8b7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928170615e4d3": {
-              "Name": "shop-web-1",
-              "EndpointID": "3b49a3e1770681d577ccb716b81aacedae73a769fe9ed0e6126bece9aa92590b",
-              "MacAddress": "92:19:16:1b:af:d4",
-              "IPv4Address": "172.20.0.2/16",
-              "IPv6Address": ""
-            },
-            "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d": {
-              "Name": "shop-db-1",
-              "IPv4Address": "172.20.0.3/16"
-            }
-          },
-          "Status": { "IPAM": { "Subnets": { "172.20.0.0/16": { "IPsInUse": 5, "DynamicIPsAvailable": 65531 } } } }
-        }
-        """;
-
     private static async Task<(EngineClient Client, StubHandler Stub)> ConnectedAsync(Action<StubHandler> setup)
     {
         var stub = new StubHandler().WithVersion("1.56");
@@ -130,50 +102,6 @@ public sealed class EngineNetworksTests
     }
 
     [Fact]
-    public async Task Inspect_lists_the_attached_containers()
-    {
-        var (client, stub) = await ConnectedAsync(stub => stub.On($"/v1.56/networks/{ShopId}", ShopInspect));
-        await using var _client = client;
-
-        var details = await client.InspectNetworkAsync(ShopId, CancellationToken.None);
-
-        Assert.Equal(("GET", $"/v1.56/networks/{ShopId}"), stub.Requests[^1]);
-        Assert.Equal("shop_default", details.Network.Name);
-        Assert.Equal(["172.20.0.0/16"], details.Network.Subnets);
-        Assert.Equal(
-            [
-                new NetworkEndpoint("1f0c2a9e8b7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928170615e4d3", "shop-web-1", "172.20.0.2/16", "", "92:19:16:1b:af:d4"),
-                new NetworkEndpoint("9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d", "shop-db-1", "172.20.0.3/16", "", ""),
-            ],
-            details.Containers);
-    }
-
-    [Fact]
-    public async Task Inspect_tolerates_no_containers()
-    {
-        var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/networks/abc", """{"Name":"lonely","Id":"abc","Containers":null}"""));
-        await using var _client = client;
-
-        var details = await client.InspectNetworkAsync("abc", CancellationToken.None);
-
-        Assert.Equal("lonely", details.Network.Name);
-        Assert.Empty(details.Containers);
-    }
-
-    [Fact]
-    public async Task Inspect_of_a_missing_network_carries_the_engines_404()
-    {
-        var (client, _) = await ConnectedAsync(stub => stub.On(
-            "/v1.56/networks/berth-check-nope", HttpStatusCode.NotFound, """{"message":"network berth-check-nope not found"}"""));
-        await using var _client = client;
-
-        var error = await Assert.ThrowsAsync<EngineException>(() => client.InspectNetworkAsync("berth-check-nope", CancellationToken.None));
-
-        Assert.Equal(404, error.StatusCode);
-        Assert.Equal("network berth-check-nope not found", error.Message);
-    }
-
-    [Fact]
     public async Task Remove_deletes_the_network()
     {
         var (client, stub) = await ConnectedAsync(stub => stub.On($"/v1.56/networks/{ShopId}", HttpStatusCode.NoContent, ""));
@@ -197,27 +125,5 @@ public sealed class EngineNetworksTests
 
         Assert.Equal(status, error.StatusCode);
         Assert.Equal(message.Replace("\\\"", "\"", StringComparison.Ordinal), error.Message);
-    }
-
-    [Fact]
-    public async Task Prune_lists_the_removed_networks()
-    {
-        var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/networks/prune", """{"NetworksDeleted":["shop_default","berth-it-net"]}"""));
-        await using var _client = client;
-
-        var result = await client.PruneNetworksAsync(CancellationToken.None);
-
-        Assert.Equal(("POST", "/v1.56/networks/prune"), stub.Requests[^1]);
-        Assert.Equal(["shop_default", "berth-it-net"], result.Deleted);
-        Assert.Equal(0, result.SpaceReclaimed);
-    }
-
-    [Fact]
-    public async Task Prune_tolerates_a_null_list()
-    {
-        var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/networks/prune", """{"NetworksDeleted":null}"""));
-        await using var _client = client;
-
-        Assert.Empty((await client.PruneNetworksAsync(CancellationToken.None)).Deleted);
     }
 }
