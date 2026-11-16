@@ -21,6 +21,14 @@ public static class CommandLine
     public const string OpenQuote = "Close the quote.";
     public const string LineBreak = "Put the command on one line.";
 
+    /// <summary>
+    /// Windows runs a .bat or .cmd file through cmd.exe, which acts on &amp;, | and % in its arguments: Berth refuses one rather than
+    /// run a shell the line does not show. Writing <c>cmd.exe /c file.bat</c> runs it, with the shell in plain sight.
+    /// </summary>
+    public const string BatchFile = "A .bat or .cmd file runs through cmd.exe. Write cmd.exe /c and the file instead.";
+
+    private static readonly ParsedCommandLine BatchFileLine = new("", [], BatchFile);
+
     private static readonly ParsedCommandLine BlankLine = new("", [], Blank);
     private static readonly ParsedCommandLine OpenQuoteLine = new("", [], OpenQuote);
     private static readonly ParsedCommandLine LineBreakLine = new("", [], LineBreak);
@@ -28,7 +36,8 @@ public static class CommandLine
     /// <summary>
     /// Splits <paramref name="text"/>: words are separated by spaces and tabs outside quotes; double quotes keep spaces in a word and two
     /// of them inside quotes are one quote; backslashes are literal except before a quote, where each pair is one backslash and an odd
-    /// one left over makes the quote literal. An empty line, an empty program, a quote left open or a line break is refused.
+    /// one left over makes the quote literal. An empty line, an empty program, a quote left open, a line break or a .bat or .cmd
+    /// program (<see cref="BatchFile"/>) is refused.
     /// </summary>
     public static ParsedCommandLine Parse(string text)
     {
@@ -111,6 +120,9 @@ public static class CommandLine
             words.Add(word.ToString());
         if (words.Count == 0 || words[0].Length == 0)
             return BlankLine;
+        var extension = Path.GetExtension(words[0].TrimEnd(' ', '.'));
+        if (extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
+            return BatchFileLine;
 
         return new ParsedCommandLine(words[0], [.. words.Skip(1)], null);
     }

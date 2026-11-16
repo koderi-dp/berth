@@ -83,6 +83,21 @@ public sealed class CommandLineTests
     }
 
     [Theory]
+    [InlineData(@"C:\tools\start-engine.bat")]
+    [InlineData("stop.CMD")]
+    [InlineData("\"C:\\My Tools\\up.cmd\" -x")]
+    public void A_batch_file_is_refused_because_windows_runs_it_through_cmd(string text)
+    {
+        AssertRefused(text, CommandLine.BatchFile);
+    }
+
+    [Fact]
+    public void Cmd_itself_is_allowed_so_a_shell_is_visible_when_one_is_used()
+    {
+        AssertSplit(@"cmd.exe /c C:\tools\start-engine.bat", "cmd.exe", "/c", @"C:\tools\start-engine.bat");
+    }
+
+    [Theory]
     [InlineData("plain")]
     [InlineData("with space")]
     [InlineData("")]
