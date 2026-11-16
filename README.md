@@ -61,11 +61,15 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   containers attached to it (a menu of links to them). The built-in networks cannot be
   deleted.
 - **Removing images, volumes and networks.** Delete (per row, for all checked rows, or with
-  the Delete key) and "Remove unused …" ask first and name everything that will go, with the
-  space freed when the engine tells it, and the containers that lose a network. Nothing is
-  forced: what the engine refuses stays, and the bar above the list says what was removed,
-  refused or skipped. "Remove unused …" waits until the container list has been read, since
-  that is what tells what is in use.
+  the Delete key) and "Remove unused …" ask first. "Remove unused …" names every item it will
+  remove, and says so when the search or filter hides some of them; a delete of checked rows
+  names the first ten and counts the rest (the rows checked are on screen). Both say the space
+  freed when the engine tells it, a delete names the containers that use an image or volume
+  (the engine refuses those) and the containers that lose a network. Nothing is forced: what
+  the engine refuses stays, and the bar above the list says what was removed, refused or
+  skipped. "Remove unused …" waits until the container list and its own list have been read
+  on this connection, since they tell what is in use; until then its confirmation says why
+  it cannot remove anything.
 - **Live updates.** The lists follow the engine's event stream, so a container, image,
   volume or network made from the command line appears within a second without a refresh.
 - **Connection state.** The title bar shows whether Berth is connecting, connected (with

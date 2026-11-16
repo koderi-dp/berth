@@ -44,8 +44,10 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
                             ResourceList/ListStatus/RemovalBatch (the images, volumes and networks lists and their
                             batches of removes), ImagePull (a pull's layers), DiskUsageState, ContainerRun (the run
-                            dialog's result), ImageInspect (the image read for the run dialog and Inspect), VolumeCreate
-                            (the create volume dialog's create and how it ended)
+                            dialog's request and how it ended), ImageInspect (the image read for the run dialog and
+                            Inspect), VolumeCreate (the create volume dialog's request and how it ended; a dialog reads
+                            only the entry with its own request number, which the session always answers), InUse (the
+                            one rule for what a container uses)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
                             stats), with ResourceEvents, ResourceEffects and SessionReducer.Resources for images, volumes,
                             networks, disk use, pulls, running a container and reading an image; EngineSession (runs the reducer and its
@@ -59,7 +61,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
                             Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text; "Remove
-                            unused" waits for the container list: UnusedNotKnown), BackTarget (where a container's page
+                            unused" waits for the container list and its own list: UnusedNotKnown), BackTarget (where a container's page
                             goes back to and its button's label), RunOutcome (the run dialog's line), PullFigure (a pull's progress
                             line), PullReference (the pull dialog's field check), RunDraft (the run dialog's fields, checks
                             and create request); detail page: LogView, LogSearch,
@@ -179,11 +181,14 @@ built from shared pieces; a new list uses them rather than copying a page:
   empty text in the table's place). Each table is a component with record props and a
   `TableHandlers` object kept by the page, so an unchanged table is not built again.
 - Removing: a page gives `UseRemoveDialogs` a function that plans a delete from the rows it
-  shows (`Confirmations.Remove*` over `*Rows.Shown(...)`). `RemoveDialog.For` is the one place
-  where a confirmed delete is planned again from the session as it is then, and a confirmed
-  "Remove unused …" keeps only what it named that is still unused
-  (`Confirmations.ConfirmPrune`). The session sends a batch a few items at a time, never
-  forced; `RemovalPanel` shows its progress and result.
+  shows (`Confirmations.Remove*` over `*Rows.Shown(...)`). `RemoveDialog.For` plans a
+  confirmed delete again from the session as it is then, and a confirmed "Remove unused …"
+  keeps only what it named that is still unused (`Confirmations.ConfirmPrune`); a volume's
+  page has its own small copy of the delete (`VolumeDetailPage.ConfirmDelete`, the same plan
+  from the one row). Nothing is sent when the connection was switched since the dialog opened
+  (`RemoveDialog.IsCurrent`). The session sends a batch a few items at a time, never forced,
+  and skips an image whose tags are not the ones its confirmation saw; `RemovalPanel` shows
+  its progress and result.
 
 ## The detail session
 
@@ -411,7 +416,7 @@ Above the list, `stats-total-cpu` and `stats-total-memory` carry the totals in t
 `sort-cpu` sorts by CPU. A row's name is the link `open-<name>`, which opens its detail page.
 The images, volumes and networks pages: `pull-image`, `create-volume`, `remove-unused-images`,
 `remove-unused-volumes`, `remove-unused-networks` (below 1300 effective px the secondary ones are in
-`toolbar-more`), `delete-selected`, `image-usage`, `volume-usage`; per row `run-<tag>`,
+`toolbar-more`), `delete-selected`, `image-usage`, `volume-usage`, `network-summary`; per row `run-<tag>`,
 `delete-<name>` (an image by its tag), `open-<volume>` (its page), `containers-<network>` (a menu of the attached
 containers). Dialogs: `pull-reference`, `pull-dialog-status`; `run-name`, `run-outcome`;
 `volume-name`, `volume-create-error`; a remove confirmation's text is `confirm-text`.
