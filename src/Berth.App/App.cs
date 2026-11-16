@@ -276,7 +276,7 @@ internal sealed class App : EngineStateComponent
         : null;
 
     /// <summary>
-    /// Whether the window is minimized (iconic). Read again whenever the window changes, shows, hides or is activated: Reactor's
+    /// Whether the window is minimized (iconic) or hidden to the tray. Read again whenever the window changes, shows, hides or is activated: Reactor's
     /// <c>UseWindowState</c> and the presenter's state hear of the minimize but did not change back when the window was restored
     /// from the taskbar.
     /// </summary>
@@ -290,9 +290,14 @@ internal sealed class App : EngineStateComponent
                 if (window is null)
                     return () => { };
 
+                // The window's other owners: the tray icon (opened first, so a start at sign-in can hide the window to it) and the
+                // close-to-tray and show-from-tray paths.
+                Shell.TrayIcon.Open();
+                Shell.MainWindow.Attach(window);
+
                 var native = window.NativeWindow;
                 var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(native);
-                void Update() => setMinimized(IsIconic(hwnd));
+                void Update() => setMinimized(IsIconic(hwnd) || Shell.MainWindow.IsHidden);
                 void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args) => Update();
                 void OnVisibilityChanged(object sender, Microsoft.UI.Xaml.WindowVisibilityChangedEventArgs args) => Update();
                 void OnActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args) => Update();
@@ -302,9 +307,11 @@ internal sealed class App : EngineStateComponent
                 native.VisibilityChanged += OnVisibilityChanged;
                 native.Activated += OnActivated;
                 native.SizeChanged += OnSizeChanged;
+                Shell.MainWindow.HiddenChanged += Update;
                 Update();
                 return () =>
                 {
+                    Shell.MainWindow.HiddenChanged -= Update;
                     window.AppWindow.Changed -= OnAppWindowChanged;
                     native.VisibilityChanged -= OnVisibilityChanged;
                     native.Activated -= OnActivated;
