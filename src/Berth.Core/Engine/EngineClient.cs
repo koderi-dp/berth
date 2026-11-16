@@ -332,12 +332,22 @@ public sealed class EngineClient : IEngineApi
         return wire.Id ?? "";
     }
 
+    /// <summary>
+    /// The detach keys every TTY exec is created with. The engine watches a TTY exec's input for a detach sequence and, when the
+    /// exec names none, uses Ctrl+P Ctrl+Q (moby <c>daemon/internal/stream/attach.go</c>, <c>defaultEscapeSequence</c>): Ctrl+P
+    /// (readline's previous line) was then held back until the next key, and Ctrl+P Ctrl+Q ended the stream with the shell left
+    /// running. Detaching cannot be turned off, so the sequence is one nobody types. Only its first key (Ctrl+^, 0x1e) is ever held
+    /// back, until the key after it. The syntax is moby/term's <c>ToBytes</c>: <c>ctrl-^</c> is 0x1e, <c>ctrl-@</c> is 0x00.
+    /// </summary>
+    public const string ExecDetachKeys = "ctrl-^,ctrl-@,ctrl-^,ctrl-@,ctrl-^,ctrl-@";
+
     public Task<string> CreateExecAsync(
         string containerId, IReadOnlyList<string> command, TerminalSize size, IReadOnlyList<string> environment, CancellationToken ct)
     {
         var consoleSize = ConsoleSize(size);
         var env = environment.Count == 0 ? null : environment;
-        return CreateExecAsync(containerId, new WireExecCreate(true, true, true, true, command, consoleSize) { Env = env }, ct);
+        return CreateExecAsync(
+            containerId, new WireExecCreate(true, true, true, true, command, consoleSize) { Env = env, DetachKeys = ExecDetachKeys }, ct);
     }
 
     public async Task RunDetachedExecAsync(string containerId, IReadOnlyList<string> command, CancellationToken ct)

@@ -50,6 +50,19 @@ public sealed class EngineExecTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_names_detach_keys_nobody_types_so_ctrl_p_reaches_the_shell()
+    {
+        var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Created, """{"Id":"e1"}"""));
+        await using var _client = client;
+
+        await client.CreateExecAsync("abc", ["sh"], Size, [], CancellationToken.None);
+
+        Assert.Equal("ctrl-^,ctrl-@,ctrl-^,ctrl-@,ctrl-^,ctrl-@", EngineClient.ExecDetachKeys);
+        Assert.Contains("\"DetachKeys\":\"ctrl-^,ctrl-@,ctrl-^,ctrl-@,ctrl-^,ctrl-@\"", stub.Bodies[^1]);
+        Assert.DoesNotContain("ctrl-p", stub.Bodies[^1], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Create_with_an_environment_posts_it()
     {
         var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Created, """{"Id":"e1"}"""));
@@ -79,6 +92,7 @@ public sealed class EngineExecTests : IDisposable
         Assert.Contains("\"Cmd\":[\"sh\",\"-c\",\"exit 0\"]", create);
         Assert.DoesNotContain("\"ConsoleSize\"", create);
         Assert.DoesNotContain("\"Env\"", create);
+        Assert.DoesNotContain("\"DetachKeys\"", create);
         var start = stub.Bodies[^1];
         Assert.Contains("\"Detach\":true", start);
         Assert.Contains("\"Tty\":false", start);

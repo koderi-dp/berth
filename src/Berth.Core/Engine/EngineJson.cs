@@ -320,6 +320,11 @@ internal sealed record WireExecCreate(
     [JsonPropertyName("Env")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<string>? Env { get; init; }
+
+    /// <summary>The keys that detach from the exec's input (<see cref="EngineClient.ExecDetachKeys"/>); none for a detached run.</summary>
+    [JsonPropertyName("DetachKeys")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DetachKeys { get; init; }
 }
 
 /// <summary>The body of <c>/exec/{id}/start</c>. <c>ConsoleSize</c> is rows, then columns; none for a detached run.</summary>
