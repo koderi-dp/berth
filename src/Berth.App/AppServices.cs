@@ -87,6 +87,17 @@ internal sealed class AppServices
     public void CloseDetail() => ReplaceDetail(null);
 
     /// <summary>
+    /// The app is exiting: closes the open detail session, so a shell it holds is ended in the container, waiting at most
+    /// <paramref name="limit"/> (on the calling thread) before the exit goes on without it.
+    /// </summary>
+    public void CloseDetailForExit(TimeSpan limit)
+    {
+        if (Interlocked.Exchange(ref _detail, null) is not { } detail)
+            return;
+        Task.Run(() => DisposeAsync(detail)).Wait(limit);
+    }
+
+    /// <summary>
     /// Applies <paramref name="change"/> and saves the result. When the active connection, or any field of it, is different afterwards,
     /// the session is replaced by one for the new connection, which starts connecting. A save that fails is logged and the change is
     /// kept for this run.

@@ -31,6 +31,10 @@ ReactorApp.DefaultRenderErrorHandler = error =>
     return null;
 };
 
+// A shell open in the Exec tab would stay in its container (the engine keeps it): the detail session ends it, given a second at most.
+// Berth has one window, so its closing is the exit.
+ReactorApp.WindowClosed += (_, _) => services.CloseDetailForExit(TimeSpan.FromSeconds(1));
+
 ReactorApp.Run<App>(window, _ =>
 {
     // Logged; Reactor's own handling of the exception goes on.
