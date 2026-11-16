@@ -143,21 +143,32 @@
     }
   }
 
+  // Whether the key pressed is the letter C or V as the user's layout has it. The character (e.key) decides when it is a Latin
+  // letter, so on Dvorak or Colemak Ctrl+V is the key marked V (and the key in QWERTY's V place, Ctrl+K on Dvorak, goes to the
+  // shell). Only when the layout gives no Latin letter (Cyrillic, Greek) does the key's position (e.code) decide, as Windows does.
+  function isLetter(e, letter) {
+    var key = e.key;
+    if (typeof key === 'string' && key.length === 1 && /^[a-z]$/i.test(key)) {
+      return key.toLowerCase() === letter;
+    }
+    return e.code === 'Key' + letter.toUpperCase();
+  }
+
   // The keys the page keeps for itself: copy, paste and F6. Every other key goes to xterm, and with it to the shell. A handled key
-  // has its default prevented as well, so the browser does not paste or copy a second time. Keys are matched on their position
-  // (e.code), so copy and paste work on any keyboard layout (on a Cyrillic one e.key is the local letter).
+  // has its default prevented as well, so the browser does not paste or copy a second time.
   term.attachCustomKeyEventHandler(function (e) {
     var code = e.code;
     var ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
+    var c = isLetter(e, 'c'), v = isLetter(e, 'v');
     var action = null;
-    if ((ctrl && e.shiftKey && code === 'KeyC') || (ctrl && !e.shiftKey && code === 'Insert')) {
+    if ((ctrl && e.shiftKey && c) || (ctrl && !e.shiftKey && code === 'Insert')) {
       action = copySelection;
-    } else if (ctrl && !e.shiftKey && code === 'KeyC' && term.hasSelection()) {
+    } else if (ctrl && !e.shiftKey && c && term.hasSelection()) {
       action = function () {
         copySelection();
         term.clearSelection();
       };
-    } else if ((ctrl && code === 'KeyV') || (e.shiftKey && !e.ctrlKey && !e.altKey && code === 'Insert')) {
+    } else if ((ctrl && v) || (e.shiftKey && !e.ctrlKey && !e.altKey && code === 'Insert')) {
       action = function () {
         post({ t: 'paste' });
       };
