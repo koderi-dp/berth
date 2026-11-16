@@ -33,18 +33,22 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     private static readonly object SessionRemoved = new();
     private static readonly object SessionLost = new();
 
-    private static readonly SelectorBarItemData[] Tabs =
-        [SelectorBarItem("Logs"), SelectorBarItem("Inspect"), SelectorBarItem("Bind mounts"), SelectorBarItem("Stats")];
+    // The tabs on the strip, built once: a new item array on every render leaks native memory.
+    private static readonly IReadOnlyList<DetailTab> ShownTabs = DetailTabs.Shown(exec: false);
+    private static readonly SelectorBarItemData[] TabItems = [.. ShownTabs.Select(t => SelectorBarItem(DetailTabs.Title(t)))];
 
     public override Element Render()
     {
         var id = Props.Route.ContainerId;
         var leave = Props.Leave;
+        // The latest Leave, for the memoized header: its handler is kept while the header is, which can outlast a new Leave.
+        var leaveRef = UseRef(leave);
+        leaveRef.Current = leave;
         var state = UseEngineState();
         var detail = UseDetailState();
         var compact = !UseBreakpoint(ContainerRowView.WideLayoutMinWidth);
         var nav = UseNavigation<AppRoute>();
-        var (tab, setTab) = UseState(0);
+        var (tab, setTab) = UseState(DetailTab.Logs);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
         // What the Logs tab does with Ctrl+F and Escape while it is shown; the page owns the shortcuts.
         var logsKeys = UseMemo(() => new LogsTabKeys(), Array.Empty<object>());
@@ -128,7 +132,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                     logsKeys.FocusSearch = true;
                     updateLogSearch(s => s.Opened());
                     updateLogSearchRequests(n => n + 1);
-                    setTab(0);
+                    setTab(DetailTab.Logs);
                 },
                 Reload: connected ? () => Reload(id) : null,
                 Delete: row is not null && RowSelection.CanAct(row, connected) ? () => setDeleteRequest(DeleteRequest.For((ContainerRow[])[row])) : null,
@@ -157,11 +161,13 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         // One key for the rest of what the header shows: the minute, whether connected, whether compact, and where Back goes.
         var headerKey = string.Concat(((DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0)).ToString(CultureInfo.InvariantCulture), "|", backLabel);
         var header = UseMemo(
-            () => row is null ? null : DetailHeader.Render(row, details, connected, compact, backLabel, () => leave(null), Run).WithKey("header"),
+            () => row is null ? null : DetailHeader.Render(row, details, connected, compact, backLabel, () => leaveRef.Current(null), Run).WithKey("header"),
             row,
             details,
             headerKey);
-        var tabStrip = UseMemo(() => SelectorBar(Tabs, tab, setTab).AutomationId("detail-tabs").Flex(shrink: 0).WithKey("tabs"), tab);
+        var tabStrip = UseMemo(
+            () => SelectorBar(TabItems, DetailTabs.IndexOf(ShownTabs, tab), i => setTab(DetailTabs.At(ShownTabs, i))).AutomationId("detail-tabs").Flex(shrink: 0).WithKey("tabs"),
+            tab);
 
         // Keyed, so a bar coming or going (the connection bar during an outage) does not move the tabs to another slot and mount them
         // again.
@@ -218,7 +224,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     /// it renders again only when that changes, not on every batch of log lines. While <paramref name="waiting"/> for the engine the
     /// Logs and Stats tabs say so instead of what their streams say (see <see cref="DetailPage.Waiting"/>).
     /// </summary>
-    private static Element Content(DetailState? detail, bool waiting, bool listed, int tab, LogsTabHooks logs, long machineMemory)
+    private static Element Content(DetailState? detail, bool waiting, bool listed, DetailTab tab, LogsTabHooks logs, long machineMemory)
     {
         if (detail?.Details is null)
         {
@@ -229,9 +235,9 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
 
         return tab switch
         {
-            1 => Component<InspectTab, InspectTabProps>(new(detail.Details, detail.RawJson ?? "")),
-            2 => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
-            3 => Component<StatsTab, StatsTabProps>(new(
+            DetailTab.Inspect => Component<InspectTab, InspectTabProps>(new(detail.Details, detail.RawJson ?? "")),
+            DetailTab.BindMounts => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
+            DetailTab.Stats => Component<StatsTab, StatsTabProps>(new(
                 detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, waiting, detail.Details.CpuLimit, machineMemory)),
             _ => Component<LogsTab, LogsTabProps>(new(detail, waiting, ClearLogs, logs.Search, logs.UpdateSearch, logs.Keys, logs.SearchRequests)),
         };
