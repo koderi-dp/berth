@@ -31,9 +31,10 @@ internal static class DetailHeader
 
     /// <param name="details">The last read of the container: since when it runs, and its <c>docker run</c> command; null before the first.</param>
     /// <param name="compact">A narrow window: Restart and Pause go into the "more" menu, as on a list row.</param>
-    /// <param name="onBack">Returns to the list.</param>
+    /// <param name="backLabel">What the back button says: where it goes (<see cref="BackTarget.Label"/>).</param>
+    /// <param name="onBack">Goes back to where the page was opened from.</param>
     /// <param name="run">Carries out an engine action or Delete (which the page confirms first).</param>
-    public static Element Render(ContainerRow row, ContainerDetails? details, bool connected, bool compact, Action onBack, Action<RowAction> run)
+    public static Element Render(ContainerRow row, ContainerDetails? details, bool connected, bool compact, string backLabel, Action onBack, Action<RowAction> run)
     {
         var actions = RowActions.ForContainer(row, connected, viewDetails: false);
         void Run(RowAction action) => ContainerParts.Run(action, row, actions, run, details);
@@ -47,7 +48,7 @@ internal static class DetailHeader
                 })
             .AutomationName("Location");
 
-        var back = Widgets.IconButton(Glyphs.ChevronLeft, "Back to containers (Esc)", onBack)
+        var back = Widgets.IconButton(Glyphs.ChevronLeft, $"{backLabel} (Esc)", onBack)
             .AutomationId("back-to-list")
             .VAlign(VerticalAlignment.Center);
 

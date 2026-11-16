@@ -1,4 +1,5 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
+using System.Globalization;
 using Berth.Components;
 using Berth.Engine.Models;
 using Berth.Hooks;
@@ -60,6 +61,11 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var connected = state.Status == ConnectionStatus.Connected;
         var row = UseMemo(() => FindRow(state, id), state.Containers, state.Pending);
         var mine = detail?.ContainerId == id ? detail : null;
+        // Where Back goes, from the page this one was opened from; kept while another page is shown.
+        var backTarget = UseRef(BackTarget.Containers);
+        if (active)
+            backTarget.Current = AppRoute.BackTargetOf(nav.CanGoBack ? nav.BackStack[^1] : null);
+        var backLabel = backTarget.Current.Label;
 
         // While the session is closed or reopened, or its connection is lost, the tabs show the last live state, so they stay mounted
         // and keep what the user was doing (an edit in the log search), and say they wait for the engine rather than that the
@@ -148,10 +154,10 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         // The page renders on every batch of log lines (ten a second while a log floods). The header and the tab strip are built again
         // only when what they show changes; the header's "Running (52 minutes ago)" at most once a minute.
         var details = shown?.Details;
-        // One scalar for the rest of what the header shows: the minute, whether connected, whether compact.
-        var headerKey = (DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0);
+        // One key for the rest of what the header shows: the minute, whether connected, whether compact, and where Back goes.
+        var headerKey = string.Concat(((DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0)).ToString(CultureInfo.InvariantCulture), "|", backLabel);
         var header = UseMemo(
-            () => row is null ? null : DetailHeader.Render(row, details, connected, compact, () => leave(null), Run).WithKey("header"),
+            () => row is null ? null : DetailHeader.Render(row, details, connected, compact, backLabel, () => leave(null), Run).WithKey("header"),
             row,
             details,
             headerKey);

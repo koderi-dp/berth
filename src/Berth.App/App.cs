@@ -1,6 +1,7 @@
 ﻿using Berth.Components;
 using Berth.Hooks;
 using Berth.Pages;
+using Berth.Presentation;
 using Berth.Session;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
@@ -46,6 +47,17 @@ internal abstract record AppRoute
         ContainerDetail => Containers,
         VolumeDetail => Volumes,
         _ => route,
+    };
+
+    /// <summary>
+    /// Where a container's page goes back to, from the page it was opened from (<paramref name="before"/>, the route under it in the
+    /// history): a volume's page or the Networks list; otherwise the Containers list.
+    /// </summary>
+    public static BackTarget BackTargetOf(AppRoute? before) => before switch
+    {
+        VolumeDetail volume => BackTarget.Volume(volume.Name),
+        _ when before == Networks => BackTarget.Networks,
+        _ => BackTarget.Containers,
     };
 
     private sealed record Page(string Name) : AppRoute;
@@ -103,7 +115,7 @@ internal sealed class App : EngineStateComponent
             var list = AppRoute.ListOf(current);
             setNotice(note is null ? null : (list, note));
             var before = nav.CanGoBack ? nav.BackStack[^1] : null;
-            if (before == list || (note is null && current is AppRoute.ContainerDetail && (before is AppRoute.VolumeDetail || before == AppRoute.Networks)))
+            if (before == list || (note is null && current is AppRoute.ContainerDetail && AppRoute.BackTargetOf(before) != BackTarget.Containers))
                 nav.GoBack();
             else
                 nav.Replace(list);
