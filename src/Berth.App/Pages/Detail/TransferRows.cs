@@ -8,6 +8,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Layout;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Controls;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Pages.Detail;
@@ -46,14 +47,66 @@ internal sealed class TransferRows : EngineStateComponent<TransferRowsProps>
         if (lines.IsEmpty)
             return Empty();
 
-        return (FlexColumn([.. lines.Select(line => Component<TransferRow, TransferRowProps>(new(line)).WithKey("transfer-" + line.Id))]) with
-            {
-                RowGap = 0,
-            })
+        // An upload that found same-named entries in the container waits here for the user's answer; nothing was sent yet.
+        var asking = transfers.Values.Where(t => t.Status == TransferStatus.Asking && t.Request.ContainerId == containerId).MinBy(t => t.Id);
+        var ended = lines.Count(l => l.CanDismiss);
+        var header = ended == 0
+            ? null
+            : Grid(
+                    [GridSize.Star(), GridSize.Auto],
+                    [GridSize.Auto],
+                    Caption(lines.Length == 1 ? "1 transfer" : $"{lines.Length} transfers").Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center).Grid(column: 0),
+                    HyperlinkButton("Clear finished", onClick: ClearFinished).AutomationId("transfers-clear").Grid(column: 1))
+                .Margin(12, 0, 8, 0);
+
+        // About three rows; more scroll, so a long list never takes the table's room.
+        var rows = ScrollViewer(
+                (FlexColumn([.. lines.Select(line => Component<TransferRow, TransferRowProps>(new(line)).WithKey("transfer-" + line.Id))]) with
+                {
+                    RowGap = 0,
+                }))
+            .MaxHeight(RowsMaxHeight);
+
+        return (FlexColumn(header?.WithKey("header"), rows.WithKey("rows"), Question(asking).WithKey("question")) with { RowGap = 0 })
             .AutomationId("files-transfers");
+
+        void ClearFinished()
+        {
+            foreach (var line in lines.Where(l => l.CanDismiss && !l.IsAsking))
+                AppServices.Current.Session.Dispatch(new TransferDismissed(line.Id));
+        }
+    }
+
+    /// <summary>The height of about three transfer rows.</summary>
+    private const double RowsMaxHeight = 180;
+
+    /// <summary>
+    /// The replace question of an upload waiting for its answer; Cancel is the default. Replace sends it again with those names agreed
+    /// to, and it asks the engine once more just before sending, so a name that appeared meanwhile is asked about too.
+    /// </summary>
+    private static Element Question(FileTransfer? asking)
+    {
+        var question = asking is { Request: UploadRequest upload } ? TransferConfirmations.Upload(asking.Asks.ToArray(), upload.Destination) : null;
+        return ContentDialog(
+            question?.Title ?? "",
+            Body(question?.Text ?? "").TextWrapping().IsTextSelectionEnabled().AutomationId("confirm-text"),
+            question?.Primary ?? "Replace") with
+        {
+            IsOpen = question is not null,
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            OnClosed = result =>
+            {
+                if (asking is not { Request: UploadRequest request })
+                    return;
+                var session = AppServices.Current.Session;
+                session.Dispatch(new TransferDismissed(asking.Id));
+                if (result == ContentDialogResult.Primary)
+                    session.Dispatch(new TransferRequested(request with { Replace = [.. request.Replace, .. asking.Asks] }));
+            },
+        };
     }
 }
-
 internal sealed record TransferRowProps(TransferLine Line);
 
 /// <summary>

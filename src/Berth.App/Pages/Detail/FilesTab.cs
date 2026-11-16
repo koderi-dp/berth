@@ -41,6 +41,7 @@ internal sealed class FilesTab : Component<FilesTabProps>
     private static readonly GridSize[] ToolbarColumns = [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto, GridSize.Auto];
     private static readonly GridSize[] OneRow = [GridSize.Px(36)];
     private const double CompactMaxWidth = 1100;
+    private static readonly ListSort<FileColumn> ByName = new(FileColumn.Name, false);
 
     public override Element Render()
     {
@@ -53,7 +54,8 @@ internal sealed class FilesTab : Component<FilesTabProps>
         var (pending, setPending) = UseState<PendingTransfer?>(null);
         var handlers = UseMemo(() => new FilesTableHandlers(), Array.Empty<object>());
         var view = FilesView.Of(files, props.Waiting);
-        var rows = UseMemo(() => files.Listing is { } listing ? FileRows.Build(listing, TimeZoneInfo.Local) : ImmutableArray<FileRow>.Empty, files.Listing);
+        var (sort, setSort) = UseState(ByName);
+        var rows = UseMemo(() => files.Listing is { } listing ? FileRows.Build(listing, TimeZoneInfo.Local, sort) : ImmutableArray<FileRow>.Empty, files.Listing, sort);
         var crumbs = UseMemo(() => FilesView.Breadcrumb(files.Path).Select(c => Breadcrumb(c.Name, c.Path)).ToArray(), files.Path);
         var canAct = props.Connected && !props.Waiting;
         var listed = files.Status == FilesStatus.Loaded && files.Listing is not null;
@@ -87,6 +89,7 @@ internal sealed class FilesTab : Component<FilesTabProps>
         UseEffect(() => () => props.Keys.Escape = null, Array.Empty<object>());
 
         handlers.Select = rows => setSelected(rows);
+        handlers.SortBy = column => setSort(sort.Toggle(column));
         handlers.Open = row => Browse(row.Path);
         handlers.Up = () => Browse(files.Path.Parent);
         handlers.CopyPath = rows => ContainerParts.CopyToClipboard(string.Join("\n", rows.Select(r => r.Path.Value)));
@@ -121,18 +124,15 @@ internal sealed class FilesTab : Component<FilesTabProps>
 
         void StartUpload(IReadOnlyList<string> sources)
         {
+            // The upload itself asks the engine about each name just before sending, and waits for a yes when one is there
+            // (TransferRows shows the question): the listing on screen can be stale, capped or incomplete.
             if (sources.Count == 0 || files.Listing is not { } listing)
                 return;
-            var session = AppServices.Current.Session;
-            var request = new UploadRequest(props.ContainerId, [.. sources], listing.Path);
-            if (TransferConfirmations.Upload(sources, listing) is { } question)
-                setPending(new PendingTransfer(question, session, request));
-            else
-                session.Dispatch(new TransferRequested(request));
+            AppServices.Current.Session.Dispatch(new TransferRequested(new UploadRequest(props.ContainerId, [.. sources], listing.Path)));
         }
 
         var toolbar = Toolbar(files, editing, typed, crumbs, canAct, listed, selected, compact, setEditing, Browse, GoTo, handlers, () => _ = UploadAsync(false), () => _ = UploadAsync(true));
-        var table = Table(files, view, rows, compact, canAct, handlers, StartUpload, listed);
+        var table = Table(files, view, rows, compact, canAct, sort, handlers, StartUpload, listed);
 
         return (FlexColumn(
                 toolbar.WithKey("toolbar"),
@@ -264,14 +264,14 @@ internal sealed class FilesTab : Component<FilesTabProps>
     /// the folder is empty. Files dropped from Explorer onto it are uploaded into the folder shown.
     /// </summary>
     private static Element Table(
-        FilesState files, FilesView view, ImmutableArray<FileRow> rows, bool compact, bool canAct, FilesTableHandlers handlers, Action<IReadOnlyList<string>> upload, bool listed)
+        FilesState files, FilesView view, ImmutableArray<FileRow> rows, bool compact, bool canAct, ListSort<FileColumn> sort, FilesTableHandlers handlers, Action<IReadOnlyList<string>> upload, bool listed)
     {
         Element content =
             // A path that is not a folder has nothing to retry: Up goes back.
             view.Error is { } error ? Widgets.RetryBar(error, canAct && !files.NotAFolder ? Refresh : null).AutomationId("files-error")
             : view.Loading is { } loading ? ListTable.Loading(loading).AutomationId("files-loading")
             : view.Empty is { } empty ? ListTable.EmptyState(empty).AutomationId("files-empty")
-            : Component<FilesTable, FilesTableProps>(new(rows, compact, canAct, handlers));
+            : Component<FilesTable, FilesTableProps>(new(rows, compact, canAct, sort, handlers));
 
         return Border(content)
             .OnDragOver(args =>
@@ -349,7 +349,13 @@ internal sealed class FilesTab : Component<FilesTabProps>
                 browse(path);
                 break;
             case "download" when rest.Split('|') is [var sources, var folder]:
-                download([.. sources.Split(';').Select(s => ContainerPath.TryParse(s, files.Path, out var p) ? p : files.Path)], folder);
+                // A source that is empty or does not parse is dropped, never taken for the folder shown.
+                var paths = sources.Split(';').Where(s => s.Trim().Length > 0)
+                    .Select(s => ContainerPath.TryParse(s, files.Path, out var p) ? p : (ContainerPath?)null)
+                    .OfType<ContainerPath>()
+                    .ToImmutableArray();
+                if (!paths.IsEmpty)
+                    download(paths, folder);
                 break;
             case "upload":
                 upload(rest.Split(';'));

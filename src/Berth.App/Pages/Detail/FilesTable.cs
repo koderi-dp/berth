@@ -14,8 +14,6 @@ using MenuEntry = Microsoft.UI.Reactor.Core.MenuFlyoutItemBase;
 
 namespace Berth.Pages.Detail;
 
-/// <summary>The Files table's columns; it does not sort by them (folders first, then by name).</summary>
-internal enum FileColumn { Name }
 
 /// <summary>
 /// What the Files table calls back. One instance kept by the tab, so the table's props stay equal while nothing it shows changed; the
@@ -38,16 +36,19 @@ internal sealed class FilesTableHandlers
     /// <summary>Backspace or Alt+Up: the parent folder.</summary>
     public Action Up { get; set; } = () => { };
 
+    /// <summary>A click on a column title.</summary>
+    public Action<FileColumn> SortBy { get; set; } = _ => { };
+
     /// <summary>The rows selected, as the table last told.</summary>
     public ImmutableArray<FileRow> Selected { get; set; } = [];
 }
 
 /// <summary>What the Files table shows: the rows (one list per listing), the layout, whether actions can act, and the tab's handlers.</summary>
-internal sealed record FilesTableProps(ImmutableArray<FileRow> Rows, bool Compact, bool CanAct, FilesTableHandlers Handlers);
+internal sealed record FilesTableProps(ImmutableArray<FileRow> Rows, bool Compact, bool CanAct, ListSort<FileColumn> Sort, FilesTableHandlers Handlers);
 
 /// <summary>
 /// The Files table, on the shared list look: a header (Name, Size, Modified, Mode; Mode only in the wide layout) and a row per entry with
-/// a folder, file or link glyph. Rows are selected as in Explorer (click, Ctrl+click, Shift and the arrows); a double click or Enter opens
+/// a folder, file or link glyph. Name, Size and Modified sort (folders stay first). Rows are selected as in Explorer (click, Ctrl+click, Shift and the arrows); a double click or Enter opens
 /// a folder, Backspace or Alt+Up goes to the parent, Ctrl+C copies the selected rows' paths. The right-click menu has Open, Download… and
 /// Copy path for the row, or for the selection when the row is in it.
 /// </summary>
@@ -57,17 +58,16 @@ internal sealed class FilesTable : Component<FilesTableProps>
 
     private static readonly ListColumns<FileColumn> Columns = new(
         ListColumn<FileColumn>.Of(GridSize.Px(32)),
-        ListColumn<FileColumn>.Of(GridSize.Star()) with { Title = "Name" },
-        ListColumn<FileColumn>.Of(GridSize.Px(96)) with { Title = "Size", AlignRight = true },
-        ListColumn<FileColumn>.Of(GridSize.Px(148)) with { Title = "Modified" },
+        ListColumn<FileColumn>.Of(GridSize.Star()) with { Title = "Name", SortBy = FileColumn.Name },
+        ListColumn<FileColumn>.Of(GridSize.Px(96)) with { Title = "Size", SortBy = FileColumn.Size, AlignRight = true },
+        ListColumn<FileColumn>.Of(GridSize.Px(148)) with { Title = "Modified", SortBy = FileColumn.Modified },
         ListColumn<FileColumn>.InWideOnly(GridSize.Px(112)) with { Title = "Mode" });
 
-    private static readonly ListSortView<FileColumn> NoSort = new(FileColumn.Name, false, _ => "", _ => { });
 
     public override Element Render()
     {
-        var (rows, compact, canAct, handlers) = Props;
-        var header = ListTable.Header(Columns, compact, checkedState: false, connected: canAct, onCheckAll: _ => { }, NoSort);
+        var (rows, compact, canAct, sort, handlers) = Props;
+        var header = ListTable.Header(Columns, compact, checkedState: false, connected: canAct, onCheckAll: _ => { }, ListSortView.Of(sort, c => handlers.SortBy(c)));
 
         var list = ListView(rows, r => r.Name, (row, _) => Row(row, compact, canAct, handlers).WithKey(row.Name)) with
         {

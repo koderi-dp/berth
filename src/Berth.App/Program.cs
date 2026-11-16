@@ -49,8 +49,18 @@ ReactorApp.DefaultRenderErrorHandler = error =>
 // A shell open in the Exec tab would stay in its container (the engine keeps it): the detail session ends it, given a second at most.
 // Berth has one window, so its closing is the exit (closing it to the tray is cancelled before this; Quit closes it for good). The
 // tray icon is removed here, so none is left in the notification area.
+// Transfers still running are stopped, so a download removes what it saved under its temporary name: a second at most, as for the shell.
 ReactorApp.WindowClosed += (_, _) =>
 {
+    try
+    {
+        services.Session.StopTransfersAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+    }
+    catch (Exception ex)
+    {
+        AppLog.Error("stopping the transfers on exit failed", ex);
+    }
+
     services.CloseDetailForExit(TimeSpan.FromSeconds(1));
     Berth.Shell.TrayIcon.Close();
 };

@@ -189,4 +189,25 @@ public sealed class FilesViewTests
 
         Assert.Equal([3, 1], TransferView.Of(all, "a").Select(t => t.Id));
     }
+
+    [Fact]
+    public void Rows_sort_by_size_or_modified_keeping_folders_first()
+    {
+        var listing = new FileListing(
+            Etc,
+            [
+                Entry("big", FileKind.File, 300) with { Modified = Noon.AddDays(-2) },
+                Entry("small", FileKind.File, 1) with { Modified = Noon },
+                Entry("zdir", FileKind.Folder) with { Modified = Noon.AddDays(-5) },
+                Entry("adir", FileKind.Folder) with { Modified = Noon },
+            ],
+            ListingWay.Exec,
+            false,
+            false);
+
+        Assert.Equal(["adir", "zdir", "small", "big"], FileRows.Build(listing, TimeZoneInfo.Utc, new ListSort<FileColumn>(FileColumn.Size, false)).Select(r => r.Name));
+        Assert.Equal(["adir", "zdir", "big", "small"], FileRows.Build(listing, TimeZoneInfo.Utc, new ListSort<FileColumn>(FileColumn.Size, true)).Select(r => r.Name));
+        Assert.Equal(["zdir", "adir", "big", "small"], FileRows.Build(listing, TimeZoneInfo.Utc, new ListSort<FileColumn>(FileColumn.Modified, false)).Select(r => r.Name));
+        Assert.Equal(["zdir", "adir", "small", "big"], FileRows.Build(listing, TimeZoneInfo.Utc, new ListSort<FileColumn>(FileColumn.Name, true)).Select(r => r.Name));
+    }
 }

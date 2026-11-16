@@ -11,6 +11,9 @@ namespace Berth.Presentation;
 /// </summary>
 public sealed record FileRow(string Name, string Shown, FileKind Kind, ContainerPath Path, string SizeText, string ModifiedText, string Mode, bool Opens);
 
+/// <summary>The Files table's sortable columns.</summary>
+public enum FileColumn { Name, Size, Modified }
+
 /// <summary>The Files tab's rows: folders first, then by name ignoring case (ties in ordinal order), with their texts.</summary>
 public static class FileRows
 {
@@ -23,13 +26,35 @@ public static class FileRows
         return name != 0 ? name : StringComparer.Ordinal.Compare(a.Name, b.Name);
     };
 
-    /// <summary>The rows of <paramref name="listing"/>, times shown in <paramref name="zone"/>.</summary>
-    public static ImmutableArray<FileRow> Build(FileListing listing, TimeZoneInfo zone)
+    /// <summary>
+    /// The rows of <paramref name="listing"/>, times shown in <paramref name="zone"/>: folders first, then by <paramref name="sort"/>
+    /// (by name ascending when none), ties by name.
+    /// </summary>
+    public static ImmutableArray<FileRow> Build(FileListing listing, TimeZoneInfo zone, ListSort<FileColumn>? sort = null)
     {
-        var entries = listing.Entries.ToList();
-        entries.Sort(Order);
-        return [.. entries.Select(e => Row(listing.Path, e, zone))];
+        IEnumerable<FileEntry> Sorted(IEnumerable<FileEntry> entries)
+        {
+            if (sort is null)
+            {
+                var list = entries.ToList();
+                list.Sort(Order);
+                return list;
+            }
+
+            return sort.Apply(entries, ByColumn, e => e.Name);
+        }
+
+        var folders = listing.Entries.Where(e => e.Kind == FileKind.Folder);
+        var others = listing.Entries.Where(e => e.Kind != FileKind.Folder);
+        return [.. Sorted(folders).Concat(Sorted(others)).Select(e => Row(listing.Path, e, zone))];
     }
+
+    private static Comparison<FileEntry> ByColumn(FileColumn column) => column switch
+    {
+        FileColumn.Size => (a, b) => (a.Size ?? -1).CompareTo(b.Size ?? -1),
+        FileColumn.Modified => (a, b) => Nullable.Compare(a.Modified, b.Modified),
+        _ => (a, b) => SortText.Compare(a.Name, b.Name),
+    };
 
     private static FileRow Row(ContainerPath folder, FileEntry entry, TimeZoneInfo zone)
     {
