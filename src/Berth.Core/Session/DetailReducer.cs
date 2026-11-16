@@ -8,7 +8,7 @@ namespace Berth.Session;
 /// Turns (detail state, event) into (new state, effects). Pure: no I/O and no clock. An event that does not apply in the
 /// current state returns the same state instance and no effects.
 /// </summary>
-public static class DetailReducer
+public static partial class DetailReducer
 {
     /// <summary>How many of the newest log lines the page reads before following new ones.</summary>
     public const int LogTail = 1000;
@@ -35,9 +35,13 @@ public static class DetailReducer
                 return Loaded(state, loaded.Inspection);
 
             case InspectFailed failure when current && failure.Generation == state.InspectGeneration:
-                return failure.NotFound
-                    ? (EndStreams(state) with { Removed = true }, [new StopDetailStreamsEffect()])
-                    : (state with { LoadError = failure.Message }, None);
+            {
+                if (!failure.NotFound)
+                    return (state with { LoadError = failure.Message }, None);
+
+                var (exec, stopExec) = EndExec(state.Exec, stop: true);
+                return (EndStreams(state) with { Removed = true, Exec = exec }, [new StopDetailStreamsEffect(), .. stopExec]);
+            }
 
             case LogLinesArrived batch when current && batch.Generation == state.StreamGeneration && batch.Lines.Length > 0:
                 return (state with { Logs = state.Logs.Append(batch.Lines), LogStatus = StreamStatus.Live }, None);
@@ -63,10 +67,15 @@ public static class DetailReducer
 
             case DetailConnectionLost when current:
                 // The runtime has already stopped every call; the bumped generations drop what was still on its way.
-                return (EndStreams(state) with { ConnectionLost = true, InspectGeneration = state.InspectGeneration + 1 }, None);
+                return (EndStreams(state) with
+                {
+                    ConnectionLost = true,
+                    InspectGeneration = state.InspectGeneration + 1,
+                    Exec = EndExec(state.Exec, stop: false).Exec,
+                }, None);
 
             default:
-                return (state, None);
+                return ReduceExec(state, e);
         }
     }
 

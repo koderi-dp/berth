@@ -6,7 +6,7 @@ namespace Berth.Session;
 
 /// <summary>
 /// Owns one container's detail page: feeds each event through <see cref="DetailReducer"/> on a single loop and carries out the
-/// effects it returns (inspect, the log stream and the stats stream) against <see cref="IEngineApi"/>. Behaviour lives in the
+/// effects it returns (inspect, the log stream, the stats stream and the Exec tab's shell) against <see cref="IEngineApi"/>. Behaviour lives in the
 /// reducer; this class only runs it.
 /// </summary>
 /// <remarks>
@@ -14,7 +14,7 @@ namespace Berth.Session;
 /// on purpose never reaches the page. Log lines are collected and applied at most every <see cref="LogTick"/>, so a flood is
 /// one state change per tick. The session uses the engine client it is given and never disposes it.
 /// </remarks>
-public sealed class ContainerDetailSession : IAsyncDisposable
+public sealed partial class ContainerDetailSession : IAsyncDisposable
 {
     /// <summary>How long log lines are collected before they are applied together.</summary>
     public static readonly TimeSpan LogTick = TimeSpan.FromMilliseconds(100);
@@ -49,7 +49,7 @@ public sealed class ContainerDetailSession : IAsyncDisposable
     /// <param name="api">The engine client of the current connection; used, never disposed.</param>
     /// <param name="onError">
     /// Told what failed, in fixed wording, and the exception: a failed inspect (other than the container being gone), a failed
-    /// log or stats stream, a throwing <see cref="StateChanged"/> handler, or an event the loop could not handle. Never told of
+    /// log or stats stream, a failed shell, resize or exit-code read, a throwing <see cref="StateChanged"/> handler, or an event the loop could not handle. Never told of
     /// a cancellation the session caused. Called on a thread-pool thread; an exception it throws is ignored.
     /// </param>
     public ContainerDetailSession(IEngineApi api, string containerId, TimeProvider time, Action<string, Exception>? onError = null)
@@ -92,6 +92,7 @@ public sealed class ContainerDetailSession : IAsyncDisposable
         _events.Writer.TryComplete();
         _lifetime.Cancel();
         await _loop.ConfigureAwait(false);
+        StopExecRun();
         await StopCallsAsync().ConfigureAwait(false);
 
         foreach (var scope in _spentStreams)
@@ -113,6 +114,7 @@ public sealed class ContainerDetailSession : IAsyncDisposable
     /// </summary>
     internal async Task CutOffAsync()
     {
+        StopExecRun();
         await StopCallsAsync().ConfigureAwait(false);
         Post(new DetailConnectionLost());
     }
@@ -210,6 +212,18 @@ public sealed class ContainerDetailSession : IAsyncDisposable
                 streams.Cancel();
                 _spentStreams.Add(streams);
                 _streams = null;
+                break;
+
+            case StartExecEffect start:
+                StartShell(start);
+                break;
+
+            case StopExecEffect:
+                StopExecRun();
+                break;
+
+            case ResizeExecEffect resize:
+                StartResize(resize);
                 break;
         }
     }
