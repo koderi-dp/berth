@@ -1,13 +1,16 @@
+using Berth.Presentation;
 using Berth.Session;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Reactor.Layout;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Components;
 
 /// <summary>
 /// Shown above a list kept from an earlier connection while the engine is not connected: why, in the words the engine or the
-/// socket used (or that a connect is under way), and a way to try again now instead of waiting for the next retry.
+/// socket used (or that a connect, a start or a stop is under way, or that the engine was stopped from Berth), and a way to try again
+/// now instead of waiting for the next retry; with engine control, "Start engine".
 /// </summary>
 internal static class ConnectionBar
 {
@@ -16,20 +19,30 @@ internal static class ConnectionBar
         if (state.Status == ConnectionStatus.Connected)
             return null;
 
-        var connecting = state.Status == ConnectionStatus.Connecting;
-        var message = connecting ? "Connecting…" : state.ConnectionError ?? "Not connected to the engine.";
+        var view = EngineStatus.Disconnected(state);
+        var message = view.Failure ?? view.Message ?? (view.Busy ? EngineStatus.Text(EngineStatus.Phase(state)) : view.Title);
 
         return (InfoBar(message: message) with
             {
                 IsOpen = true,
-                Content = Button("Retry", onRetry)
-                    .AutomationName("Retry")
-                    .AutomationId("retry-connection")
-                    .IsEnabled(!connecting)
+                Content = (FlexRow(
+                        view.OfferStart
+                            ? Button("Start engine", StartEngine).AccentButton().AutomationId("start-engine-bar")
+                            : null,
+                        Button("Retry", onRetry)
+                            .AutomationName("Retry")
+                            .AutomationId("retry-connection")
+                            .IsEnabled(view.CanRetry))
+                    with
+                    {
+                        ColumnGap = 8,
+                    })
                     .Margin(0, 0, 0, 12),
             })
             .Warning()
             .IsClosable(false)
             .Flex(shrink: 0);
     }
+
+    private static void StartEngine() => AppServices.Current.Session.Dispatch(new EngineCommandRequested(EngineCommand.Start));
 }

@@ -150,12 +150,14 @@ internal sealed class AppServices
         settings.Connections.FirstOrDefault(connection => connection.Id == settings.ActiveConnectionId) ?? settings.Connections[0];
 
     /// <summary>
-    /// A session for <paramref name="connection"/> whose failures go to the log (fixed wording and exception type names only), and whose
-    /// text to copy (a <c>docker run</c> command read for the list) goes to the clipboard.
+    /// A session for <paramref name="connection"/> whose failures go to the log (fixed wording and exception type names only), whose
+    /// text to copy (a <c>docker run</c> command read for the list) goes to the clipboard, and which runs the connection's engine control
+    /// commands when it has them.
     /// </summary>
     private EngineSession CreateSession(ConnectionProfile connection)
     {
-        var session = new EngineSession(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error);
+        var engineControl = connection.EngineControl is { } control ? new EngineCommands(control) : null;
+        var session = new EngineSession(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error, engineControl);
         session.CopyRequested += text => CopyFromSession(session, text);
         return session;
     }

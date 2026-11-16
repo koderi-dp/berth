@@ -252,7 +252,7 @@ internal sealed class App : EngineStateComponent
             .Flex(grow: 1, basis: 0);
 
         // The app's shortcuts sit at the root, so they work wherever the focus is, and act for the page shown (ShellKeys).
-        return FlexColumn(titleBar, navView, StatusBar.Render(state)).OnMount(root => ShellKeys.Attach(root, nav));
+        return FlexColumn(titleBar, navView, Component<StatusBar>()).OnMount(root => ShellKeys.Attach(root, nav));
     }
 
     /// <summary>The sidebar item of <paramref name="route"/>: a container's detail page is under Containers.</summary>
