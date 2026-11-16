@@ -46,8 +46,11 @@ public sealed record ExecResizeRequested(TerminalSize Size) : DetailEvent;
 /// <summary>The shell of <see cref="Generation"/> was created and its stream is open.</summary>
 public sealed record ExecStarted(int Generation, string ExecId) : DetailEvent;
 
-/// <summary>The engine ended the shell's stream: the shell exited, with <see cref="ExitCode"/> when the engine gave one.</summary>
-public sealed record ExecEnded(int Generation, int? ExitCode, bool HadInput) : DetailEvent;
+/// <summary>
+/// The engine ended the shell's stream: the shell exited, with <see cref="ExitCode"/> when the engine gave one. With
+/// <see cref="StillRunning"/> the engine still ran the shell after the stream ended (a detach), so it is ended in the container.
+/// </summary>
+public sealed record ExecEnded(int Generation, int? ExitCode, bool HadInput, bool StillRunning = false) : DetailEvent;
 
 /// <summary>Opening the shell or its stream failed; <see cref="Message"/> is the engine's or the connection's, as-is.</summary>
 public sealed record ExecFailed(int Generation, string Message) : DetailEvent;

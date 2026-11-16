@@ -153,6 +153,9 @@ public sealed class ContainerDetailSessionExecTests
         Assert.Null(state.Exec.ExitCode);
         Assert.False(state.Exec.HadInput);
         Assert.Equal(5, h.Api.Calls.Count(c => c == "InspectExec exec-1"));
+        // The stream ended but the engine still runs the shell (a detach): it is ended in the container.
+        var run = await h.NextCleanUpAsync();
+        Assert.Equal(ExecCleanUp.Command(h.MarkerOf(0)), run.Command);
     }
 
     [Fact]

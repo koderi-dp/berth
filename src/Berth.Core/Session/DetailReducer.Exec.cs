@@ -40,7 +40,7 @@ public static partial class DetailReducer
                 return (state with
                 {
                     Exec = exec with { Status = ExecStatus.Ended, ExecId = null, ExitCode = ended.ExitCode, HadInput = ended.HadInput },
-                }, None);
+                }, ended.StillRunning && ShellNeedsCleanUp(state) ? [new CleanUpExecEffect(exec.Generation)] : None);
 
             case ExecFailed failed when failed.Generation == exec.Generation && exec.IsActive:
                 return (

@@ -261,8 +261,8 @@ public sealed partial class ContainerDetailSession
             // The input loop ends early only by failing; the output loop ends when the engine closes the stream.
             await first.ConfigureAwait(false);
             await StopInputAsync(inputScope, input).ConfigureAwait(false);
-            var exitCode = await ExitCodeAsync(execId, run, ct).ConfigureAwait(false);
-            Post(new ExecEnded(run.Generation, exitCode, run.HadInput));
+            var (exitCode, stillRunning) = await ExitCodeAsync(execId, run, ct).ConfigureAwait(false);
+            Post(new ExecEnded(run.Generation, exitCode, run.HadInput, stillRunning));
         }
         catch (Exception) when (ct.IsCancellationRequested || run.IsStopRequested)
         {
@@ -363,10 +363,11 @@ public sealed partial class ContainerDetailSession
 
     /// <summary>
     /// The exit code of an exec whose stream ended: inspected at once, then every <see cref="ExecPollInterval"/> while the engine
-    /// still says it runs, at most <see cref="ExecInspectTries"/> times in all. Null when the engine never gives one. A stop ends
-    /// it (cancelled, so nothing is posted or reported).
+    /// still says it runs, at most <see cref="ExecInspectTries"/> times in all. Null when the engine never gives one; still running
+    /// when the last inspect said so (the stream was detached, not ended by the shell). A stop ends it (cancelled, so nothing is
+    /// posted or reported).
     /// </summary>
-    private async Task<int?> ExitCodeAsync(string execId, ExecRun run, CancellationToken calls)
+    private async Task<(int? ExitCode, bool StillRunning)> ExitCodeAsync(string execId, ExecRun run, CancellationToken calls)
     {
         using var poll = CancellationTokenSource.CreateLinkedTokenSource(calls, run.Stopping);
         var ct = poll.Token;
@@ -381,13 +382,13 @@ public sealed partial class ContainerDetailSession
             {
                 // The shell has ended either way; only its code is unknown.
                 Report(ExitCodeFailedReport, ex);
-                return null;
+                return (null, false);
             }
 
             if (!inspection.Running)
-                return inspection.ExitCode;
+                return (inspection.ExitCode, false);
             if (tries == ExecInspectTries)
-                return null;
+                return (null, true);
 
             var wait = Task.Delay(ExecPollInterval, _time, ct);
             ExecWaiting?.Invoke();

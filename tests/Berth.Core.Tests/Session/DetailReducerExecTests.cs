@@ -196,6 +196,21 @@ public sealed class DetailReducerExecTests
     }
 
     [Fact]
+    public void A_stream_that_ended_while_the_engine_still_runs_the_shell_is_cleaned_up()
+    {
+        // A detach: the engine closed the stream and kept the shell.
+        var (state, effects) = Reduce(Running(), new ExecEnded(1, null, true, StillRunning: true));
+
+        Assert.Equal(ExecStatus.Ended, state.Exec.Status);
+        Assert.Null(state.Exec.ExitCode);
+        Assert.Equal([new CleanUpExecEffect(1)], effects);
+        var details = Running().Details!;
+        var stopped = Running() with { Details = details with { State = details.State with { Running = false } } };
+        Assert.Empty(Reduce(stopped, new ExecEnded(1, null, true, StillRunning: true)).Effects);
+        Assert.Empty(Reduce(Running(), new ExecEnded(1, 0, true)).Effects);
+    }
+
+    [Fact]
     public void A_running_shell_that_failed_is_cleaned_up_like_one_ended_on_purpose()
     {
         // The terminal page died or the stream broke: the engine still keeps the shell and what it started.
