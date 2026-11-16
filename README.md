@@ -3,8 +3,8 @@
 Berth is a Windows desktop GUI for a Docker engine, used as a daily driver on a machine
 that runs docker-ce inside WSL. It is meant to cover containers, images, volumes and
 networks, and to manage engines on other machines too. This version covers connections,
-the containers list and each container's detail page, and the images, volumes and networks
-pages.
+the containers list and each container's detail page with a terminal in the container, and
+the images, volumes and networks pages.
 
 The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`, pinned) on WinUI 3. There is no XAML.
@@ -28,9 +28,10 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 - **Actions.** Start, stop, restart, pause, resume and delete per container; start, stop
   and delete for all checked rows at once. Deleting asks first and names what will be
   removed; running containers are stopped as part of the delete. A container's `docker run`
-  command can be copied for PowerShell or for bash, from its row and from its page.
+  command can be copied for PowerShell or for bash, from its row and from its page. "Open
+  terminal" in a running container's row menu opens its page on the Exec tab.
 - **Container detail.** A container's name opens its page: its state, ID, image, ports,
-  status and actions at the top, and four tabs.
+  status and actions at the top, and five tabs.
   - **Logs** follows the log as it is written (the last 1000 lines first, up to 10,000 kept),
     with timestamps and wrapping that can be turned off, search with next and previous
     match, copy all and clear. Logs of containers started with a terminal (`-t`) are read
@@ -41,10 +42,47 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   - **Bind mounts** lists the host paths mounted into the container with their container
     path and access; a host path on this machine (such as `/mnt/c/...` in WSL) opens in
     File Explorer.
+  - **Exec** is a terminal with a shell in the container (see below).
   - **Stats** draws CPU, memory, disk read/write and network I/O over the last two minutes,
     with the CPU and memory limits when the container has them.
   When the container stops, the streams end and the page shows its new state; when it is
   removed, the page returns to the list and says so.
+- **Exec: a terminal in the container.** The Exec tab of a running container starts a shell
+  and shows it in a terminal (xterm.js, bundled with the app; it works with no network). The
+  picker above it chooses `sh` (the default), `bash`, `ash` or a custom command; choosing
+  another ends the shell and starts the new one. The terminal follows the window's size, its
+  colours follow the light or dark theme, and the size is shown above it. While the terminal
+  has the keyboard, every key goes to the shell, Escape and Alt+Left included; F6 leaves the
+  terminal for the tab strip. Ctrl+C copies when text is selected and interrupts otherwise
+  (Ctrl+Shift+C and Ctrl+Insert always copy); Ctrl+V and Shift+Insert paste. Ctrl+P reaches the shell as in any terminal: Berth names its own detach keys
+  (a sequence nobody types), so the engine does not hold Ctrl+P back or end the session on
+  Ctrl+P Ctrl+Q as it does for `docker exec -it`. When the shell exits the tab says with what
+  code and offers "Start again"; a shell that is not in the image says so and offers `sh`. A
+  stopped, paused or restarting container shows why there is no terminal, with Start or
+  Resume.
+  - **What happens to the shell.** Every shell Berth starts carries the environment variable
+    `BERTH_EXEC` (a random id), which everything started from it inherits. The engine keeps a
+    terminal's shell running after its connection closes, so when Berth is done with a shell
+    (the tab is left, the shell is changed, the connection is switched, Berth is closed, the
+    terminal stopped working, or the session ended while the container still ran it) it runs
+    a short clean-up command in the same container that sends a hang-up (HUP) to every
+    process carrying that id: the shell and what it started end, as they do when a terminal
+    window is closed. The docker CLI does not do this: after `docker exec -it`, a shell whose
+    connection dropped keeps running. Work started with `nohup` (or a program that handles the
+    hang-up itself) is not ended. In an image without `sh`, `grep` or `/proc`, or where the
+    container's user cannot read a process, nothing is ended; the attempt is only logged.
+  - **Open in external terminal** runs the same shell with `docker exec -it` in a Windows
+    Terminal tab, or, when Windows Terminal is not installed, in a console window of its own.
+    It needs the docker CLI on `PATH` (otherwise the button is disabled and says why). The
+    command names the engine with `-H` (and its TLS files), and Berth removes `DOCKER_HOST`,
+    `DOCKER_CONTEXT`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH` and `DOCKER_TLS` from what it
+    starts. Windows Terminal re-reads what it is given, so a custom command is refused there
+    (and the button says "Copy it instead") when an argument is empty, is `--`, holds a double
+    quote, a `%`, a tab or line break or half of a surrogate pair, or has a space and ends in a
+    backslash; with Windows Terminal installed such a command is not handed to the console
+    either. The console refuses only a NUL or half a surrogate pair. A connection with a client
+    certificate but no key (or the other way round) is refused.
+  - **Copy command** copies that `docker exec -it` command, quoted for PowerShell 7.
 - **Images.** The Images page lists a row per tag (and one per untagged image) with its
   tag, ID, age, size and whether a container uses it, above a line with the engine's image
   disk use. It can be searched, filtered (all, in use, unused, dangling) and sorted.
@@ -87,9 +125,11 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   and a warning says so until it is closed. The first-run settings are saved at once.
 - **Log.** `berth.log` records start and exit, connection switches, a settings file set
   aside, and what failed: connecting, loading the list, the event stream, a container
-  action, a container page's inspect, log or stats stream, reading a container for its run
-  command, a list stats stream, a copy to the clipboard, saving the settings, and unexpected
-  errors. A failure is logged by its exception type only, never its message, so
+  action, a container page's inspect, log or stats stream, a shell (starting it, its stream,
+  resizing it, reading its exit code, ending what it left in the container), the terminal
+  page, starting an external terminal, reading a container for its run command, a list stats
+  stream, a copy to the clipboard, saving the settings, and unexpected errors. Nothing typed
+  into or printed by a terminal, and no command, is ever logged. A failure is logged by its exception type only, never its message, so
   the log holds no addresses, engine messages, secrets, environment values, container log
   lines or inspect data. Settings, "Open log folder" opens its folder.
 
@@ -97,15 +137,21 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 
 In the order they are planned:
 
-1. A terminal in a running container.
-2. Starting and stopping a local engine, a tray icon, a single instance, start with Windows.
-3. Files: browse, download and upload in a running container.
-4. SSH connections: password and key sign-in, host key prompt, Credential Manager.
+1. Starting and stopping a local engine, a tray icon, a single instance, start with Windows.
+2. Files: browse, download and upload in a running container.
+3. SSH connections: password and key sign-in, host key prompt, Credential Manager.
 
 For a later polish pass:
 
 - Choosing and reordering the list's columns.
 - Charts above the containers list.
+
+## Third-party software
+
+The terminal is [xterm.js](https://github.com/xtermjs/xterm.js) (`@xterm/xterm` 6.0.0) with
+its fit addon (`@xterm/addon-fit` 0.11.0), MIT licensed, copied into
+`src/Berth.App/Assets/Terminal/` and shipped in the package. Its licence is
+`src/Berth.App/Assets/Terminal/LICENSE-xterm.txt`; `THIRD-PARTY-NOTICES.txt` lists it.
 
 ## Requirements
 
@@ -113,6 +159,8 @@ For a later polish pass:
 - .NET 11 SDK.
 - Developer Mode turned on, to run the packaged app from source (`dotnet run` registers a debug package identity).
 - A reachable Docker engine, API 1.44 or newer (for example docker-ce in WSL listening on `tcp://127.0.0.1:2375`).
+- The Microsoft Edge WebView2 Runtime for the terminal (part of Windows 11).
+- The docker CLI on `PATH`, only for "Open in external terminal".
 
 ## Build, test, run
 

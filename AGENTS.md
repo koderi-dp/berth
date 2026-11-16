@@ -5,12 +5,14 @@ and remote engines). UI is pure C# with
 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`) on WinUI 3, .NET 11. There is no XAML: do not add `.xaml` files.
 
-Phases 1 to 3 are built: the shell, connections (TCP, TLS, named pipe), the engine client,
+Phases 1 to 4 are built: the shell, connections (TCP, TLS, named pipe), the engine client,
 the session, the Containers and Settings pages (phase 1), a container's detail page with
 Logs, Inspect, Bind mounts and Stats tabs plus live CPU and memory on the list (phase 2),
-and the Images, Volumes and Networks pages with pulls, the run dialog, image inspect, volume
-create, a volume's page and removes (phase 3). The exec terminal, engine control and tray,
-files and SSH are not built yet.
+the Images, Volumes and Networks pages with pulls, the run dialog, image inspect, volume
+create, a volume's page and removes (phase 3), and the Exec tab: a terminal (xterm.js in a
+WebView2) on a shell in the container, the shell picker, "Open terminal" on a row, "Open in
+external terminal" and "Copy command" (phase 4). Engine control and tray, files and SSH are
+not built yet.
 
 ## Layout
 
@@ -24,7 +26,10 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
   Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list (with each container's mounts and
                             network names), actions, create, event stream, inspect, logs (StreamLogsAsync), stats
-                            (StreamStatsAsync); images (list, inspect with the raw answer, remove, pull as a stream of PullProgress),
+                            (StreamStatsAsync); exec: create (a TTY exec with Berth's detach keys, ExecDetachKeys), start
+                            on a connection switched to a two-way raw stream (HttpUpgrade writes the upgrade request by
+                            hand on the transport's own stream; ExecStream/UpgradedExecStream, whose write side can be
+                            closed alone on TCP and TLS), resize, inspect, and a detached run (RunDetachedExecAsync); images (list, inspect with the raw answer, remove, pull as a stream of PullProgress),
                             volumes (list, create, remove), networks (list, remove), disk usage (/system/df for images and
                             volumes). Image and volume removes are never forced, and the engine's prune endpoints are not
                             called: "Remove unused …" removes item by item. Pulls, disk usage and streams have no deadline;
@@ -37,9 +42,12 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             computed as the CLI does before),
                             Models/ (ContainerSummary, ContainerDetails/ContainerInspection, ContainerCreateRequest/
                             PortBinding, ImageSummary/ImageDetails/ImageDeleteResult/PullProgress, VolumeSummary,
-                            NetworkSummary, DiskUsage, LogLine, StatsSample)
-  Text/                     text made from engine records for the user to paste: DockerRunCommand (the `docker run`
-                            command of an inspected container, PowerShell or bash quoting; ShellKind)
+                            NetworkSummary, DiskUsage, LogLine, StatsSample, Exec: TerminalSize, ExecInspection)
+  Text/                     text made from engine records for the user to paste or run: DockerRunCommand (the `docker run`
+                            command of an inspected container, PowerShell or bash quoting; ShellKind), ShellQuote,
+                            DockerExecCommand (the `docker -H ... exec -it` command for a connection, as an argument list
+                            and as PowerShell text), ExternalTerminal (how "Open in external terminal" starts it: a
+                            Windows Terminal tab or a console, as data, with what each refuses and why)
   State/                    value types that more than one layer holds or reads: LogBuffer (last 10,000 lines),
                             StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
                             ResourceList/ListStatus/RemovalBatch (the images, volumes and networks lists and their
@@ -55,7 +63,10 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             connection), its parts in EngineSession.Connection, .StatsWatch, .Resources and .Pulls (progress
                             batched to ten state changes a second per pull), Backoff;
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
-                            (runs the detail reducer: inspect, log and stats streams of one container)
+                            (runs the detail reducer: inspect, log and stats streams of one container); the shell:
+                            ExecState (its status only), DetailReducer.Exec, ContainerDetailSession.Exec (the stream's
+                            owner and both pumps), ExecInput (the 2 MiB input cap), IExecOutput (the terminal's end, which
+                            the app attaches), ExecCleanUp (the BERTH_EXEC marker and the clean-up command)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
                             RowActions (a container's, image's, volume's or network's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
@@ -67,10 +78,17 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             and create request); detail page: LogView, LogSearch,
                             InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
                             and CPU column texts), DetailPage (the detail page's lifecycle: when it opens, closes, refreshes
-                            or leaves its session, and which state its tabs show)
+                            or leaves its session, and which state its tabs show), DetailTabs (the tabs in order); the
+                            terminal: ExecView (what the Exec tab shows and says for each state), ExecCommand (the shell
+                            choices and a custom command's parse), ExecInputNotes, TerminalProtocol (the page's messages),
+                            TerminalFlow (output in flight), TerminalScreen (which shell's output is shown), TerminalTheme
+                            (the sixteen colours), TerminalRecovery (what a failed browser process does), ShortcutFocus
+                            (when the window's shortcuts give way to the terminal)
   Logging/, Storage/        FileLog, AtomicFile
 src/Berth.App/              UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
-  Program.cs                entry point: log, services, first connect, window
+  Program.cs                entry point: log, services, first connect, window; a Release build first removes every
+                            WEBVIEW2_* environment variable
+  DebugStart.cs             Debug only: BERTH_OPEN_EXEC and BERTH_EXEC_COMMAND (see "The exec terminal")
   AppLog.cs                 berth.log: fixed wording and exception type names only (FileLog.Describe)
   LocalData.cs              the folder for settings and the log (package LocalState, or %LOCALAPPDATA%\Berth unpackaged)
   AppServices.cs            settings, the session for the active connection (replaced on a switch) and the detail session of
@@ -112,6 +130,13 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             built-in networks)
     Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)
+    Detail/ (terminal)      ExecTab (toolbar with the shell picker, size, external terminal and copy; status line; the
+                            terminal; placeholders), ExecLink (the tab's link to the detail session, the handle and the
+                            bridge, with stable handlers), TerminalView (the WebView2 host component and its
+                            TerminalHandle), TerminalBridge (bytes from the session's pump to the page, with flow
+                            control), DetailTabRequest (a row's "Open terminal" asks the page for its Exec tab)
+  Assets/Terminal/          the terminal page: index.html, terminal.js, terminal.css, and xterm.js 6.0.0, its fit addon
+                            0.11.0 and its licence, vendored unchanged (THIRD-PARTY-NOTICES.txt at the root)
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
 tests/Berth.Core.Tests/     xunit tests for Core; Integration/ holds the tests that need a real engine
 ```
@@ -126,7 +151,7 @@ the table or a file's namespace is not its folder's.
 | `Connections` | nothing |
 | `Transport` | `Connections` |
 | `Engine` | `Connections`, `Transport` |
-| `Text` | `Connections` (the connection a command names), `Engine` (the model records it formats) |
+| `Text` | `Connections` (the connection a `docker` command names with `-H` and its TLS files), `Engine` (the model records it formats) |
 | `State` | `Engine` |
 | `Session` | `Engine`, `State`, `Text` |
 | `Presentation` | `Engine`, `State`, `Session`, `Text` |
@@ -238,6 +263,92 @@ session after a switch: the list page stays in the navigation cache and does not
 while another page shows, so it cannot see the route change itself. Minimized is read from
 Win32 `IsIconic`, because Reactor's window state does not report the restore.
 
+## The exec terminal
+
+**Who owns what.** `ContainerDetailSession` owns the shell's stream: it creates and starts the
+exec, then runs two pumps, output (engine to the attached `IExecOutput`, waiting on it each
+time) and input (its own loop, so a key never waits behind output). `DetailState` holds only
+the status (`ExecState`: not started, starting, running, ended with an exit code, failed) and
+the generation; `DetailReducer.Exec` decides everything. A stop on purpose closes the write
+side where there is one (TCP, TLS; not Docker Desktop's pipe), gives the shell 500 ms, then
+disposes the stream; nothing it still sends is shown. Bytes are never decoded, logged, put in
+the state or in an exception message Berth writes, and the command is never logged.
+
+**Ending what the shell leaves.** The engine keeps a TTY shell running after its connection
+closes (risk R7, measured on both engines), so each shell is created with
+`BERTH_EXEC=<16 hex>` in its environment (`ExecCleanUp`). When a shell is ended on purpose
+(stop, tab left, page left, connection switched or retired, app exit, which waits at most 1 s),
+fails after it ran (the terminal page died, the stream broke), or its stream ends while the
+engine still runs it (a detach), the reducer asks for `CleanUpExecEffect`: a detached exec in
+the same container that sends HUP, and nothing else, to every process whose `/proc/<pid>/environ`
+holds that exact entry. `nohup` work survives, as it would in a closed terminal. It runs only
+while the container runs (not paused or restarting) on a live connection, once per shell,
+under its own 3 s limit; for a shell still starting it waits until the create and start
+returned and runs only when an exec was created. A failure is logged in fixed words only.
+
+**Detach keys.** The engine watches a TTY exec's input for a detach sequence and uses
+Ctrl+P Ctrl+Q when the exec names none (it cannot be turned off). Every exec is created with
+`EngineClient.ExecDetachKeys` (`ctrl-^,ctrl-@` three times): only a lone Ctrl+^ is held back
+until the next key.
+
+**The message protocol** lives in Core: `Presentation/TerminalProtocol` builds and parses
+every message (JSON with a string `t`; bytes as base64 in `d`; sizes 2 to 1000 columns and 1
+to 500 rows; messages over 4 MB are dropped). `terminal.js` is the page's half. Messages from
+the page: `ready`, `input`, `resize`, `ack`, `copy`, `paste`, `leave`; to the page: `output`,
+`paste`, `reset`, `enabled`, `focus`, `theme`.
+
+**Flow control.** `TerminalBridge` copies each chunk the pump hands it into one buffer and
+posts it on the UI thread (chunks that arrive while a post is pending go together).
+`TerminalFlow` counts what xterm has not acknowledged: above 1 MiB the pump waits, below
+256 KiB it goes on. Input is capped at 2 MiB waiting for the shell (`ExecInput`); a piece over
+the cap is dropped whole and the tab says so. A paste is one `input` message, up to 2 MB.
+`TerminalScreen` decides which shell's output is shown: each write carries the detail
+session it came from and the shell's generation, so an old session's or an old shell's output
+never reaches the new screen.
+
+**Keys.** With the focus in the terminal every key goes to the shell, Escape and Alt+Left
+included (`ShellKeys` never acts while a WebView2 is on the focus path: `ShortcutFocus`). F6
+leaves for the tab strip; Ctrl+C copies when text is selected and interrupts otherwise;
+Ctrl+Shift+C and Ctrl+Insert copy; Ctrl+V and Shift+Insert paste. The page matches `e.code`. Browser accelerator keys (F5,
+Ctrl+F, Ctrl+P, Ctrl+R) are off.
+
+**The host component, `TerminalView`.** It builds its `WebView2()` element once per name and
+WebView generation (`UseMemo`), so a page rendering ten times a second hands the control the
+same element: never hand it anything new per render. Its handlers are read through the
+`TerminalHandle` when called, so new delegates in the props cost nothing. The WebView serves
+`Assets/Terminal` as `https://terminal.berth.example/` (`SetVirtualHostNameToFolderMapping`)
+with no other origin reachable, no host objects, no script dialogs, no autofill, no built-in
+error page, devtools only in Debug, and a background set before the page draws (no white
+flash). It is closed, which ends its browser processes, on unmount and also when it leaves the
+window while still mounted (the navigation cache keeps a left page mounted); a new WebView is
+made when the page is shown again. A failed browser process is recovered by
+`TerminalRecovery` (reload or recreate) and the tab shows "The terminal stopped working. Start
+again." The theme goes through the handle: `IsDark` and `ThemeChanged` follow the WebView's
+`ActualTheme` (Reactor's `UseIsDarkTheme()` does not follow a live switch); High Contrast
+maps the colours to the system window colours.
+
+**Updating xterm.js.** Download the two packages' tarballs from the npm registry, check their
+integrity against the registry, copy `lib/xterm.js`, `css/xterm.css`, `lib/addon-fit.js` and
+the licence over the files in `Assets/Terminal/` unchanged, and update the versions and
+integrity in `THIRD-PARTY-NOTICES.txt` and the README. `.gitattributes` keeps them byte for
+byte.
+
+**What the spike found** (Task 1): Reactor's `WebView2()` element survives the page's
+re-renders; the page is ready in about 400 ms; `winapp ui screenshot` shows the WebView's
+content; UI Automation does not see the terminal's text (read it through the debug channel);
+the terminal's size is also shown as text (`exec-size`).
+
+**Checks without a keyboard (Debug only).** `BERTH_OPEN_EXEC=<container name>` opens that
+container's page on the Exec tab once its row is listed; `BERTH_EXEC_COMMAND=<command>` makes
+the tab choose Custom with that command. A Debug host sets `window.berthDebug`, and the page
+then exposes the xterm object as `window.berthTerminal`. Start Berth with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`, find the page at
+`http://127.0.0.1:9222/json` (its URL holds `terminal.berth.example`) and evaluate through the
+DevTools protocol: `berthTerminal.input("echo hi\r", true)` types through xterm's own input
+path (page, host, session, engine), and `berthTerminal.buffer.active` reads the screen. A
+Release build clears every `WEBVIEW2_*` variable at start and has neither switch nor
+`berthDebug` (check the trimmed `Berth.dll` for the strings).
+
 ## Charts
 
 The Stats tab's four charts (CPU, memory, disk read/write, network I/O, two by two from 760
@@ -247,7 +358,9 @@ Reactor's built-in chart element takes its y domain from the data (not from 0), 
 series and has no reference line, so it cannot show a 0-based axis, two series or a limit
 line. The axes, figures and screen-reader summaries are decided in Core (`StatsCharts`). The
 two series colours are the one place with colour values in code: the theme has no chart
-tokens.
+tokens. The terminal's sixteen ANSI colours are the third (`Presentation/TerminalTheme`, with
+a contrast test against the surface the terminal is drawn on: the card fill over the solid
+background, #fbfbfb light and #2b2b2b dark).
 
 ## Rendering at ten renders a second
 
@@ -287,8 +400,12 @@ observe (lines arriving, a busy sample, a state change) with a 60 s safety net, 
 fixed sleeps. They cover connect, list, actions, the event stream, the session, inspect,
 logs (framed and TTY), stats, the detail session ending its streams when the container
 stops, images (list, inspect, pull, removing a tag), volumes (create, list, remove),
-networks (list, remove), running a container from a request, and the session seeing a
-volume and network made by the CLI. `[DesktopEngineFact]` tests run only against Docker
+networks (list, remove), running a container from a request, the session seeing a
+volume and network made by the CLI, and exec (output and exit code, two-way input, the
+starting size and a resize, `TERM`, a missing shell, the 409 of a stopped or paused
+container, a megabyte through raw `cat`, Ctrl+P and Ctrl+P Ctrl+Q, a detail session's shell,
+closing the write side, the clean-up sparing `nohup` and another shell, and what a closed
+shell leaves, written to the test output). `[DesktopEngineFact]` tests run only against Docker
 Desktop's pipe: removing unused volumes (narrowed to the test's own volumes).
 
 Run them against the daily engine and, when it is there, against the second engine on the
@@ -386,7 +503,8 @@ wrong or could be better before they do.
   - A child row's markers line up under its parent's (one column for the chevron, one for
     the state dot), and a child's name drops what the parent row already says.
   - Destructive actions confirm, name what will be lost, and default to Cancel.
-  - Light and dark working does not mean High Contrast works; that has not been checked yet.
+  - Light and dark working does not mean High Contrast works; that has not been checked yet (the terminal maps its colours
+    to the system's under High Contrast, unchecked on screen).
   - A Reactor `FlexRow` or `FlexColumn` takes all the room it is offered: a flex row of buttons in a toolbar left the search box
     none, a flex column in a dialog made it as tall as the window, and a flex column in a grid cell kept long text from wrapping.
     Use a `Grid`, `HStack` or `VStack` (`DialogParts.Stack`) there. A negative vertical margin in a flex column crashes its
@@ -434,7 +552,7 @@ On the detail page:
   `more-<name>`, `delete-<name>`, ...); below it `detail-error` (a failed read, with Retry). The navigation's `SettingsItem` and the title bar's
   `PART_BackButton` go to Settings and back to the page.
 - Tabs: the SelectorBar `detail-tabs`; select one with `winapp ui invoke Stats --type
-  ListItem -a Berth` (`Logs`, `Inspect`, `Bind mounts`, `Stats`).
+  ListItem -a Berth` (`Logs`, `Inspect`, `Bind mounts`, `Exec`, `Stats`).
 - Logs: `log-lines` (the log), `log-notes`, `log-empty`, `log-error`, `log-latest`; toolbar
   `log-search-toggle`, `log-timestamps`, `log-wrap`, `log-copy`, `log-clear`; search
   `log-search` (an Edit: `set-value`/`get-value`), `log-match-count`, `log-previous`,
@@ -444,6 +562,14 @@ On the detail page:
   `inspect-copy-<section>-<name>`, `inspect-raw-toggle`, `inspect-raw-json`,
   `inspect-copy-json`.
 - Bind mounts: `bind-mounts`, `bind-mount-open-<index>`, `bind-mounts-empty`.
+- Exec (the tab is named `Exec`): toolbar `exec-shell` (the picker), `exec-custom` and
+  `exec-run` with `exec-custom-error`, `exec-size` (its name says "Terminal size: N columns,
+  M rows"), `exec-external`, `exec-copy-command`, `exec-external-refusal`; status
+  `exec-status` (starting), `exec-ended` with `exec-start-again`, `exec-failed` with
+  `exec-retry`, `exec-input-note`, `exec-webview-error`; placeholders `exec-not-running`,
+  `exec-paused`, `exec-restarting`, `exec-waiting`, with `exec-start-container` and
+  `exec-resume-container`. The terminal itself is a WebView named "Terminal for <name>";
+  drive it through the debug channel ("The exec terminal").
 - Stats: `stats-tab`, `stats-loading`, `stats-not-running`, `stats-error`, `stats-waiting`;
   the cards `stats-cpu`, `stats-memory`, `stats-disk`, `stats-network`. The figures drawn beside each
   title are hidden from UI Automation; each card's title carries the latest and highest
