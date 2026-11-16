@@ -185,7 +185,8 @@ internal sealed class ExecTab : Component<ExecTabProps>
             size is not null,
             startedOnce);
 
-        // Each new shell starts on a cleared screen; typing is on only while it runs, and the terminal takes the focus then.
+        // Each new shell starts on a cleared screen; typing is on from Starting (so replies to its first queries are not lost) while
+        // a shell starts or runs, and the terminal takes the focus once it runs.
         UseEffect(
             () =>
             {

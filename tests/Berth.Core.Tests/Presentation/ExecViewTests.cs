@@ -80,10 +80,12 @@ public sealed class ExecViewTests
             ExecViewKind.Lost, "The shell ended when the connection was lost.", ExecButton.StartAgain, showTerminal: true);
 
     [Fact]
-    public void Starting_names_the_command() =>
+    public void Starting_names_the_command_and_already_takes_input() =>
+        // The shell's first output can be a terminal query (cursor position, device attributes): xterm's reply must not be dropped
+        // because the page still had typing off. The session ignores input until the shell's stream is open.
         AssertView(
             ExecView.For(Detail(Exec(ExecStatus.Starting, Bash)), waiting: false, startedOnce: true),
-            ExecViewKind.Starting, "Starting bash -l…", ExecButton.None, showTerminal: true);
+            ExecViewKind.Starting, "Starting bash -l…", ExecButton.None, showTerminal: true, acceptsInput: true);
 
     [Fact]
     public void Running_takes_input() =>

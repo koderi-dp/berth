@@ -12,7 +12,10 @@ public enum ExecButton { None, StartContainer, ResumeContainer, StartAgain, Star
 /// <summary>The Exec tab's state, decided from the detail state.</summary>
 /// <param name="Text">The line shown; null when the view needs none (Ready, Running).</param>
 /// <param name="ShowTerminal">Whether the terminal is on screen (Ready, Starting, Running, Ended, Failed, Lost).</param>
-/// <param name="AcceptsInput">Whether typing goes to the shell: Running only.</param>
+/// <param name="AcceptsInput">
+/// Whether the page takes typing: Starting and Running. From Starting on, so xterm's replies to a query in the shell's first output
+/// are not dropped (the session ignores input until the shell's stream is open).
+/// </param>
 public sealed record ExecViewModel(ExecViewKind Kind, string? Text, ExecButton Button, bool ShowTerminal, bool AcceptsInput);
 
 /// <summary>The Exec tab's whole behaviour: which state it is in, the line it shows and the button it offers.</summary>
@@ -72,7 +75,7 @@ public static class ExecView
         return exec.Status switch
         {
             ExecStatus.Starting => new ExecViewModel(
-                ExecViewKind.Starting, $"Starting {string.Join(' ', exec.Command)}…", ExecButton.None, true, false),
+                ExecViewKind.Starting, $"Starting {string.Join(' ', exec.Command)}…", ExecButton.None, true, AcceptsInput: true),
             ExecStatus.Running => RunningView,
             ExecStatus.Ended => new ExecViewModel(
                 ExecViewKind.Ended, EndedText(exec), SuggestsSh(exec) ? ExecButton.StartSh : ExecButton.StartAgain, true, false),
