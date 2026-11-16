@@ -1,3 +1,4 @@
+using Berth.Components;
 using Berth.Connections;
 using Berth.Engine;
 using Microsoft.UI.Reactor;
@@ -18,7 +19,8 @@ internal sealed record ConnectionEditorProps(ConnectionProfile? Editing, Action<
 /// <summary>
 /// The dialog that adds or edits a connection: name, address, TLS files and a test of the connection. It opens when it is mounted;
 /// the page mounts it for one edit and removes it when <see cref="ConnectionEditorProps.OnDone"/> is called. The rules live in
-/// <see cref="ConnectionDraft"/>; this is the view over it.
+/// <see cref="ConnectionDraft"/>; this is the view over it. Its text boxes are uncontrolled (<see cref="Widgets.TextField"/>): each
+/// starts from the draft when it is mounted and reports every change to it.
 /// </summary>
 internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
 {
@@ -56,14 +58,17 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
                 _ = TestAsync(profile, running, setTest);
         }
 
+        // Keyed, so a part that appears or goes never moves another into its slot (which would mount that one's box again). The
+        // address is keyed on TLS too: turning TLS on or off can change the address (the default port), which only a box mounted
+        // again shows, since an uncontrolled box is never written over.
         var content = (FlexColumn(
-                TextBox(draft.Name, value => Edit(d => d with { Name = value }), header: "Name"),
-                AddressField(draft.Address, addressError, value => Edit(d => d with { Address = value })),
+                Widgets.TextField(draft.Name, value => Edit(d => d with { Name = value }), header: "Name").WithKey("name"),
+                AddressField(draft.Address, addressError, value => Edit(d => d with { Address = value })).WithKey(draft.UseTls ? "address-tls" : "address"),
                 draft.IsNamedPipe
                     ? null
-                    : ToggleSwitch(draft.UseTls, on => Edit(d => d.WithTls(on)), header: "Use TLS").AutomationName("Use TLS"),
-                draft.UseTls && !draft.IsNamedPipe ? TlsFields(draft, tlsError, Edit) : null,
-                TestRow(test, canBuild, StartTest))
+                    : ToggleSwitch(draft.UseTls, on => Edit(d => d.WithTls(on)), header: "Use TLS").AutomationName("Use TLS").WithKey("tls"),
+                draft.UseTls && !draft.IsNamedPipe ? TlsFields(draft, tlsError, Edit).WithKey("tls-files") : null,
+                TestRow(test, canBuild, StartTest).WithKey("test"))
             with
             {
                 RowGap = 12,
@@ -90,7 +95,7 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
 
     private static Element AddressField(string address, string? error, Action<string> onChanged) =>
         (FlexColumn(
-                TextBox(address, onChanged, placeholderText: "tcp://host:2375 or npipe:////./pipe/docker_engine", header: "Address"),
+                Widgets.TextField(address, onChanged, placeholder: "tcp://host:2375 or npipe:////./pipe/docker_engine", header: "Address"),
                 error is null ? null : ErrorText(error))
             with
             {
@@ -99,9 +104,9 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
 
     private static Element TlsFields(ConnectionDraft draft, string? error, Action<Func<ConnectionDraft, ConnectionDraft>> edit) =>
         (FlexColumn(
-                TextBox(draft.CaPath, value => edit(d => d with { CaPath = value }), placeholderText: @"C:\certs\ca.pem", header: "CA certificate"),
-                TextBox(draft.CertPath, value => edit(d => d with { CertPath = value }), placeholderText: "Optional", header: "Client certificate"),
-                TextBox(draft.KeyPath, value => edit(d => d with { KeyPath = value }), placeholderText: "Optional", header: "Client key"),
+                Widgets.TextField(draft.CaPath, value => edit(d => d with { CaPath = value }), placeholder: @"C:\certs\ca.pem", header: "CA certificate"),
+                Widgets.TextField(draft.CertPath, value => edit(d => d with { CertPath = value }), placeholder: "Optional", header: "Client certificate"),
+                Widgets.TextField(draft.KeyPath, value => edit(d => d with { KeyPath = value }), placeholder: "Optional", header: "Client key"),
                 error is null ? null : ErrorText(error))
             with
             {

@@ -268,6 +268,10 @@ wrong or could be better before they do.
     `control-styles.md`, `code-review-checklist.md`) under the package folder named in the
     next section.
 - **Rules that have already bitten here:**
+  - Every text box is `Widgets.TextField` (or `Widgets.SearchBox`, built on it): uncontrolled,
+    it starts from its value when it mounts and reports every change. A controlled box dropped
+    the first edit twice in phase 2. A box whose value can change from outside it is mounted
+    again (a new key) to show the change, as the connection editor's address is when TLS turns on.
   - Sizes, paddings and margins are multiples of 4.
   - Text that can be long sits in a `GridSize.Star()` column with `TextTrimming` and a
     tooltip; trimming never happens inside `FlexRow`, `HStack` or an `Auto` column.
