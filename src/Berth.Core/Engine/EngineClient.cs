@@ -15,7 +15,7 @@ namespace Berth.Engine;
 
 /// <summary>
 /// The typed client for the Docker Engine API. Plain calls time out after 30 seconds; stop, restart and image and volume removes after
-/// 90; streams, a pull, disk usage and the prunes have no deadline. A timeout or an engine that cannot be reached throws
+/// 90; streams, a pull and disk usage have no deadline. A timeout or an engine that cannot be reached throws
 /// <see cref="EngineException"/> with status 0 (a timeout also with <see cref="EngineException.TimedOut"/>). Disposing the client disposes the handler.
 /// </summary>
 public sealed class EngineClient : IEngineApi

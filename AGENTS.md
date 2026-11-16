@@ -169,6 +169,13 @@ runs it.
 The Images, Volumes and Networks pages (and Containers, for the parts it uses) are one shape,
 built from shared pieces; a new list uses them rather than copying a page:
 
+- Each route's page is one `RoutePage` component (`App.cs`), and a list or volume page stays
+  mounted, hidden under the disconnected view, instead of being swapped for it: Reactor's
+  navigation host kept every page whose root element changed type alive, and the components in
+  an unmounted virtualized list stayed registered, so each switch of connection leaked the old
+  page (about 17 MB). A page therefore outlives a switch, and drops what it holds about the old
+  engine (checked rows, open dialogs, notes) through `ListPageComponent.UseSessionReset`.
+
 - `ListPageComponent` (`Hooks/ListViewHook.cs`): `UseListView` (search, filter and sort kept by
   route), `UseListSearch`, `UseCheckedKeys` (a row that is gone cannot stay checked) and
   `UseRemoveDialogs`.
