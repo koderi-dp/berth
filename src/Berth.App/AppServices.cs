@@ -56,6 +56,9 @@ internal sealed class AppServices
 
     public event Action? SessionChanged;
 
+    /// <summary>Which session <see cref="Session"/> is: 0 for the first, one more for each that replaced it.</summary>
+    public int SessionNumber { get; private set; }
+
     /// <summary>
     /// The detail session of the container whose page is open, on the current connection; null while none is. Replaced, and
     /// <see cref="DetailChanged"/> raised, by <see cref="OpenDetail"/> and <see cref="CloseDetail"/>; closed when the connection is switched.
@@ -148,6 +151,7 @@ internal sealed class AppServices
         CloseDetail();
         var next = CreateSession(connection);
         var old = Interlocked.Exchange(ref _session, next);
+        SessionNumber++;
         AppLog.Write("connection switched");
         SessionChanged?.Invoke();
         next.Dispatch(new ConnectRequested());

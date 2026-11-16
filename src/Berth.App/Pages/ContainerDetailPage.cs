@@ -13,9 +13,9 @@ using static Microsoft.UI.Reactor.Factories;
 namespace Berth.Pages;
 
 /// <summary>What the app gives a container's detail page.</summary>
-/// <param name="ContainerId">The container the page shows.</param>
+/// <param name="Route">The page's route: the container it shows, and on which engine session.</param>
 /// <param name="Leave">Returns to the list; with a text, the list shows it in an info bar ("web-1 was removed.").</param>
-internal sealed record DetailPageProps(string ContainerId, Action<string?> Leave);
+internal sealed record DetailPageProps(AppRoute.ContainerDetail Route, Action<string?> Leave);
 
 /// <summary>
 /// One container: its header with its state and actions, and the Logs, Inspect, Bind mounts and Stats tabs. While the page is the
@@ -36,7 +36,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
 
     public override Element Render()
     {
-        var id = Props.ContainerId;
+        var id = Props.Route.ContainerId;
         var leave = Props.Leave;
         var state = UseEngineState();
         var detail = UseDetailState();
@@ -48,7 +48,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var lastRowState = UseRef<(RowState State, ContainerAction? Pending)?>(null);
 
         // Reactor keeps a page it navigated away from, so the list keeps its search and scroll; such a page does nothing.
-        var active = nav.CurrentRoute == new AppRoute.ContainerDetail(id);
+        var active = nav.CurrentRoute == Props.Route;
         var connected = state.Status == ConnectionStatus.Connected;
         var row = UseMemo(() => FindRow(state, id), state.Containers, state.Pending);
         var mine = detail?.ContainerId == id ? detail : null;

@@ -18,8 +18,12 @@ internal abstract record AppRoute
 
     public static readonly AppRoute Settings = new Page("settings");
 
-    /// <summary>The detail page of the container <paramref name="ContainerId"/>; opened from the list, which it returns to.</summary>
-    public sealed record ContainerDetail(string ContainerId) : AppRoute;
+    /// <summary>
+    /// The detail page of the container <paramref name="ContainerId"/> on the engine session <paramref name="Session"/>
+    /// (<see cref="AppServices.SessionNumber"/>); opened from the list, which it returns to. The session number keeps a page kept
+    /// from an earlier connection from ever being the one shown again.
+    /// </summary>
+    public sealed record ContainerDetail(string ContainerId, int Session) : AppRoute;
 
     private sealed record Page(string Name) : AppRoute;
 }
@@ -45,9 +49,9 @@ internal sealed class App : EngineStateComponent
         // before; going back to it restores its search, sort and scroll.
         void LeaveDetail(string? note)
         {
-            setNotice(note);
             if (nav.CurrentRoute is not AppRoute.ContainerDetail)
                 return;
+            setNotice(note);
             if (nav.CanGoBack && nav.BackStack[^1] == AppRoute.Containers)
                 nav.GoBack();
             else
@@ -65,14 +69,16 @@ internal sealed class App : EngineStateComponent
             },
             nav.CurrentRoute);
 
-        // A switch of connection closes the detail session (it ran on the old connection) and returns to the list.
+        // A switch of connection closes the detail session (it ran on the old connection), and no page of a container of the old
+        // engine may be shown again: every detail route leaves the history, the one shown for the list. A note about the old engine goes.
         UseEffect(
             () =>
             {
                 void OnSessionChanged()
                 {
-                    if (nav.CurrentRoute is AppRoute.ContainerDetail)
-                        LeaveDetail(null);
+                    setNotice(null);
+                    if (WithoutDetailPages(nav.GetState()) is { } history)
+                        nav.SetState(history);
                 }
 
                 AppServices.Current.SessionChanged += OnSessionChanged;
@@ -106,10 +112,11 @@ internal sealed class App : EngineStateComponent
             NoticeBar(nav.CurrentRoute == AppRoute.Containers ? notice : null, () => setNotice(null)),
             (NavigationHost(nav, route => RouteToPage(route, state, LeaveDetail)) with
                 {
-                    // The page left stays mounted, so the list keeps its search and scroll while a detail page is open. One is enough:
-                    // the list while a detail page shows, the detail page (inactive) while the list shows.
+                    // A page left stays mounted, so the list keeps its search, sort and scroll while a detail page is open. The cache
+                    // drops the page used longest ago; two keep the list on any path that leaves it for at most two other pages, such
+                    // as list, detail, Settings and back.
                     CacheMode = NavigationCacheMode.Enabled,
-                    CacheSize = 1,
+                    CacheSize = 2,
                 })
                 .Flex(grow: 1, basis: 0));
 
@@ -119,7 +126,15 @@ internal sealed class App : EngineStateComponent
                 // A container's detail page is under Containers.
                 SelectedTag = nav.CurrentRoute == AppRoute.Settings ? NavigationViewElement.SettingsTag : ContainersTag,
                 // Anything but the containers item is the built-in Settings item, whose reported tag is not always SettingsTag.
-                OnSelectedTagChanged = tag => nav.Navigate(tag == ContainersTag ? AppRoute.Containers : AppRoute.Settings),
+                // Only a change of item navigates: WinUI also reports the item the route already shows (after Back), which would
+                // put the same page on the back stack twice; on a detail page the Containers item is already selected.
+                OnSelectedTagChanged = tag =>
+                {
+                    var target = tag == ContainersTag ? AppRoute.Containers : AppRoute.Settings;
+                    var shown = nav.CurrentRoute is AppRoute.ContainerDetail ? AppRoute.Containers : nav.CurrentRoute;
+                    if (target != shown)
+                        nav.Navigate(target);
+                },
                 IsSettingsVisible = true,
                 IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
                 IsPaneToggleButtonVisible = false,
@@ -141,6 +156,29 @@ internal sealed class App : EngineStateComponent
                 .Margin(24, 16, 24, 0)
                 .Flex(shrink: 0)
             : null;
+
+    /// <summary>
+    /// <paramref name="history"/> without its detail pages: the current one becomes the list, the forward stack goes, and a page
+    /// left twice in a row on the back stack (or the shown page on top of it) is kept once. Null when there is no detail page in it.
+    /// </summary>
+    private static NavigationState<AppRoute>? WithoutDetailPages(NavigationState<AppRoute> history)
+    {
+        static bool IsDetail(AppRoute route) => route is AppRoute.ContainerDetail;
+        if (!IsDetail(history.Current) && !history.BackStack.Any(IsDetail) && !history.ForwardStack.Any(IsDetail))
+            return null;
+
+        var current = IsDetail(history.Current) ? AppRoute.Containers : history.Current;
+        var back = new List<AppRoute>();
+        foreach (var route in history.BackStack.Where(r => !IsDetail(r)))
+        {
+            if (back.Count == 0 || back[^1] != route)
+                back.Add(route);
+        }
+
+        while (back.Count > 0 && back[^1] == current)
+            back.RemoveAt(back.Count - 1);
+        return new NavigationState<AppRoute>(back, current, []);
+    }
 
     /// <summary>A note for the list, such as that the container whose page was open was removed; shown until closed or the next page opens.</summary>
     private static Element? NoticeBar(string? notice, Action onClose) =>
@@ -173,7 +211,7 @@ internal sealed class App : EngineStateComponent
     /// </summary>
     private static Element RouteToPage(AppRoute route, EngineState state, Action<string?> leaveDetail) => route switch
     {
-        AppRoute.ContainerDetail detail => Component<ContainerDetailPage, DetailPageProps>(new(detail.ContainerId, leaveDetail)),
+        AppRoute.ContainerDetail detail => Component<ContainerDetailPage, DetailPageProps>(new(detail, leaveDetail)),
         _ when route == AppRoute.Settings => Component<SettingsPage>(),
         _ when state.Status != ConnectionStatus.Connected && state.Containers.IsEmpty =>
             DisconnectedView.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),

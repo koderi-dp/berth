@@ -45,10 +45,6 @@ internal sealed class ContainersPage : EngineStateComponent
         var (searchFocused, setSearchFocused) = UseState(false);
         var searchBox = this.UseElementRef<TextBox>();
         var nav = UseNavigation<AppRoute>();
-        // Each return to the page (it is kept while a detail page shows) mounts a new search box with the kept text. A box that was
-        // kept drops the first edit after the return: Reactor waits for the echo of a write it made while the page was away.
-        var (visits, updateVisits) = UseReducer(0);
-        UseNavigationLifecycle(onNavigatedTo: _ => updateVisits(v => v + 1));
 
         var connected = state.Status == ConnectionStatus.Connected;
         var runningOnly = settings.ContainerList.RunningOnly;
@@ -71,7 +67,7 @@ internal sealed class ContainersPage : EngineStateComponent
             (ids, value) => updateChecked(current => value ? current.Union(ids) : current.Except(ids)),
             project => updateCollapsed(current => current.Contains(project) ? current.Remove(project) : current.Add(project)),
             rows => setDeleteRequest(DeleteRequest.For(rows)),
-            row => nav.Navigate(new AppRoute.ContainerDetail(row.Id), new NavigateOptions { Transition = NavigationTransition.DrillIn() }));
+            row => nav.Navigate(new AppRoute.ContainerDetail(row.Id, AppServices.Current.SessionNumber), new NavigateOptions { Transition = NavigationTransition.DrillIn() }));
 
         var shownIds = visibleRows.Select(r => r.Id).ToArray();
         var deleteRows = DeleteRows(visibleRows, checkedIds, connected);
@@ -105,7 +101,7 @@ internal sealed class ContainersPage : EngineStateComponent
             new()
             {
                 Label = "Clear search",
-                Execute = () => setSearch(""),
+                Execute = () => ClearSearch(searchBox.Current),
                 CanExecute = !dialogOpen && searchFocused && search.Length > 0,
                 Accelerator = Accelerator(VirtualKey.Escape),
             },
@@ -114,7 +110,7 @@ internal sealed class ContainersPage : EngineStateComponent
         var page = (FlexColumn(
                 Widgets.PageTitle("Containers").Flex(shrink: 0),
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
-                Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused, visits),
+                Toolbar(setSearch, runningOnly, searchBox, setSearchFocused),
                 BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
                 Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
@@ -132,6 +128,13 @@ internal sealed class ContainersPage : EngineStateComponent
     {
         var ids = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
         return [.. visibleRows.Where(r => ids.Contains(r.Id))];
+    }
+
+    /// <summary>Escape in the search box: empties it, which reports the empty search.</summary>
+    private static void ClearSearch(TextBox? box)
+    {
+        if (box is not null)
+            box.Text = "";
     }
 
     /// <summary>Ctrl+F: the focus goes to the search box with its text selected, so typing replaces it.</summary>
@@ -181,17 +184,21 @@ internal sealed class ContainersPage : EngineStateComponent
         return items;
     }
 
-    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused, int visit) =>
+    /// <summary>
+    /// The search box is uncontrolled: it owns its text and reports each change. A controlled box, whose text Reactor writes, drops
+    /// the first edit after the page comes back from the navigation cache (Reactor waits for the echo of a write it made while the
+    /// page was out of the window), and the page is kept in that cache while a container's page or Settings shows.
+    /// </summary>
+    private static Element Toolbar(Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
         (FlexRow(
-                TextBox(search, setSearch, placeholderText: "Search")
+                TextBox(onChanged: setSearch, placeholderText: "Search")
                     .Ref(searchBox)
                     .AutomationId("search")
                     .AutomationName("Search")
                     .ToolTip("Search by name, image or ID (Ctrl+F)")
                     .OnGotFocus((_, _) => setSearchFocused(true))
                     .OnLostFocus((_, _) => setSearchFocused(false))
-                    .Width(320)
-                    .WithKey("search-" + visit),
+                    .Width(320),
                 ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
                     .AutomationName("Only show running containers"))
             with
