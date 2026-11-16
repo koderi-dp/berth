@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
+using Berth.State;
 
 namespace Berth.Session;
 
@@ -22,6 +23,13 @@ public enum ContainerAction { Start, Stop, Restart, Pause, Unpause, Remove }
 /// </param>
 /// <param name="Stats">The latest stats sample of each running container, while <see cref="StatsWanted"/> and connected.</param>
 /// <param name="StatsWanted">A screen that shows list stats is open, so the running containers' stats are followed.</param>
+/// <param name="Images">The image list, read once its page is shown (<see cref="ImagesWanted"/>).</param>
+/// <param name="Volumes">The volume list, read once its page is shown (<see cref="VolumesWanted"/>).</param>
+/// <param name="Networks">The network list, read once its page is shown (<see cref="NetworksWanted"/>).</param>
+/// <param name="DiskUsage">The engine's disk use of images and volumes, read when asked for (<see cref="DiskUsageRequested"/>).</param>
+/// <param name="Pulls">The image pulls the user started, by the reference they run under (<see cref="ImagePull.KeyOf"/>).</param>
+/// <param name="Run">The container the run dialog asked for, until dismissed; null when none.</param>
+/// <param name="Ticket">The last generation handed to an image, volume, network or disk use read or a pull.</param>
 public sealed record EngineState(
     ConnectionStatus Status,
     EngineVersion? Version,
@@ -35,7 +43,14 @@ public sealed record EngineState(
     bool ReloadScheduled,
     bool ListLoaded,
     ImmutableDictionary<string, StatsSample> Stats,
-    bool StatsWanted)
+    bool StatsWanted,
+    ResourceList<ImageSummary> Images,
+    ResourceList<VolumeSummary> Volumes,
+    ResourceList<NetworkSummary> Networks,
+    DiskUsageState DiskUsage,
+    ImmutableDictionary<string, ImagePull> Pulls,
+    ContainerRun? Run,
+    int Ticket)
 {
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
@@ -50,5 +65,12 @@ public sealed record EngineState(
         ReloadScheduled: false,
         ListLoaded: false,
         Stats: ImmutableDictionary<string, StatsSample>.Empty.WithComparers(StringComparer.Ordinal),
-        StatsWanted: false);
+        StatsWanted: false,
+        Images: ResourceList<ImageSummary>.Initial,
+        Volumes: ResourceList<VolumeSummary>.Initial,
+        Networks: ResourceList<NetworkSummary>.Initial,
+        DiskUsage: DiskUsageState.Initial,
+        Pulls: ImmutableDictionary<string, ImagePull>.Empty.WithComparers(StringComparer.Ordinal),
+        Run: null,
+        Ticket: 0);
 }

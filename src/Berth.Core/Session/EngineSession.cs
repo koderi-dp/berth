@@ -15,7 +15,7 @@ namespace Berth.Session;
 /// scope that started them, and the loop drops anything whose scope is no longer current, so a superseded connect or a
 /// stream stopped on purpose never reaches the reducer.
 /// </remarks>
-public sealed class EngineSession : IAsyncDisposable
+public sealed partial class EngineSession : IAsyncDisposable
 {
     private const string EngineClosedConnection = "The engine closed the connection.";
 
@@ -24,13 +24,9 @@ public sealed class EngineSession : IAsyncDisposable
     private const string LoadFailedReport = "loading the containers failed";
     private const string StreamFailedReport = "the engine event stream failed";
     private const string ActionFailedReport = "a container action failed";
-    private const string StatsFailedReport = "a container stats stream failed";
     private const string RunCommandFailedReport = "inspecting a container for its run command failed";
     private const string HandlerFailedReport = "a state change handler failed";
     private const string LoopFailedReport = "handling a session event failed";
-
-    /// <summary>How often the latest list stats go to the reducer, as one <see cref="StatsBatchArrived"/>.</summary>
-    public static readonly TimeSpan StatsBatchInterval = TimeSpan.FromSeconds(1);
 
     private readonly Func<IEngineApi> _createApi;
     private readonly TimeProvider _time;
@@ -89,9 +85,6 @@ public sealed class EngineSession : IAsyncDisposable
 
     /// <summary>Raised on the loop when an event from an older connection or timer is dropped. For tests.</summary>
     internal event Action<SessionEvent>? StaleEventDropped;
-
-    /// <summary>Raised on a stream's thread each time a list stats sample of the container with this id is read. For tests.</summary>
-    internal event Action<string>? StatsSampleRecorded;
 
     /// <summary>
     /// A detail page's session for <paramref name="containerId"/> on the current connection, not opened yet (call
@@ -261,6 +254,10 @@ public sealed class EngineSession : IAsyncDisposable
                 _reloadTimer?.Dispose();
                 _reloadTimer = StartTimer(reload.Delay, new ReloadDue(), _connection);
                 break;
+
+            default:
+                StartResourceEffect(effect);
+                break;
         }
     }
 
@@ -274,6 +271,7 @@ public sealed class EngineSession : IAsyncDisposable
         _reloadTimer = null;
         _stats?.Dispose();
         _stats = null;
+        RetireResources();
         if (_connection is null)
             return;
 
@@ -404,222 +402,7 @@ public sealed class EngineSession : IAsyncDisposable
         Post(result, connection);
     }
 
-    /// <summary>
-    /// Follows one container's stats for the list until cancelled or the stream ends. A stream that ends (the container
-    /// stopped) or finds the container gone is not a failure; any other failure is reported and leaves the other streams be.
-    /// </summary>
-    private async Task FollowStatsAsync(Connection connection, StatsWatch watch, string id, CancellationToken ct)
-    {
-        try
-        {
-            await foreach (var sample in connection.Api!.StreamStatsAsync(id, ct).ConfigureAwait(false))
-            {
-                watch.Record(id, sample, ct);
-                Raise(StatsSampleRecorded, id);
-            }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-        }
-        catch (EngineException ex) when (ex.StatusCode == 404)
-        {
-        }
-        catch (Exception ex)
-        {
-            Report(StatsFailedReport, ex);
-        }
-    }
-
     private static bool IsUnreachable(Exception ex) => ex is EngineException { StatusCode: 0 };
 
     private readonly record struct Envelope(SessionEvent Event, object? Source);
-
-    /// <summary>
-    /// One connection attempt and everything started on it: the engine client, its calls, its stream and the detail sessions
-    /// opened on it.
-    /// </summary>
-    private sealed class Connection
-    {
-        private readonly CancellationTokenSource _stop = new();
-        private readonly List<Task> _calls = [];
-        private readonly Lock _detailsLock = new();
-        private readonly HashSet<ContainerDetailSession> _details = [];
-        private bool _retired;
-
-        /// <summary>Set by the connect call before it reports success, so every later call can use it.</summary>
-        public IEngineApi? Api { get; set; }
-
-        /// <summary>Cancelled when the connection is retired. Called only from the loop.</summary>
-        public CancellationToken Token => _stop.Token;
-
-        /// <summary>Runs <paramref name="call"/> on the thread pool. Called only from the loop.</summary>
-        public Task Run(Func<CancellationToken, Task> call)
-        {
-            _calls.RemoveAll(t => t.IsCompleted);
-            var token = _stop.Token;
-            var task = Task.Run(() => call(token));
-            _calls.Add(task);
-            return task;
-        }
-
-        /// <summary>
-        /// Creates a detail session on this connection's engine client and tracks it until the page disposes it, or returns
-        /// null when the client is not set or the connection is retired. Safe from any thread.
-        /// </summary>
-        public ContainerDetailSession? Attach(Func<IEngineApi, ContainerDetailSession> create)
-        {
-            lock (_detailsLock)
-            {
-                if (_retired || Api is not { } api)
-                    return null;
-
-                var detail = create(api);
-                _details.Add(detail);
-                detail.ReleaseOnDispose(() =>
-                {
-                    lock (_detailsLock)
-                        _details.Remove(detail);
-                });
-                return detail;
-            }
-        }
-
-        /// <summary>
-        /// Cancels every call and cuts off the detail sessions, waits for all of them to finish, then disposes the engine
-        /// client.
-        /// </summary>
-        public async Task RetireAsync()
-        {
-            ContainerDetailSession[] details;
-            lock (_detailsLock)
-            {
-                _retired = true;
-                details = [.. _details];
-                _details.Clear();
-            }
-
-            var calls = _calls.ToArray();
-            try
-            {
-                _stop.Cancel();
-                await Task.WhenAll(calls.Concat(details.Select(d => d.CutOffAsync()))).ConfigureAwait(false);
-            }
-            catch (Exception)
-            {
-                // Calls report their own failures as events; a throwing cancellation callback has no one to tell.
-            }
-
-            if (Api is { } api)
-            {
-                try
-                {
-                    await api.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception)
-                {
-                    // The connection is already abandoned; a failing dispose changes nothing the user can act on.
-                }
-            }
-
-            _stop.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// The list stats of one connection: a stream per watched container and a timer that sends the latest sample of each,
-    /// once a <see cref="StatsBatchInterval"/>, as one event. Everything but <see cref="Record"/> and the timer is called only
-    /// from the loop.
-    /// </summary>
-    private sealed class StatsWatch(EngineSession session, Connection connection) : IDisposable
-    {
-        private readonly Dictionary<string, (CancellationTokenSource Stop, Task Stream)> _streams = new(StringComparer.Ordinal);
-        private readonly Lock _lock = new();
-        private Dictionary<string, StatsSample> _fresh = new(StringComparer.Ordinal);
-        private ITimer? _tick;
-
-        /// <summary>
-        /// Follows exactly <paramref name="ids"/>: stops the streams of ids left out and starts those of new ids, or of ids
-        /// whose stream has ended (the container was started again); the others carry on.
-        /// </summary>
-        public void Watch(ImmutableArray<string> ids)
-        {
-            var wanted = ids.ToHashSet(StringComparer.Ordinal);
-            foreach (var id in _streams.Keys.Where(id => !wanted.Contains(id)).ToList())
-                Stop(id);
-
-            foreach (var id in ids)
-            {
-                if (_streams.TryGetValue(id, out var current))
-                {
-                    if (!current.Stream.IsCompleted)
-                        continue;
-                    Stop(id);
-                }
-
-                Start(id);
-            }
-
-            if (_streams.Count == 0)
-            {
-                _tick?.Dispose();
-                _tick = null;
-            }
-            else
-            {
-                _tick ??= session._time.CreateTimer(_ => Send(), state: null, StatsBatchInterval, StatsBatchInterval);
-            }
-        }
-
-        /// <summary>Keeps <paramref name="sample"/> for the next batch unless its stream was stopped. Called from the stream.</summary>
-        public void Record(string id, StatsSample sample, CancellationToken ct)
-        {
-            lock (_lock)
-            {
-                if (!ct.IsCancellationRequested)
-                    _fresh[id] = sample;
-            }
-        }
-
-        /// <summary>Stops the timer and every stream.</summary>
-        public void Dispose()
-        {
-            _tick?.Dispose();
-            _tick = null;
-            foreach (var id in _streams.Keys.ToList())
-                Stop(id);
-        }
-
-        private void Start(string id)
-        {
-            var stop = CancellationTokenSource.CreateLinkedTokenSource(connection.Token);
-            var token = stop.Token;
-            var stream = connection.Run(_ => session.FollowStatsAsync(connection, this, id, token));
-            _streams[id] = (stop, stream);
-        }
-
-        private void Stop(string id)
-        {
-            var (stop, _) = _streams[id];
-            _streams.Remove(id);
-            stop.Cancel();
-            stop.Dispose();
-            lock (_lock)
-                _fresh.Remove(id);
-        }
-
-        /// <summary>Sends the samples read since the last batch, if any. Called by the timer.</summary>
-        private void Send()
-        {
-            ImmutableDictionary<string, StatsSample> batch;
-            lock (_lock)
-            {
-                if (_fresh.Count == 0)
-                    return;
-                batch = _fresh.ToImmutableDictionary(StringComparer.Ordinal);
-                _fresh = new Dictionary<string, StatsSample>(StringComparer.Ordinal);
-            }
-
-            session.Post(new StatsBatchArrived(batch), connection);
-        }
-    }
 }

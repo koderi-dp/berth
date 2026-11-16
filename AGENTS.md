@@ -39,10 +39,15 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
   Text/                     text made from engine records for the user to paste: DockerRunCommand (the `docker run`
                             command of an inspected container, PowerShell or bash quoting; ShellKind)
   State/                    value types that more than one layer holds or reads: LogBuffer (last 10,000 lines),
-                            StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice)
+                            StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
+                            ResourceList/ListStatus (the images, volumes and networks lists), ImagePull (a pull's layers),
+                            DiskUsageState, ContainerRun (the run dialog's result)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
-                            stats), EngineSession (runs the reducer and its effects; reports failures to an optional error
-                            sink; opens detail sessions on its current connection), Backoff;
+                            stats), with ResourceEvents, ResourceEffects and SessionReducer.Resources for images, volumes,
+                            networks, disk use, pulls and running a container; EngineSession (runs the reducer and its
+                            effects; reports failures to an optional error sink; opens detail sessions on its current
+                            connection), its parts in EngineSession.Connection, .StatsWatch, .Resources and .Pulls (progress
+                            batched to ten state changes a second per pull), Backoff;
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,

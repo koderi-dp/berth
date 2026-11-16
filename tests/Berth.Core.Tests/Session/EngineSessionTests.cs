@@ -7,7 +7,7 @@ using Microsoft.Extensions.Time.Testing;
 
 namespace Berth.Tests.Session;
 
-public sealed class EngineSessionTests
+public sealed partial class EngineSessionTests
 {
     /// <summary>Only a safety net so a broken runtime fails the test instead of hanging it; tests never wait for time.</summary>
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
@@ -779,6 +779,27 @@ public sealed class EngineSessionTests
                 t =>
                 {
                     Session.StatsSampleRecorded -= Count;
+                    return t;
+                },
+                TaskScheduler.Default).Unwrap();
+        }
+
+        /// <summary>Completes once <paramref name="count"/> more pull progress lines have been read.</summary>
+        public Task WaitForPullLines(int count)
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var seen = 0;
+            void Count(string _)
+            {
+                if (Interlocked.Increment(ref seen) >= count)
+                    done.TrySetResult();
+            }
+
+            Session.PullLineRecorded += Count;
+            return done.Task.WaitAsync(Patience).ContinueWith(
+                t =>
+                {
+                    Session.PullLineRecorded -= Count;
                     return t;
                 },
                 TaskScheduler.Default).Unwrap();

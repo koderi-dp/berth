@@ -6,7 +6,7 @@ using Berth.Text;
 
 namespace Berth.Tests.Session;
 
-public sealed class SessionReducerTests
+public sealed partial class SessionReducerTests
 {
     private static readonly EngineVersion Version = new("29.0.0", "1.52", "1.24", "linux", "amd64");
     private static readonly EngineInfo Info = new("host", "29.0.0", 8, 16L << 30, 1, 0, 1, 3);

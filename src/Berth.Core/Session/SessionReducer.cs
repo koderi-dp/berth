@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
+using Berth.State;
 using Berth.Text;
 
 namespace Berth.Session;
@@ -8,7 +9,7 @@ namespace Berth.Session;
 /// Turns (state, event) into (new state, effects). Pure: no I/O and no clock. An event that does not apply in the
 /// current state returns the same state instance and no effects.
 /// </summary>
-public static class SessionReducer
+public static partial class SessionReducer
 {
     public static readonly TimeSpan ReloadDebounce = TimeSpan.FromMilliseconds(150);
 
@@ -30,12 +31,14 @@ public static class SessionReducer
         switch (e)
         {
             case ConnectRequested when state.Status == ConnectionStatus.Disconnected:
-                return (state with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false }, [new ConnectEffect()]);
+                return (
+                    ForgetUnderWay(state, lostMessage: null) with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false },
+                    [new ConnectEffect()]);
 
             case ConnectRequested:
                 // Starting over drops in-flight work: action results, the reload timer and the stats streams.
                 return (
-                    state with
+                    ForgetUnderWay(state, lostMessage: null) with
                     {
                         Status = ConnectionStatus.Connecting,
                         Pending = state.Pending.Clear(),
@@ -64,7 +67,8 @@ public static class SessionReducer
                         LoadGeneration = generation,
                         ListLoaded = false,
                     },
-                    [new LoadContainersEffect(generation), new StartEventStreamEffect()]);
+                    ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation), new StartEventStreamEffect()))
+                    .Then(LoadWanted);
             }
 
             case ConnectFailed failure when connecting:
@@ -99,8 +103,8 @@ public static class SessionReducer
                     ? Lose(state, failure.Message)
                     : (state with { ActionError = failure.Message }, None);
 
-            case EngineEventReceived received when connected && CausesReload(received.Message):
-                return RequestReload(state);
+            case EngineEventReceived received when connected:
+                return (CausesReload(received.Message) ? RequestReload(state) : (state, None)).Then(s => ReloadListsFor(s, received.Message));
 
             case ReloadDue:
             {
@@ -116,7 +120,8 @@ public static class SessionReducer
             {
                 // At once, not debounced: the user is waiting. A load still in flight is superseded by the new generation.
                 var generation = state.LoadGeneration + 1;
-                return (state with { LoadGeneration = generation }, [new LoadContainersEffect(generation)]);
+                return (state with { LoadGeneration = generation }, ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation)))
+                    .Then(ReloadWantedLists);
             }
 
             case ActionRequested request when connected:
@@ -167,7 +172,7 @@ public static class SessionReducer
             }
 
             default:
-                return (state, None);
+                return ReduceResources(state, e, connected);
         }
     }
 
@@ -176,7 +181,7 @@ public static class SessionReducer
     /// may be cancelled), ignore any load still in flight, and retry with back-off.
     /// </summary>
     private static (EngineState, ImmutableArray<SessionEffect>) Lose(EngineState state, string message) => (
-        state with
+        ForgetUnderWay(state, message) with
         {
             Status = ConnectionStatus.Disconnected,
             ConnectionError = message,
@@ -225,12 +230,13 @@ public static class SessionReducer
     /// A container event whose action is in <see cref="ReloadActions"/>. The engine adds detail after a colon to some
     /// actions ("health_status: healthy"), so only the part before it is compared.
     /// </summary>
-    private static bool CausesReload(EngineEventMessage message)
+    private static bool CausesReload(EngineEventMessage message) =>
+        message.Type == "container" && ReloadActions.Contains(BaseAction(message.Action));
+
+    /// <summary>An event's action without the detail the engine adds after a colon to some ("health_status: healthy").</summary>
+    private static string BaseAction(string action)
     {
-        if (message.Type != "container")
-            return false;
-        var colon = message.Action.IndexOf(':');
-        var action = colon < 0 ? message.Action : message.Action[..colon];
-        return ReloadActions.Contains(action);
+        var colon = action.IndexOf(':');
+        return colon < 0 ? action : action[..colon];
     }
 }
