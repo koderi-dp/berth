@@ -73,12 +73,12 @@ internal sealed class RunDialog : EngineStateComponent<RunDialogProps>
             connected,
             unread);
 
-        // The image's ports arrive: one box each (they are new boxes, so nothing typed is lost).
+        // The image's ports arrive: one box each. Read again after a reconnect, the same ports keep what was typed in them.
         UseEffect(
             () =>
             {
                 if (inspection is not null)
-                    updateDraft(d => d with { Ports = RunDraft.For(d.Image, inspection.Details.ExposedPorts).Ports });
+                    updateDraft(d => d.WithExposedPorts(inspection.Details.ExposedPorts));
             },
             (object?)inspection ?? image);
 

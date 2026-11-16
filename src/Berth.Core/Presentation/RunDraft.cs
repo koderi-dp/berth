@@ -67,6 +67,21 @@ public sealed partial record RunDraft(string Image, string Name, ImmutableArray<
         return new RunDraft(image, "", ports.ToImmutable(), [], []);
     }
 
+    /// <summary>
+    /// This draft with a host port field per port in <paramref name="exposedPorts"/> (read as <see cref="For"/> does): the same draft when
+    /// they are the ports it has, so an image read again (after a reconnect) loses nothing typed; otherwise new fields that keep the host
+    /// port typed for a port still exposed.
+    /// </summary>
+    public RunDraft WithExposedPorts(IEnumerable<string> exposedPorts)
+    {
+        var fresh = For(Image, exposedPorts).Ports;
+        if (fresh.Select(p => (p.ContainerPort, p.Protocol)).SequenceEqual(Ports.Select(p => (p.ContainerPort, p.Protocol))))
+            return this;
+
+        var typed = Ports.GroupBy(p => (p.ContainerPort, p.Protocol)).ToDictionary(g => g.Key, g => g.First().HostPort);
+        return this with { Ports = [.. fresh.Select(p => p with { HostPort = typed.GetValueOrDefault((p.ContainerPort, p.Protocol), "") })] };
+    }
+
     /// <summary>The host ports the running containers publish, which a new container cannot publish again.</summary>
     public static IReadOnlySet<int> PublishedPorts(IEnumerable<ContainerSummary> containers) =>
         containers.Where(c => c.State == "running").SelectMany(c => c.Ports).Select(p => p.PublicPort).OfType<int>().ToHashSet();

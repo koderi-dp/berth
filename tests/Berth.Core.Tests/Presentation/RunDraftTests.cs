@@ -21,6 +21,25 @@ public sealed class RunDraftTests
     }
 
     [Fact]
+    public void Reading_the_same_exposed_ports_again_keeps_the_typed_host_ports()
+    {
+        var typed = Nginx.WithHostPort(0, "8080").WithHostPort(2, "5353");
+
+        Assert.Same(typed, typed.WithExposedPorts(["80/tcp", "443/tcp", "53/udp"]));
+    }
+
+    [Fact]
+    public void Other_exposed_ports_keep_the_host_port_typed_for_a_port_still_exposed()
+    {
+        var typed = Nginx.WithHostPort(0, "8080").WithHostPort(1, "8443");
+
+        var next = typed.WithExposedPorts(["443/tcp", "8000/tcp"]);
+
+        Assert.Equal<PortField>([new PortField(443, "tcp", "8443"), new PortField(8000, "tcp", "")], next.Ports);
+        Assert.Equal(typed with { Ports = next.Ports }, next);
+    }
+
+    [Fact]
     public void Exposed_ports_without_a_protocol_are_tcp_and_unreadable_ones_are_left_out()
     {
         var draft = RunDraft.For("x", ["8080", "nonsense/tcp", "70000/tcp"]);
