@@ -155,14 +155,27 @@ public static class StatsCharts
         return new ChartScale(max, Math.Pow(1024, unit), ByteUnits[unit] + suffix);
     }
 
-    /// <summary><paramref name="value"/> rounded up to a multiple of d3's tick step for <see cref="TickCount"/> ticks from 0.</summary>
+    /// <summary>
+    /// <paramref name="value"/> rounded up to a multiple of d3's tick step for <see cref="TickCount"/> ticks from 0, as d3's nice
+    /// does: rounding up can change the step (1.47 rounds to 1.6, whose step is 0.5), so it rounds again until the result is a
+    /// multiple of its own step, and the axis ends on a drawn tick.
+    /// </summary>
     private static double Nice(double value)
     {
         if (value <= 0)
             return 1;
 
-        var step = TickStep(value, TickCount);
-        return Math.Round(Math.Ceiling((value / step) - 1e-9) * step, 10);
+        var max = value;
+        for (var i = 0; i < 10; i++)
+        {
+            var step = TickStep(max, TickCount);
+            var next = Math.Round(Math.Ceiling((max / step) - 1e-9) * step, 10);
+            if (next == max)
+                break;
+            max = next;
+        }
+
+        return max;
     }
 
     /// <summary>d3's tick increment from 0 to <paramref name="max"/>: 1, 2 or 5 times a power of ten.</summary>

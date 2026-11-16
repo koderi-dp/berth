@@ -54,6 +54,9 @@ internal static class StatsChart
 
     private static readonly double[] Dash = [4, 2];
 
+    /// <summary>The radius of the dot that stands for a series of one point.</summary>
+    private const double DotRadius = 3;
+
     // The series colours: a blue and an orange checked for colour-blind separation and 3:1 contrast on the light and the dark
     // surface (the dataviz palette validator). There are no chart colours among the theme tokens.
     private static readonly ChartPalette LightPalette = ChartPalette.FromColors(D3Color.Parse("#2a78d6"), D3Color.Parse("#eb6834"));
@@ -150,6 +153,14 @@ internal static class StatsChart
             var series = data.Series[i];
             if (series.Points.Count == 0)
                 continue;
+            if (series.Points.Count == 1)
+            {
+                // The first second: one point, which a line cannot draw; a dot shows it.
+                var only = series.Points[0];
+                children.Add(D3Charts.D3Circle(X(only), Y(only.Value), DotRadius).Fill(SeriesBrush(dark, i, fill: false)));
+                continue;
+            }
+
             var line = D3Charts.D3LinePath(series.Points, X, p => Y(p.Value), SeriesBrush(dark, i, fill: false), 2)
                 .StrokeLineJoin(PenLineJoin.Round);
             children.Add(series.Dashed ? line.StrokeDashArray(Dash) : line);

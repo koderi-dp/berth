@@ -157,4 +157,39 @@ public sealed class ContainerSortTests
         Assert.Equal("CPU (%), not sorted", ContainerSort.Default.AccessibleName(SortColumn.Cpu));
         Assert.Equal("CPU (%), sorted descending", ContainerSort.Default.Toggle(SortColumn.Cpu).AccessibleName(SortColumn.Cpu));
     }
+
+    private static readonly IReadOnlyList<ContainerGroup> Idle = [Single(Row("a")), Single(Row("b")), Single(Row("c"))];
+
+    private static Dictionary<string, StatsSample> Batch(double a, double b, double c) =>
+        new() { ["a-id"] = Cpu(a), ["b-id"] = Cpu(b), ["c-id"] = Cpu(c) };
+
+    [Fact]
+    public void Idle_rows_that_all_read_0_0_keep_name_order_across_batches()
+    {
+        var sort = new ContainerSort(SortColumn.Cpu, true);
+
+        Assert.Equal(["a", "b", "c"], Names(sort.Apply(Idle, Batch(0.01, 0.03, 0.02))));
+        Assert.Equal(["a", "b", "c"], Names(sort.Apply(Idle, Batch(0.04, 0.0, 0.049))));
+        Assert.Equal(["a", "b", "c"], Names(sort.Apply(Idle, Batch(0.0, 0.02, 0.01))));
+        Assert.Equal(["a", "b", "c"], Names(sort.Toggle(SortColumn.Cpu).Apply(Idle, Batch(0.03, 0.01, 0.0))));
+    }
+
+    [Fact]
+    public void A_row_moves_only_when_its_shown_figure_changes()
+    {
+        var sort = new ContainerSort(SortColumn.Cpu, true);
+
+        Assert.Equal(["a", "b", "c"], Names(sort.Apply(Idle, Batch(12.31, 12.34, 0))));  // a and b both read 12.3%
+        Assert.Equal(["b", "a", "c"], Names(sort.Apply(Idle, Batch(12.31, 12.36, 0))));  // b reads 12.4%
+    }
+
+    [Fact]
+    public void Without_the_cpu_column_a_cpu_sort_shows_as_the_default_and_comes_back_with_it()
+    {
+        var cpu = new ContainerSort(SortColumn.Cpu, true);
+
+        Assert.Equal(ContainerSort.Default, cpu.Shown(cpuColumnShown: false));
+        Assert.Equal(cpu, cpu.Shown(cpuColumnShown: true));
+        Assert.Equal(new ContainerSort(SortColumn.Image, true), new ContainerSort(SortColumn.Image, true).Shown(cpuColumnShown: false));
+    }
 }

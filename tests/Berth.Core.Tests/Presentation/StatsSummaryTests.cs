@@ -85,4 +85,53 @@ public sealed class StatsSummaryTests
     [Fact]
     public void Without_stats_no_row_shows_cpu() =>
         Assert.Equal("", StatsSummary.CpuCell(Row("web", RowState.Running), null));
+
+    [Fact]
+    public void Until_the_first_batch_arrives_the_figures_are_unknown()
+    {
+        var state = EngineState.Initial with { Info = Info, Containers = [Container("a"), Container("b", state: "exited")] };
+
+        var totals = StatsSummary.Totals(state);
+
+        Assert.False(totals.Known);
+        Assert.Equal("— / 800% (8 CPUs)", StatsSummary.CpuText(totals));
+        Assert.Equal("— / 16 GB", StatsSummary.MemoryText(totals));
+    }
+
+    [Fact]
+    public void Once_a_running_container_has_a_sample_the_figures_are_known()
+    {
+        var state = EngineState.Initial with
+        {
+            Info = Info,
+            Containers = [Container("a"), Container("b")],
+            Stats = ImmutableDictionary.CreateRange(StringComparer.Ordinal, [KeyValuePair.Create("a", Sample(1.4, 1000))]),
+        };
+
+        var totals = StatsSummary.Totals(state);
+
+        Assert.True(totals.Known);
+        Assert.Equal("1.4% / 800% (8 CPUs)", StatsSummary.CpuText(totals));
+    }
+
+    [Fact]
+    public void With_no_running_container_the_figures_are_known_to_be_zero()
+    {
+        var state = EngineState.Initial with { Info = Info, Containers = [Container("b", state: "exited")] };
+
+        var totals = StatsSummary.Totals(state);
+
+        Assert.True(totals.Known);
+        Assert.Equal("0.0% / 800% (8 CPUs)", StatsSummary.CpuText(totals));
+        Assert.Equal("0 B / 16 GB", StatsSummary.MemoryText(totals));
+    }
+
+    [Fact]
+    public void Unknown_figures_without_engine_info_are_a_dash_alone()
+    {
+        var totals = new StatsTotals(0, 0, 0, 0) { Known = false };
+
+        Assert.Equal("—", StatsSummary.CpuText(totals));
+        Assert.Equal("—", StatsSummary.MemoryText(totals));
+    }
 }

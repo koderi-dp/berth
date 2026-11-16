@@ -106,8 +106,8 @@ public sealed class StatsChartsTests
     [Fact]
     public void A_rate_axis_covers_both_series_and_starts_at_one_kilobyte_a_second()
     {
-        Assert.Equal(new ChartScale(1.6, KB, "KB/s"), StatsCharts.Rate(Points(1500, 10), Points(300)));
-        Assert.Equal(new ChartScale(1.6, KB, "KB/s"), StatsCharts.Rate(Points(300), Points(1500, 10)));
+        Assert.Equal(new ChartScale(2, KB, "KB/s"), StatsCharts.Rate(Points(1500, 10), Points(300)));
+        Assert.Equal(new ChartScale(2, KB, "KB/s"), StatsCharts.Rate(Points(300), Points(1500, 10)));
         Assert.Equal(new ChartScale(1, KB, "KB/s"), StatsCharts.Rate(Points(200), Points(0)));
         Assert.Equal(new ChartScale(1, KB, "KB/s"), StatsCharts.Rate([], []));
         Assert.Equal(new ChartScale(2.5, MB, "MB/s"), StatsCharts.Rate(Points(2.5 * MB), []));
@@ -131,12 +131,12 @@ public sealed class StatsChartsTests
     public void A_screen_reader_hears_the_latest_and_highest_figures()
     {
         var history = StatsHistory.Empty
-            .Add(Sample(0, cpu: 30, memory: 300 * MB, received: 0, sent: 0, read: 0, written: 0))
-            .Add(Sample(1, cpu: 12.44, memory: 200 * MB, received: 2048, sent: 1024, read: 4096, written: 0))
-            .Add(Sample(2, cpu: 5, memory: 100 * MB, received: 3584, sent: 1324, read: 4096, written: 512));
+            .Add(Sample(0, cpu: 30, memory: 300 * MB, received: 0, sent: 0, read: 0, written: 0) with { MemoryLimitBytes = GB })
+            .Add(Sample(1, cpu: 12.44, memory: 200 * MB, received: 2048, sent: 1024, read: 4096, written: 0) with { MemoryLimitBytes = GB })
+            .Add(Sample(2, cpu: 5, memory: 100 * MB, received: 3584, sent: 1324, read: 4096, written: 512) with { MemoryLimitBytes = GB });
 
         Assert.Equal("CPU usage 5.0%. Highest in the last 2 minutes: 30.0%.", StatsCharts.CpuSummary(history));
-        Assert.Equal("Memory usage 100 MB of 977 KB. Highest in the last 2 minutes: 300 MB.", StatsCharts.MemorySummary(history));
+        Assert.Equal("Memory usage 100 MB of 1 GB. Highest in the last 2 minutes: 300 MB.", StatsCharts.MemorySummary(history));
         Assert.Equal(
             "Network I/O: received 1.5 KB/s, sent 300 B/s. Highest in the last 2 minutes: received 2 KB/s, sent 1 KB/s.",
             StatsCharts.NetworkSummary(history));
@@ -148,4 +148,80 @@ public sealed class StatsChartsTests
     [Fact]
     public void Before_any_sample_a_screen_reader_hears_that_there_are_no_figures_yet() =>
         Assert.Equal("CPU usage: no figures yet.", StatsCharts.CpuSummary(StatsHistory.Empty));
+
+    /// <summary>The step d3 picks for an axis from 0 to <paramref name="max"/> with <see cref="StatsCharts.TickCount"/> ticks.</summary>
+    private static double D3Step(double max)
+    {
+        var raw = max / StatsCharts.TickCount;
+        var power = Math.Floor(Math.Log10(raw));
+        var error = raw / Math.Pow(10, power);
+        var factor = error >= Math.Sqrt(50) ? 10 : error >= Math.Sqrt(10) ? 5 : error >= Math.Sqrt(2) ? 2 : 1;
+        return factor * Math.Pow(10, power);
+    }
+
+    [Theory]
+    [InlineData(1500)]
+    [InlineData(1.465 * KB)]
+    [InlineData(3.3 * MB)]
+    [InlineData(123_456)]
+    [InlineData(777 * KB)]
+    [InlineData(5.1 * GB)]
+    public void A_rate_axis_ends_on_a_tick_of_the_step_drawn_for_it(double bytesPerSecond)
+    {
+        var scale = StatsCharts.Rate(Points(bytesPerSecond), []);
+        var steps = scale.Max / D3Step(scale.Max);
+
+        Assert.Equal(Math.Round(steps), steps, 6);
+    }
+
+    [Theory]
+    [InlineData(230.0)]
+    [InlineData(73.0)]
+    [InlineData(412.0)]
+    [InlineData(1234.0)]
+    public void The_cpu_axis_ends_on_a_tick_of_the_step_drawn_for_it(double highest)
+    {
+        var scale = StatsCharts.Cpu(Points(highest), null);
+        var steps = scale.Max / D3Step(scale.Max);
+
+        Assert.Equal(Math.Round(steps), steps, 6);
+    }
+
+    [Fact]
+    public void Every_tick_of_an_axis_is_in_the_unit_of_its_maximum()
+    {
+        var scale = StatsCharts.Rate(Points(900 * KB), []);
+
+        Assert.Equal(new ChartScale(1, MB, "MB/s"), scale);
+        Assert.Equal(["0 MB/s", "0.2 MB/s", "0.4 MB/s", "0.6 MB/s", "0.8 MB/s", "1 MB/s"], new[] { 0, 0.2, 0.4, 0.6, 0.8, 1 }.Select(scale.TickLabel));
+    }
+
+    [Fact]
+    public void A_rate_moving_around_a_unit_boundary_keeps_its_axis_while_its_highest_value_is_in_the_window()
+    {
+        // A rate that peaks at 1010 KB/s once, then wanders between 950 and 999 KB/s: each second's window still holds the peak.
+        var values = new List<double> { 1010 * KB };
+        var random = new Random(7);
+        var first = StatsCharts.Rate(Points([.. values]), []);
+        for (var i = 0; i < 60; i++)
+        {
+            values.Add((950 + random.Next(50)) * KB);
+            Assert.Equal(first, StatsCharts.Rate(Points([.. values]), []));
+        }
+    }
+
+    [Fact]
+    public void A_higher_highest_value_never_gives_a_lower_axis()
+    {
+        double previous = 0;
+        for (double bytes = 1; bytes < 8.0 * GB; bytes *= 1.07)
+        {
+            var scale = StatsCharts.Rate(Points(bytes), []);
+            var top = scale.Max * scale.UnitSize;
+            Assert.True(top >= previous, $"{bytes} B/s gave {scale.Max} {scale.Unit}, below the axis of a lower value");
+            Assert.True(top >= bytes);
+            Assert.InRange(scale.Max, 0, 999.999);
+            previous = top;
+        }
+    }
 }

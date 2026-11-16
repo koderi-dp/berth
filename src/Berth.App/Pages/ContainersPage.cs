@@ -51,7 +51,8 @@ internal sealed class ContainersPage : EngineStateComponent
 
         var connected = state.Status == ConnectionStatus.Connected;
         var runningOnly = settings.ContainerList.RunningOnly;
-        var sort = settings.ContainerList.Sort;
+        // The saved sort, except that a CPU sort shows as by name while the narrow layout has no CPU column.
+        var sort = settings.ContainerList.Sort.Shown(cpuColumnShown: !compact);
         var filter = UseMemo(() => new ContainerFilter(search, runningOnly), search, runningOnly);
         // Sorted by CPU, the order follows each batch of stats; otherwise the stats sort nothing and are no dependency.
         var sortStats = sort.Column == SortColumn.Cpu ? state.Stats : null;
@@ -180,11 +181,14 @@ internal sealed class ContainersPage : EngineStateComponent
     private static void SetRunningOnly(bool value) =>
         AppServices.Current.UpdateSettings(settings => settings with { ContainerList = settings.ContainerList with { RunningOnly = value } });
 
-    /// <summary>A click on a column title: sorts by that column, or reverses it when it is the one sorted by; kept in the settings.</summary>
-    private static void SortBy(SortColumn column) =>
+    /// <summary>
+    /// A click on a column title: sorts by that column, or reverses it when it is the one sorted by (as <paramref name="shown"/>, the
+    /// sort the table shows); kept in the settings.
+    /// </summary>
+    private static void SortBy(ContainerSort shown, SortColumn column) =>
         AppServices.Current.UpdateSettings(settings => settings with
         {
-            ContainerList = settings.ContainerList with { Sort = settings.ContainerList.Sort.Toggle(column) },
+            ContainerList = settings.ContainerList with { Sort = shown.Toggle(column) },
         });
 
     /// <summary>Groups and rows as one list: a compose project's row, then its rows unless it is collapsed; a container on its own as a plain row.</summary>
@@ -286,7 +290,7 @@ internal sealed class ContainersPage : EngineStateComponent
             return Body(BulkSelection.EmptyText(engineHasContainers: !state.Containers.IsEmpty, filter)).Foreground(Theme.SecondaryText).Margin(12, 8, 0, 0).Flex(grow: 1, basis: 0);
         }
 
-        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value), sort, SortBy);
+        var header = ContainerRowView.Header(CheckedState(shownIds, checkedIds), connected, compact, value => callbacks.SetChecked(shownIds, value), sort, column => SortBy(sort, column));
 
         var list = ListView(items, item => item.Key, (item, _) => item switch
             {

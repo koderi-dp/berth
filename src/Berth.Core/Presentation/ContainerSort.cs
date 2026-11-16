@@ -41,6 +41,12 @@ public sealed record ContainerSort(SortColumn Column, bool Descending)
         return new ContainerSort(known, descending ?? Default.Descending);
     }
 
+    /// <summary>
+    /// The sort the table shows: a CPU sort shows as <see cref="Default"/> while the CPU column is not shown (a narrow window), so rows
+    /// do not move on figures nobody sees; the saved sort stays CPU and comes back with the column.
+    /// </summary>
+    public ContainerSort Shown(bool cpuColumnShown) => Column == SortColumn.Cpu && !cpuColumnShown ? Default : this;
+
     /// <summary>A column's title in the table: its name, or "CPU (%)".</summary>
     public static string Title(SortColumn column) => column == SortColumn.Cpu ? "CPU (%)" : column.ToString();
 
@@ -69,16 +75,21 @@ public sealed record ContainerSort(SortColumn Column, bool Descending)
 
     private static string GroupName(ContainerGroup group) => group.Project ?? group.Rows[0].Name;
 
-    /// <summary>The comparer of <see cref="Column"/>. For CPU a row without a figure (not running, or no sample yet) is below 0.</summary>
+    /// <summary>
+    /// The comparer of <see cref="Column"/>. CPU compares the figure the cell shows (one decimal), so rows that read the same keep
+    /// their name order from one batch of stats to the next; a row without a figure (not running, or no sample yet) is below 0.
+    /// </summary>
     private IComparer<ContainerRow> RowComparer(IReadOnlyDictionary<string, StatsSample>? stats) => Column switch
     {
-        SortColumn.Cpu => Comparer<ContainerRow>.Create((a, b) =>
-            (StatsSummary.CpuOf(a, stats) ?? -1).CompareTo(StatsSummary.CpuOf(b, stats) ?? -1)),
+        SortColumn.Cpu => Comparer<ContainerRow>.Create((a, b) => ShownCpu(a, stats).CompareTo(ShownCpu(b, stats))),
         SortColumn.Image => Comparer<ContainerRow>.Create((a, b) => CompareText(a.Image, b.Image)),
         SortColumn.Status => Comparer<ContainerRow>.Create((a, b) => StatusRank(a.State).CompareTo(StatusRank(b.State))),
         SortColumn.Created => Comparer<ContainerRow>.Create((a, b) => a.Created.CompareTo(b.Created)),
         _ => Comparer<ContainerRow>.Create((a, b) => CompareText(a.Name, b.Name)),
     };
+
+    private static double ShownCpu(ContainerRow row, IReadOnlyDictionary<string, StatsSample>? stats) =>
+        StatsSummary.CpuOf(row, stats) is { } cpu ? Math.Round(cpu, 1, MidpointRounding.AwayFromZero) : -1;
 
     private static int CompareText(string a, string b)
     {
