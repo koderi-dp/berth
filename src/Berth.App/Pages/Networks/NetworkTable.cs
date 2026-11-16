@@ -112,7 +112,7 @@ internal sealed class NetworkTable : Component<NetworkTableProps>
     }
 
     /// <summary>
-    /// "0", or how many containers are attached as a button whose tooltip names them and whose menu lists them, each opening its page
+    /// "0", or how many containers are attached as a link-coloured button whose tooltip names them and whose menu lists them, each opening its page
     /// (AutomationId <c>containers-</c> and the network's name).
     /// </summary>
     private static Element ContainersCell(NetworkRow row, IReadOnlyList<NetworkMember> members, NetworkTableHandlers handlers)
@@ -128,7 +128,8 @@ internal sealed class NetworkTable : Component<NetworkTableProps>
                 IconElement = Widgets.MenuGlyph(Glyphs.Details),
             })),
         ];
-        return Button(Body(members.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)), null)
+        // Drawn as a link (the accent text the volume names use), since it opens something; "0" above stays plain text.
+        return Button(Body(members.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)).Foreground(Theme.AccentText), null)
             .SubtleButton()
             .WithFlyout(MenuItems(items))
             .AutomationId("containers-" + row.Name)
