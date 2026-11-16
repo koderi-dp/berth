@@ -99,7 +99,11 @@ internal sealed record WireConfig(
     [property: JsonPropertyName("Tty")] bool Tty,
     [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels);
 
-internal sealed record WireHostConfig([property: JsonPropertyName("RestartPolicy")] WireRestartPolicy? RestartPolicy);
+internal sealed record WireHostConfig(
+    [property: JsonPropertyName("RestartPolicy")] WireRestartPolicy? RestartPolicy,
+    [property: JsonPropertyName("NanoCpus")] long? NanoCpus,
+    [property: JsonPropertyName("CpuQuota")] long? CpuQuota,
+    [property: JsonPropertyName("CpuPeriod")] long? CpuPeriod);
 
 internal sealed record WireRestartPolicy([property: JsonPropertyName("Name")] string? Name);
 

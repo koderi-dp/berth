@@ -32,6 +32,9 @@ internal sealed class ContainersPage : EngineStateComponent
 
     private static readonly ImmutableHashSet<string> NoIds = ImmutableHashSet<string>.Empty;
 
+    /// <summary>The sort's stats dependency while it does not sort by CPU.</summary>
+    private static readonly object NoStats = new();
+
     public override Element Render()
     {
         var state = UseEngineState();
@@ -50,7 +53,9 @@ internal sealed class ContainersPage : EngineStateComponent
         var runningOnly = settings.ContainerList.RunningOnly;
         var sort = settings.ContainerList.Sort;
         var filter = UseMemo(() => new ContainerFilter(search, runningOnly), search, runningOnly);
-        var groups = UseMemo(() => sort.Apply(ComposeGrouping.Build(state.Containers, state.Pending, filter)), state.Containers, state.Pending, filter, sort);
+        // Sorted by CPU, the order follows each batch of stats; otherwise the stats sort nothing and are no dependency.
+        var sortStats = sort.Column == SortColumn.Cpu ? state.Stats : null;
+        var groups = UseMemo(() => sort.Apply(ComposeGrouping.Build(state.Containers, state.Pending, filter), sortStats), state.Containers, state.Pending, filter, sort, sortStats ?? NoStats);
         var items = UseMemo(() => Flatten(groups, collapsed), groups, collapsed);
         // The rows the filter shows, collapsed projects included: only these count for the bulk actions.
         var visibleRows = UseMemo(() => groups.SelectMany(g => g.Rows).ToArray(), groups);
@@ -112,6 +117,7 @@ internal sealed class ContainersPage : EngineStateComponent
         var page = (FlexColumn(
                 Widgets.PageTitle("Containers").Flex(shrink: 0).WithKey("title"),
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
+                Strip(state)?.WithKey("stats"),
                 Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused).WithKey("toolbar"),
                 BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks)?.WithKey("bulk"),
                 Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks).WithKey("table"),
@@ -123,6 +129,15 @@ internal sealed class ContainersPage : EngineStateComponent
             .FlexPadding(24, 16, 24, 0);
 
         return CommandHost(shortcuts, page).Flex(grow: 1, basis: 0);
+    }
+
+    /// <summary>The running containers' CPU and memory in total, while connected; drawn again only when a figure changes.</summary>
+    private static Element? Strip(EngineState state)
+    {
+        if (state.Status != ConnectionStatus.Connected)
+            return null;
+        var totals = StatsSummary.Totals(state);
+        return Component<StatsStrip, StatsStripProps>(new(StatsSummary.CpuText(totals), StatsSummary.MemoryText(totals)));
     }
 
     /// <summary>The checked rows the Delete button and the Delete key ask to remove: shown, not pending, and none while not connected.</summary>
@@ -276,7 +291,7 @@ internal sealed class ContainersPage : EngineStateComponent
         var list = ListView(items, item => item.Key, (item, _) => item switch
             {
                 GroupItem g => ContainerRowView.Group(g.Group, g.Collapsed, CheckedState(g.Group.Rows.Select(r => r.Id), checkedIds), connected, compact, callbacks).WithKey(g.Key),
-                RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, compact, callbacks).WithKey(r.Key),
+                RowItem r => ContainerRowView.Row(r.Row, r.Project, checkedIds.Contains(r.Row.Id), connected, compact, StatsSummary.CpuCell(r.Row, state.Stats), callbacks).WithKey(r.Key),
                 _ => throw new InvalidOperationException("A new list item needs its row here: " + item.GetType().Name),
             })
             .Set(view =>

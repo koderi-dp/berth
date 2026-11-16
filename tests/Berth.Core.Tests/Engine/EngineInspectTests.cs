@@ -226,6 +226,24 @@ public sealed class EngineInspectTests
         Assert.Equal("", details.Platform);
     }
 
+    [Theory]
+    [InlineData("""{ "NanoCpus": 500000000, "CpuQuota": 0, "CpuPeriod": 0 }""", 0.5)]
+    [InlineData("""{ "NanoCpus": 0, "CpuQuota": 150000, "CpuPeriod": 100000 }""", 1.5)]
+    [InlineData("""{ "NanoCpus": 0, "CpuQuota": 0, "CpuPeriod": 0 }""", null)]
+    [InlineData("""{ "NanoCpus": 0, "CpuQuota": -1, "CpuPeriod": 100000 }""", null)]
+    [InlineData("""{ "CpuQuota": 50000 }""", null)]
+    [InlineData("null", null)]
+    public async Task The_cpu_limit_is_read_from_nano_cpus_or_the_quota(string hostConfig, double? cpus)
+    {
+        var json = BareInspect.Replace("\"Image\": \"sha256:1\",", $"\"Image\": \"sha256:1\", \"HostConfig\": {hostConfig},", StringComparison.Ordinal);
+        var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/json", json));
+        await using var _client = client;
+
+        var details = (await client.InspectContainerAsync("abc", CancellationToken.None)).Details;
+
+        Assert.Equal(cpus, details.CpuLimit);
+    }
+
     [Fact]
     public async Task Raw_json_is_the_engines_answer_indented_with_nothing_removed()
     {

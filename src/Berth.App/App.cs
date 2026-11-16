@@ -33,6 +33,9 @@ internal sealed class App : EngineStateComponent
 {
     private const string ContainersTag = "containers";
 
+    /// <summary>The window effect's dependency while the component has no window.</summary>
+    private static readonly object NoWindow = new();
+
     private const string SettingsSetAsideText =
         "The settings file could not be read. It was kept as settings.bad.json and Berth started with defaults.";
 
@@ -68,6 +71,16 @@ internal sealed class App : EngineStateComponent
                     AppServices.Current.CloseDetail();
             },
             nav.CurrentRoute);
+
+        // List stats (the containers list's CPU column and totals) are followed while the list is the page shown and the window is
+        // not minimized; not on a container's page, which follows its own. The page kept in the navigation cache does not render when
+        // another page shows, so the window decides. Sent again to the new session after a switch of connection.
+        var minimized = UseMinimized();
+        var statsWanted = nav.CurrentRoute == AppRoute.Containers && !minimized;
+        UseEffect(
+            () => AppServices.Current.Session.Dispatch(new StatsWantedChanged(statsWanted)),
+            statsWanted,
+            AppServices.Current.SessionNumber);
 
         // A switch of connection closes the detail session (it ran on the old connection), and no page of a container of the old
         // engine may be shown again: every detail route leaves the history, the one shown for the list. A note about the old engine goes.
@@ -145,6 +158,50 @@ internal sealed class App : EngineStateComponent
 
         return FlexColumn(titleBar, navView, StatusBar.Render(state));
     }
+
+    /// <summary>
+    /// Whether the window is minimized (iconic). Read again whenever the window changes, shows, hides or is activated: Reactor's
+    /// <c>UseWindowState</c> and the presenter's state hear of the minimize but did not change back when the window was restored
+    /// from the taskbar.
+    /// </summary>
+    private bool UseMinimized()
+    {
+        var window = UseWindow();
+        var (minimized, setMinimized) = UseState(false);
+        UseEffect(
+            () =>
+            {
+                if (window is null)
+                    return () => { };
+
+                var native = window.NativeWindow;
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(native);
+                void Update() => setMinimized(IsIconic(hwnd));
+                void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args) => Update();
+                void OnVisibilityChanged(object sender, Microsoft.UI.Xaml.WindowVisibilityChangedEventArgs args) => Update();
+                void OnActivated(object sender, Microsoft.UI.Xaml.WindowActivatedEventArgs args) => Update();
+                void OnSizeChanged(object sender, Microsoft.UI.Xaml.WindowSizeChangedEventArgs args) => Update();
+
+                window.AppWindow.Changed += OnAppWindowChanged;
+                native.VisibilityChanged += OnVisibilityChanged;
+                native.Activated += OnActivated;
+                native.SizeChanged += OnSizeChanged;
+                Update();
+                return () =>
+                {
+                    window.AppWindow.Changed -= OnAppWindowChanged;
+                    native.VisibilityChanged -= OnVisibilityChanged;
+                    native.Activated -= OnActivated;
+                    native.SizeChanged -= OnSizeChanged;
+                };
+            },
+            (object?)window ?? NoWindow);
+        return minimized;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint hwnd);
 
     /// <summary>Shown from the start until closed when the settings file was damaged and set aside.</summary>
     private static Element? SetAsideBar(bool show, Action onClose) =>

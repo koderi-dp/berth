@@ -54,6 +54,7 @@
     -->
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools.WinApp" Version="0.8.0" />
     <PackageReference Include="Microsoft.UI.Reactor" Version="0.1.0-preview.18" />
+    <PackageReference Include="Microsoft.UI.Reactor.Advanced" Version="0.1.0-preview.18" />
     <ProjectReference Include="..\Berth.Core\Berth.Core.csproj" />
   </ItemGroup>
 

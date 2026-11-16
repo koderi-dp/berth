@@ -239,8 +239,17 @@ public sealed class EngineClient : IEngineApi
             c.NetworkSettings?.Networks?.Select(n => new NetworkAttachment(
                 n.Key, n.Value?.IpAddress ?? "", n.Value?.Gateway ?? "", n.Value?.MacAddress ?? "")).ToList() ?? [],
             c.HostConfig?.RestartPolicy?.Name ?? "",
-            c.Platform ?? "");
+            c.Platform ?? "")
+        {
+            CpuLimit = CpuLimit(c.HostConfig),
+        };
     }
+
+    /// <summary>The CPUs a container may use: <c>NanoCpus</c> (<c>--cpus</c>), else a positive quota over its period, else none.</summary>
+    private static double? CpuLimit(WireHostConfig? host) =>
+        host?.NanoCpus is > 0 and var nano ? nano / 1e9
+        : host is { CpuQuota: > 0 and var quota, CpuPeriod: > 0 and var period } ? (double)quota / period
+        : null;
 
     /// <summary>
     /// Inspect's port map ("80/tcp" to host bindings) as the list's port mappings: one per binding, or one with no address and no

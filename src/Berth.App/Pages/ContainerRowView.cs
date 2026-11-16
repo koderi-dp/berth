@@ -30,8 +30,8 @@ internal sealed record ContainerListCallbacks(
 internal static class ContainerRowView
 {
     /// <summary>
-    /// Checkbox, chevron (compose project rows only), state dot, name, image, status, ports, created, actions. The dot has its own
-    /// column so a project's dot and its containers' dots sit under each other, right of the chevron.
+    /// Checkbox, chevron (compose project rows only), state dot, name, image, status, ports, CPU, created, actions. The dot has its
+    /// own column so a project's dot and its containers' dots sit under each other, right of the chevron.
     /// </summary>
     private static readonly GridSize[] WideColumns =
     [
@@ -42,11 +42,15 @@ internal static class ContainerRowView
         GridSize.Star(3),
         GridSize.Star(3),
         GridSize.Px(120), // ports: wide enough for "65535:65535"
+        GridSize.Px(104), // CPU: its title "CPU (%)" or "1234.5%", and a gap before Created
         GridSize.Px(120),
         GridSize.Px(236), // four buttons, the menu, a divider and Delete
     ];
 
-    /// <summary>The same columns for a narrow window: Restart and Pause move into a menu, so the actions need less room.</summary>
+    /// <summary>
+    /// The same columns for a narrow window: Restart and Pause move into a menu, so the actions need less room, and the CPU column
+    /// gives its room to the others (the strip above the list still has the total).
+    /// </summary>
     private static readonly GridSize[] CompactColumns =
     [
         GridSize.Px(40),
@@ -56,6 +60,7 @@ internal static class ContainerRowView
         GridSize.Star(3),
         GridSize.Star(3),
         GridSize.Px(120), // ports: wide enough for "65535:65535"
+        GridSize.Px(0), // no CPU column
         GridSize.Px(120),
         GridSize.Px(148), // one button, the menu, a divider and Delete
     ];
@@ -77,7 +82,7 @@ internal static class ContainerRowView
     /// <summary>
     /// The column titles, with a checkbox that checks or clears every row shown (<paramref name="checkedState"/> null: some are).
     /// Like every checkbox and action of the table, it is disabled while not <paramref name="connected"/>. Every title but Ports is a
-    /// button that sorts by its column (<paramref name="onSort"/>); the sorted one shows an arrow.
+    /// button that sorts by its column (<paramref name="onSort"/>); the sorted one shows an arrow. CPU is there in the wide layout only.
     /// </summary>
     public static Element Header(bool? checkedState, bool connected, bool compact, Action<bool> onCheckAll, ContainerSort sort, Action<SortColumn> onSort) =>
         Cells(
@@ -88,14 +93,16 @@ internal static class ContainerRowView
             SortTitle(SortColumn.Image, sort, onSort).Grid(column: 4),
             SortTitle(SortColumn.Status, sort, onSort).Grid(column: 5),
             ColumnTitle("Ports").Grid(column: 6),
-            SortTitle(SortColumn.Created, sort, onSort).Grid(column: 7));
+            compact ? Empty() : SortTitle(SortColumn.Cpu, sort, onSort, alignRight: true).Grid(column: 7),
+            SortTitle(SortColumn.Created, sort, onSort).Grid(column: 8));
 
     /// <summary>
     /// One container. <paramref name="project"/> not null: it belongs to that compose project and sits under the project's row,
     /// indented and named without the project in front (the tooltip keeps the whole name). Its checkbox
     /// and actions are disabled while not <paramref name="connected"/>; its actions also while one is in progress on it.
+    /// <paramref name="cpu"/> is its CPU column ("12.4%", or empty while it is not running), shown in the wide layout only.
     /// </summary>
-    public static Element Row(ContainerRow row, string? project, bool isChecked, bool connected, bool compact, ContainerListCallbacks callbacks)
+    public static Element Row(ContainerRow row, string? project, bool isChecked, bool connected, bool compact, string cpu, ContainerListCallbacks callbacks)
     {
         var indented = project is not null;
         var shownName = project is null ? row.Name : ComposeGrouping.NameInProject(row.Name, project);
@@ -151,8 +158,9 @@ internal static class ContainerRowView
             CellText(row.Image).Grid(column: 4),
             CellText(row.Status, statusColor).Grid(column: 5),
             Ports(row.Ports).Grid(column: 6),
-            CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 7),
-            ContainerParts.ActionButtons(actions, compact, row.Name, Run).Grid(column: 8))
+            compact ? Empty() : Component<CpuCell, CpuCellProps>(new(cpu)).Grid(column: 7),
+            CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 8),
+            ContainerParts.ActionButtons(actions, compact, row.Name, Run).Grid(column: 9))
             .WithContextFlyout(ContainerParts.ContextMenu(actions, Run));
     }
 
@@ -188,8 +196,8 @@ internal static class ContainerRowView
             SelectBox(checkedState, value => callbacks.SetChecked(all, value), "Select " + project).IsEnabled(connected).Grid(column: 0),
             chevron.Grid(column: 1),
             ContainerParts.StateMark(ContainerStatus.GroupShape(rows.Select(r => r.State).ToArray()), ContainerParts.StateColor(group.State), group.State.ToString(), busy: false).Grid(column: 2),
-            name.Grid(column: 3, columnSpan: 5),
-            ContainerParts.ActionButtons(actions, compact, project, Run).Grid(column: 8))
+            name.Grid(column: 3, columnSpan: 6),
+            ContainerParts.ActionButtons(actions, compact, project, Run).Grid(column: 9))
             .WithContextFlyout(ContainerParts.ContextMenu(actions, Run));
     }
 
@@ -221,13 +229,13 @@ internal static class ContainerRowView
     /// descending). Its accessible name says the state ("Name, sorted ascending"). The negative margin keeps the text in line with
     /// the column's cells while the button keeps its padding for the hover background.
     /// </summary>
-    private static Element SortTitle(SortColumn column, ContainerSort sort, Action<SortColumn> onSort)
+    private static Element SortTitle(SortColumn column, ContainerSort sort, Action<SortColumn> onSort, bool alignRight = false)
     {
         var sorted = sort.Column == column;
         // A stack, not a flex row: a flex row takes the whole width it is offered, which would stretch the button over the cell.
         var content = HStack(
             4,
-            Caption(column.ToString()).Foreground(sorted ? Theme.PrimaryText : Theme.SecondaryText).VAlign(VerticalAlignment.Center),
+            Caption(ContainerSort.Title(column)).Foreground(sorted ? Theme.PrimaryText : Theme.SecondaryText).VAlign(VerticalAlignment.Center),
             sorted ? Widgets.Glyph(sort.Descending ? Glyphs.ArrowDown : Glyphs.ArrowUp, size: 12, color: Theme.PrimaryText).VAlign(VerticalAlignment.Center) : Empty());
 
         var button = Button(content, () => onSort(column))
@@ -236,7 +244,11 @@ internal static class ContainerRowView
             .AutomationName(sort.AccessibleName(column))
             .Padding(8, 4, 8, 4);
 
-        return button.Margin(-8, 0, 0, 0).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
+        // A number column is right-aligned: the title's text ends where the cells' text ends, 28 from the column's edge (the
+        // button's padding is 8 of it), which leaves a gap before the next column's text.
+        return alignRight
+            ? button.Margin(0, 0, 20, 0).HAlign(HorizontalAlignment.Right).VAlign(VerticalAlignment.Center)
+            : button.Margin(-8, 0, 0, 0).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
     }
 
     /// <summary>One line of text that ends in an ellipsis when it does not fit (the body style wraps by default, which would make rows uneven).</summary>
@@ -265,4 +277,21 @@ internal static class ContainerRowView
             .VAlign(VerticalAlignment.Center)
             .Margin(0, 0, 12, 0);
     }
+}
+
+/// <summary>A row's CPU figure: "12.4%", or empty.</summary>
+internal sealed record CpuCellProps(string Text);
+
+/// <summary>
+/// A row's CPU cell, right-aligned. A component, so the list's renders once a second (as list stats arrive) change only the cells
+/// whose figure changed.
+/// </summary>
+internal sealed class CpuCell : Component<CpuCellProps>
+{
+    public override Element Render() =>
+        Body(Props.Text)
+            .TextWrapping(TextWrapping.NoWrap)
+            .HAlign(HorizontalAlignment.Right)
+            .VAlign(VerticalAlignment.Center)
+            .Margin(0, 0, 28, 0);
 }

@@ -1,3 +1,4 @@
+using Berth.Engine.Models;
 using Berth.Presentation;
 
 namespace Berth.Tests.Presentation;
@@ -101,6 +102,59 @@ public sealed class ContainerSortTests
     [InlineData("Ports", false, SortColumn.Name, false)]
     [InlineData("7", false, SortColumn.Name, false)]
     [InlineData("Name,Image", false, SortColumn.Name, false)]
+    [InlineData("cpu", true, SortColumn.Cpu, true)]
     public void Reading_a_saved_sort_falls_back_to_the_default_for_what_is_missing_or_unknown(string? column, bool? descending, SortColumn expectedColumn, bool expectedDescending) =>
         Assert.Equal(new ContainerSort(expectedColumn, expectedDescending), ContainerSort.Read(column, descending));
+
+    private static StatsSample Cpu(double percent) => new(DateTimeOffset.UnixEpoch, percent, 0, 0, 0, 0, 0, 0, 1);
+
+    private static readonly IReadOnlyList<ContainerGroup> Busy =
+    [
+        Single(Row("a")),
+        Single(Row("b")),
+        Single(Row("c", state: RowState.Stopped)),
+        Single(Row("d")),
+        Project("shop", Row("shop-web"), Row("shop-db")),
+    ];
+
+    private static readonly Dictionary<string, StatsSample> BusyStats = new()
+    {
+        ["a-id"] = Cpu(5),
+        ["b-id"] = Cpu(50),
+        ["c-id"] = Cpu(99), // stopped: a sample left over does not count
+        ["shop-web-id"] = Cpu(20),
+        ["shop-db-id"] = Cpu(1),
+    };
+
+    [Fact]
+    public void Cpu_sorts_highest_first_on_the_first_click_and_lowest_first_on_the_second()
+    {
+        var first = ContainerSort.Default.Toggle(SortColumn.Cpu);
+
+        Assert.Equal(new ContainerSort(SortColumn.Cpu, true), first);
+        Assert.Equal(new ContainerSort(SortColumn.Cpu, false), first.Toggle(SortColumn.Cpu));
+        Assert.Equal(new ContainerSort(SortColumn.Name, false), first.Toggle(SortColumn.Name));
+    }
+
+    [Fact]
+    public void Cpu_descending_puts_the_busiest_first_and_the_rows_without_a_figure_last() =>
+        // d runs but has no sample yet and c is stopped: neither has a figure, so both come last, by name.
+        Assert.Equal(["b", "[shop]", "shop-web", "shop-db", "a", "c", "d"], Names(new ContainerSort(SortColumn.Cpu, true).Apply(Busy, BusyStats)));
+
+    [Fact]
+    public void Cpu_ascending_puts_the_rows_without_a_figure_first() =>
+        Assert.Equal(["c", "d", "[shop]", "shop-db", "shop-web", "a", "b"], Names(new ContainerSort(SortColumn.Cpu, false).Apply(Busy, BusyStats)));
+
+    [Fact]
+    public void Cpu_without_stats_sorts_by_name() =>
+        Assert.Equal(["a", "b", "c", "d", "[shop]", "shop-db", "shop-web"], Names(new ContainerSort(SortColumn.Cpu, true).Apply(Busy)));
+
+    [Fact]
+    public void The_cpu_column_is_titled_with_its_unit()
+    {
+        Assert.Equal("CPU (%)", ContainerSort.Title(SortColumn.Cpu));
+        Assert.Equal("Name", ContainerSort.Title(SortColumn.Name));
+        Assert.Equal("CPU (%), not sorted", ContainerSort.Default.AccessibleName(SortColumn.Cpu));
+        Assert.Equal("CPU (%), sorted descending", ContainerSort.Default.Toggle(SortColumn.Cpu).AccessibleName(SortColumn.Cpu));
+    }
 }

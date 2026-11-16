@@ -145,7 +145,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 LoadErrorBar(mine?.LoadError),
                 tabStrip,
-                Content(mine, row is not null, tab, setLogsClaimEscape).Flex(grow: 1, basis: 0),
+                Content(mine, row is not null, tab, setLogsClaimEscape, state.Info?.MemoryBytes ?? 0).Flex(grow: 1, basis: 0),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -173,7 +173,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     /// The chosen tab, once the container has been read; a ring until then. Each tab is a component whose props are what it shows, so
     /// it renders again only when that changes, not on every batch of log lines.
     /// </summary>
-    private static Element Content(DetailState? detail, bool listed, int tab, Action<bool> logsClaimEscape)
+    private static Element Content(DetailState? detail, bool listed, int tab, Action<bool> logsClaimEscape, long machineMemory)
     {
         if (detail?.Details is null)
         {
@@ -186,7 +186,8 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         {
             1 => Component<InspectTab, InspectTabProps>(new(detail.Details, detail.RawJson ?? "")),
             2 => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
-            3 => StatsTab.Render(detail),
+            3 => Component<StatsTab, StatsTabProps>(new(
+                detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, detail.Details.CpuLimit, machineMemory)),
             _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs, logsClaimEscape)),
         };
     }

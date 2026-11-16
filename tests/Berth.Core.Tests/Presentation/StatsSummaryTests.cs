@@ -40,4 +40,49 @@ public sealed class StatsSummaryTests
     [Fact]
     public void Without_stats_or_engine_info_everything_is_zero() =>
         Assert.Equal(new StatsTotals(0, 0, 0, 0), StatsSummary.Totals(EngineState.Initial));
+
+    [Theory]
+    [InlineData(1.4, 8, "1.4% / 800% (8 CPUs)")]
+    [InlineData(12.44, 8, "12.4% / 800% (8 CPUs)")]
+    [InlineData(0, 1, "0.0% / 100% (1 CPU)")]
+    [InlineData(1.4, 0, "1.4%")]
+    public void The_cpu_figure_is_out_of_every_cpu_of_the_engine(double cpu, int cpus, string text) =>
+        Assert.Equal(text, StatsSummary.CpuText(new StatsTotals(cpu, cpus, 0, 0)));
+
+    [Fact]
+    public void The_memory_figure_is_out_of_the_engines_memory()
+    {
+        Assert.Equal("988 MB / 7.47 GB", StatsSummary.MemoryText(new StatsTotals(0, 8, 988L << 20, (long)(7.47 * (1L << 30)))));
+        Assert.Equal("988 MB", StatsSummary.MemoryText(new StatsTotals(0, 0, 988L << 20, 0)));
+    }
+
+    private static ContainerRow Row(string id, RowState state) =>
+        new(id, id, id, "nginx", state, "", [], DateTimeOffset.UnixEpoch, null);
+
+    private static readonly Dictionary<string, StatsSample> Latest = new()
+    {
+        ["web"] = Sample(12.44, 0),
+        ["old"] = Sample(3, 0),
+    };
+
+    [Fact]
+    public void A_running_row_shows_its_cpu_with_one_decimal()
+    {
+        Assert.Equal(12.44, StatsSummary.CpuOf(Row("web", RowState.Running), Latest));
+        Assert.Equal("12.4%", StatsSummary.CpuCell(Row("web", RowState.Running), Latest));
+    }
+
+    [Theory]
+    [InlineData("old", RowState.Stopped)]
+    [InlineData("old", RowState.Paused)]
+    [InlineData("new", RowState.Running)]
+    public void A_row_that_is_not_running_or_has_no_sample_yet_shows_no_cpu(string id, RowState state)
+    {
+        Assert.Null(StatsSummary.CpuOf(Row(id, state), Latest));
+        Assert.Equal("", StatsSummary.CpuCell(Row(id, state), Latest));
+    }
+
+    [Fact]
+    public void Without_stats_no_row_shows_cpu() =>
+        Assert.Equal("", StatsSummary.CpuCell(Row("web", RowState.Running), null));
 }

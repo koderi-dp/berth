@@ -1,3 +1,4 @@
+using Berth.Engine.Models;
 using Berth.Session;
 
 namespace Berth.Presentation;
@@ -26,4 +27,31 @@ public static class StatsSummary
 
         return new StatsTotals(cpu, state.Info?.Cpus ?? 0, memory, state.Info?.MemoryBytes ?? 0);
     }
+
+    /// <summary>
+    /// The list's CPU figure: "1.4% / 800% (8 CPUs)", out of every CPU of the engine (100% each); just "1.4%" before the engine's
+    /// info is read.
+    /// </summary>
+    public static string CpuText(StatsTotals totals) =>
+        totals.Cpus > 0
+            ? $"{Percent(totals.CpuPercent)} / {totals.Cpus * 100}% ({totals.Cpus} {(totals.Cpus == 1 ? "CPU" : "CPUs")})"
+            : Percent(totals.CpuPercent);
+
+    /// <summary>The list's memory figure: "988 MB / 7.47 GB", out of the engine's memory; just "988 MB" before its info is read.</summary>
+    public static string MemoryText(StatsTotals totals) =>
+        totals.MemoryLimitBytes > 0
+            ? $"{ByteFormat.Bytes(totals.MemoryBytes)} / {ByteFormat.Bytes(totals.MemoryLimitBytes)}"
+            : ByteFormat.Bytes(totals.MemoryBytes);
+
+    /// <summary>A row's CPU in percent of one CPU, or null when it is not running or has no sample yet.</summary>
+    public static double? CpuOf(ContainerRow row, IReadOnlyDictionary<string, StatsSample>? stats) =>
+        row.State == RowState.Running && stats is not null && stats.TryGetValue(row.Id, out var sample) ? sample.CpuPercent : null;
+
+    /// <summary>A row's CPU column: "12.4%", or empty when it has no figure (<see cref="CpuOf"/>).</summary>
+    public static string CpuCell(ContainerRow row, IReadOnlyDictionary<string, StatsSample>? stats) =>
+        CpuOf(row, stats) is { } cpu ? Percent(cpu) : "";
+
+    /// <summary>A CPU percentage with one decimal: "12.4%".</summary>
+    public static string Percent(double value) =>
+        (double.IsNaN(value) || value < 0 ? 0 : value).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "%";
 }

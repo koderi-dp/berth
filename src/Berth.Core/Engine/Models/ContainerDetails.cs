@@ -46,7 +46,14 @@ public sealed record ContainerDetails(
     IReadOnlyList<PortMapping> Ports,
     IReadOnlyList<NetworkAttachment> Networks,
     string RestartPolicy,
-    string Platform);
+    string Platform)
+{
+    /// <summary>
+    /// How many CPUs the container may use (<c>--cpus</c>, or <c>--cpu-quota</c> over <c>--cpu-period</c>), or null when it has no
+    /// CPU limit.
+    /// </summary>
+    public double? CpuLimit { get; init; }
+}
 
 /// <summary>A container's inspect answer: the mapped <see cref="Details"/> and the engine's whole answer, indented.</summary>
 public sealed record ContainerInspection(ContainerDetails Details, string RawJson);

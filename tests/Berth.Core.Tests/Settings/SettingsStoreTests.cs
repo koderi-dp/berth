@@ -37,6 +37,20 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_cpu_sort_round_trips()
+    {
+        var store = new SettingsStore(_directory, null);
+        var saved = new AppSettings(
+            [new ConnectionProfile("one", "Local", TransportKind.Tcp, "h", 2375, "", null)],
+            "one",
+            new ContainerListOptions(RunningOnly: false, new ContainerSort(SortColumn.Cpu, Descending: true)));
+
+        store.Save(saved);
+
+        Assert.Equal(saved.ContainerList, new SettingsStore(_directory, null).Load().Settings.ContainerList);
+    }
+
+    [Fact]
     public void Save_then_load_round_trips()
     {
         var store = new SettingsStore(_directory, null);
@@ -68,6 +82,8 @@ public sealed class SettingsStoreTests : IDisposable
     [InlineData("""{ "runningOnly": true, "sort": { "descending": true } }""", SortColumn.Name, true)]
     [InlineData("""{ "runningOnly": true, "sort": { "column": "Ports", "descending": true } }""", SortColumn.Name, true)]
     [InlineData("""{ "runningOnly": true, "sort": null }""", SortColumn.Name, false)]
+    [InlineData("""{ "runningOnly": true, "sort": { "column": "Cpu", "descending": true } }""", SortColumn.Cpu, true)]
+    [InlineData("""{ "runningOnly": true, "sort": { "column": "cpu" } }""", SortColumn.Cpu, false)]
     public void A_missing_or_unknown_sort_reads_as_the_default_and_keeps_the_rest(string containerList, SortColumn column, bool descending)
     {
         File.WriteAllText(SettingsFile, $$"""{ "connections": [ { "id": "one", "name": "Build host", "kind": "Tcp", "host": "build-host" } ], "containerList": {{containerList}} }""");
