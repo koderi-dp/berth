@@ -105,7 +105,7 @@ public sealed partial class EngineSessionTests
         h.Session.Dispatch(new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:a", ["a:1", "a:2", "a:3"])]));
         h.Session.Dispatch(new RemoveRequested(ResourceKind.Volumes, [new RemovalItem("data")]));
         h.Session.Dispatch(new RemoveRequested(ResourceKind.Networks, [new RemovalItem("n1")]));
-        h.Session.Dispatch(new CreateVolumeRequested("berth-it-v"));
+        h.Session.Dispatch(new CreateVolumeRequested(1, "berth-it-v"));
         var state = await h.WaitFor(s =>
             s.Images.Removal is { IsRunning: false } && s.Volumes.Removal is { IsRunning: false } && s.Networks.Removal is { IsRunning: false }
             && s.Volumes.Pending.IsEmpty);
@@ -126,16 +126,16 @@ public sealed partial class EngineSessionTests
         await h.ConnectAsync();
         await AllWantedAsync(h);
 
-        h.Session.Dispatch(new CreateVolumeRequested("berth-it-v"));
+        h.Session.Dispatch(new CreateVolumeRequested(1, "berth-it-v"));
         var created = await h.WaitFor(s => s.VolumeCreate is { Status: VolumeCreateStatus.Created });
         Assert.Equal("berth-it-v", created.VolumeCreate!.Name);
 
-        h.Session.Dispatch(new VolumeCreateDismissed());
+        h.Session.Dispatch(new VolumeCreateDismissed(1));
         api.Fail("CreateVolume", new EngineException(500, "error while creating volume root path: file name too long"));
-        h.Session.Dispatch(new CreateVolumeRequested("berth-it-w"));
+        h.Session.Dispatch(new CreateVolumeRequested(2, "berth-it-w"));
         var refused = await h.WaitFor(s => s.VolumeCreate is { Status: VolumeCreateStatus.Refused });
 
-        Assert.Equal(new VolumeCreate("berth-it-w", VolumeCreateStatus.Refused, "error while creating volume root path: file name too long"), refused.VolumeCreate);
+        Assert.Equal(new VolumeCreate(2, "berth-it-w", VolumeCreateStatus.Refused, "error while creating volume root path: file name too long"), refused.VolumeCreate);
         Assert.Null(refused.ActionError);
     }
 
@@ -338,7 +338,7 @@ public sealed partial class EngineSessionTests
         await h.ConnectAsync();
         var request = new ContainerCreateRequest("alpine", "berth-it-x", ["A=1"], [], []);
 
-        h.Session.Dispatch(new RunContainerRequested(request));
+        h.Session.Dispatch(new RunContainerRequested(1, request));
         var state = await h.WaitFor(s => s.Run?.Status == RunStatus.Started);
 
         Assert.Equal("c9", state.Run!.ContainerId);
@@ -355,7 +355,7 @@ public sealed partial class EngineSessionTests
         await using var h = Harness.With(api);
         await h.ConnectAsync();
 
-        h.Session.Dispatch(new RunContainerRequested(new ContainerCreateRequest("alpine", null, [], [], [])));
+        h.Session.Dispatch(new RunContainerRequested(1, new ContainerCreateRequest("alpine", null, [], [], [])));
         var state = await h.WaitFor(s => s.Run?.Status == RunStatus.StartFailed);
 
         Assert.Equal("c9", state.Run!.ContainerId);
@@ -371,7 +371,7 @@ public sealed partial class EngineSessionTests
         await using var h = Harness.With(api);
         await h.ConnectAsync();
 
-        h.Session.Dispatch(new RunContainerRequested(new ContainerCreateRequest("nope", null, [], [], [])));
+        h.Session.Dispatch(new RunContainerRequested(1, new ContainerCreateRequest("nope", null, [], [], [])));
         var state = await h.WaitFor(s => s.Run?.Status == RunStatus.Failed);
 
         Assert.Equal("No such image: nope:latest", state.Run!.Error);

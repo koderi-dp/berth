@@ -44,22 +44,23 @@ internal sealed class RunDialog : EngineStateComponent<RunDialogProps>
         var (volumeKeys, updateVolumeKeys) = UseReducer(ImmutableList.Create(0));
         var (envKeys, updateEnvKeys) = UseReducer(ImmutableList.Create(0));
         var nextKey = UseRef(1);
-        var (sent, setSent) = UseState(false);
+        // The request of the last Run (0 before the first) and the session it went to.
+        var (sentTo, setSentTo) = UseState((Request: 0, Session: 0));
         var (open, setOpen) = UseState(true);
         var target = UseRef<string?>(null);
-        // From the click until the session has taken the run: the run result before the click, so a second click or Enter in between
-        // sends nothing (the reducer drops a second run only once the first is under way).
-        var asked = UseRef<(bool Waiting, ContainerRun? Before)>((false, null));
+        // From the click until the run has ended, so a second click or Enter before the dialog renders again sends nothing.
+        var asked = UseRef(false);
         var outcomeView = this.UseElementRef<FrameworkElement>();
 
         var connected = state.Status == ConnectionStatus.Connected;
         var inspect = state.ImageInspect is { } read && read.Id == imageId ? read : null;
         var inspection = inspect?.Inspection;
-        var run = sent ? state.Run : null;
-        var runInProgress = state.Run?.Status == RunStatus.InProgress;
-
-        // A result of an earlier dialog is no longer wanted (one still in progress is left alone).
-        UseEffect(() => AppServices.Current.Session.Dispatch(new RunDismissed()), Array.Empty<object>());
+        // The session's entry for this dialog's request only, which is always answered. A switch of connection replaces the session,
+        // and the new one never heard of the request: it is interrupted.
+        var request = sentTo.Request;
+        var run = request == 0 ? null
+            : sentTo.Session != AppServices.Current.SessionNumber ? new ContainerRun(request, image, RunStatus.Interrupted, null, null)
+            : state.Run is { } current && current.RequestId == request ? current : null;
 
         // Read the image when the dialog opens, and again after the connection changed (which forgets the read).
         var unread = inspect is null;
@@ -99,17 +100,21 @@ internal sealed class RunDialog : EngineStateComponent<RunDialogProps>
 
         var published = UseMemo(() => RunDraft.PublishedPorts(state.Containers), state.Containers);
         var errors = draft.Validate(published);
-        if (asked.Current.Waiting && (!connected || (!ReferenceEquals(state.Run, asked.Current.Before) && !runInProgress)))
-            asked.Current = (false, null);
-        var canRun = connected && errors.IsValid && !runInProgress && started is null && inspect is { IsLoading: false } && !asked.Current.Waiting;
+        if (asked.Current && run is { Status: not RunStatus.InProgress })
+            asked.Current = false;
+        var canRun = connected && errors.IsValid && started is null && inspect is { IsLoading: false } && !asked.Current;
 
         void Run()
         {
-            if (!canRun || asked.Current.Waiting)
+            if (!canRun || asked.Current)
                 return;
-            asked.Current = (true, AppServices.Current.Session.State.Run);
-            setSent(true);
-            AppServices.Current.Session.Dispatch(new RunContainerRequested(draft.ToRequest()));
+            asked.Current = true;
+            var session = AppServices.Current.Session;
+            if (request != 0)
+                session.Dispatch(new RunDismissed(request));
+            var next = AppServices.Current.NextRequestId();
+            setSentTo((next, AppServices.Current.SessionNumber));
+            session.Dispatch(new RunContainerRequested(next, draft.ToRequest()));
         }
 
         void OpenCreated(string id)
@@ -171,7 +176,8 @@ internal sealed class RunDialog : EngineStateComponent<RunDialogProps>
                 {
                     var session = AppServices.Current.Session;
                     session.Dispatch(new ImageInspectDismissed());
-                    session.Dispatch(new RunDismissed());
+                    if (request != 0)
+                        session.Dispatch(new RunDismissed(request));
                     Props.OnDone(target.Current);
                 },
             })

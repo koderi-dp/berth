@@ -158,12 +158,26 @@ public sealed class VolumeAndNetworkPageTests
     }
 
     [Fact]
-    public void Create_waits_while_another_create_is_under_way_and_not_after_it_ended()
+    public void Create_does_not_wait_for_a_create_of_another_name_still_under_way()
     {
         var state = StateWith(volumes: [Volume("data")]);
 
-        Assert.False(VolumeRows.CanCreate("new", state with { VolumeCreate = new VolumeCreate("other", VolumeCreateStatus.InProgress, null) }));
-        Assert.True(VolumeRows.CanCreate("new", state with { VolumeCreate = new VolumeCreate("other", VolumeCreateStatus.Refused, "no") }));
+        Assert.True(VolumeRows.CanCreate("new", state with { VolumeCreate = new VolumeCreate(1, "other", VolumeCreateStatus.InProgress) }));
+        Assert.True(VolumeRows.CanCreate("new", Pending(state, ResourceKind.Volumes, "other", ItemAction.Create)));
+    }
+
+    [Theory]
+    [InlineData(VolumeCreateStatus.InProgress, null)]
+    [InlineData(VolumeCreateStatus.Created, null)]
+    [InlineData(VolumeCreateStatus.Refused, "volume name is already in use")]
+    [InlineData(VolumeCreateStatus.Interrupted, VolumeRows.CreateInterruptedText)]
+    [InlineData(VolumeCreateStatus.NotConnected, "Not sent: Berth is not connected to the engine. Try again once it is.")]
+    [InlineData(VolumeCreateStatus.NameBusy, "Not sent: a volume named data is being created or removed.")]
+    public void A_create_that_ended_without_a_volume_says_why(VolumeCreateStatus status, string? text)
+    {
+        var error = status == VolumeCreateStatus.Refused ? "volume name is already in use" : null;
+
+        Assert.Equal(text, VolumeRows.CreateFailure(new VolumeCreate(1, "data", status, error)));
     }
 
     [Fact]

@@ -18,6 +18,7 @@ internal sealed class AppServices
     private AppSettings _settings;
     private EngineSession _session;
     private ContainerDetailSession? _detail;
+    private int _requests;
 
     private AppServices(SettingsStore store)
     {
@@ -66,6 +67,9 @@ internal sealed class AppServices
     public ContainerDetailSession? Detail => Volatile.Read(ref _detail);
 
     public event Action? DetailChanged;
+
+    /// <summary>A number for a dialog's request to the session (a volume create, a run), unique for this run of the app.</summary>
+    public int NextRequestId() => Interlocked.Increment(ref _requests);
 
     /// <summary>
     /// Opens a detail session for <paramref name="containerId"/> on the current connection and starts reading it, in place of the one

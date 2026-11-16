@@ -35,7 +35,7 @@ public enum ContainerAction { Start, Stop, Restart, Pause, Unpause, Remove }
 /// </param>
 /// <param name="Ticket">The last generation handed to an image, volume, network or disk use read, a pull or an image inspect.</param>
 /// <param name="ImageInspect">The image read for the run dialog or Inspect, until dismissed; null when none, and after any change of connection.</param>
-/// <param name="VolumeCreate">The create volume dialog's create and how it ended, until dismissed; null when none, and after any change of connection.</param>
+/// <param name="VolumeCreate">The create volume dialog's last request and how it ended, until dismissed; null when none.</param>
 public sealed record EngineState(
     ConnectionStatus Status,
     EngineVersion? Version,

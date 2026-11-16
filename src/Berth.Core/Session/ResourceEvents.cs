@@ -39,16 +39,16 @@ public sealed record RemoveItemFinished(ResourceKind Kind, RemovalItem Item, Rem
 public sealed record RemovalDismissed(ResourceKind Kind) : SessionEvent;
 
 /// <summary>
-/// Create a volume named <paramref name="Name"/> for the create dialog (<see cref="EngineState.VolumeCreate"/>). Ignored while not
-/// connected, while another create is under way, or while that name is pending.
+/// Create a volume named <paramref name="Name"/> for the create dialog's request <paramref name="RequestId"/>. Always answered in
+/// <see cref="EngineState.VolumeCreate"/> under that request: under way, or not sent while not connected or while that name is pending.
 /// </summary>
-public sealed record CreateVolumeRequested(string Name) : SessionEvent;
+public sealed record CreateVolumeRequested(int RequestId, string Name) : SessionEvent;
 
 /// <summary>
-/// The create dialog closed: forget how its create ended. A create still under way is left to finish, and a refusal of it then goes to the
-/// app's error bar.
+/// The create dialog is done with its request <paramref name="RequestId"/> (closed, or about to ask again): forget how it ended. A create
+/// still under way is left to finish; a refusal of it then goes to the app's error bar.
 /// </summary>
-public sealed record VolumeCreateDismissed : SessionEvent;
+public sealed record VolumeCreateDismissed(int RequestId) : SessionEvent;
 
 public sealed record VolumeCreated(string Name) : SessionEvent;
 
@@ -97,18 +97,22 @@ public sealed record ImageInspectFailed(int Generation, string Message, bool Eng
 /// <summary>The run dialog or the Inspect dialog closed: forget the image read.</summary>
 public sealed record ImageInspectDismissed : SessionEvent;
 
-/// <summary>Create a container from <paramref name="Request"/> and start it. Ignored while another run is in progress.</summary>
-public sealed record RunContainerRequested(ContainerCreateRequest Request) : SessionEvent;
+/// <summary>
+/// Create a container from <paramref name="Request"/> and start it, for the run dialog's request <paramref name="RequestId"/>. Always
+/// answered in <see cref="EngineState.Run"/> under that request: in progress, or not sent while not connected. Replaces an earlier run,
+/// whose results are dropped from then on.
+/// </summary>
+public sealed record RunContainerRequested(int RequestId, ContainerCreateRequest Request) : SessionEvent;
 
-/// <summary>The container was created; starting it comes next.</summary>
-public sealed record RunCreated(string ContainerId) : SessionEvent;
+/// <summary>The container of the run <paramref name="RequestId"/> was created; starting it comes next.</summary>
+public sealed record RunCreated(int RequestId, string ContainerId) : SessionEvent;
 
-/// <summary>The container was created and started.</summary>
-public sealed record RunSucceeded(string ContainerId) : SessionEvent;
+/// <summary>The container of the run <paramref name="RequestId"/> was created and started.</summary>
+public sealed record RunSucceeded(int RequestId, string ContainerId) : SessionEvent;
 
 /// <param name="CreatedId">The new container's ID when the create went through and the start failed; null when the create failed.</param>
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record RunFailed(string? CreatedId, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record RunFailed(int RequestId, string? CreatedId, string Message, bool EngineUnreachable) : SessionEvent;
 
-/// <summary>The run dialog is done with the result (closed, or the app opened the new container). Ignored while the run is in progress.</summary>
-public sealed record RunDismissed : SessionEvent;
+/// <summary>The run dialog is done with its request <paramref name="RequestId"/> (closed, or the app opened the new container): forget it.</summary>
+public sealed record RunDismissed(int RequestId) : SessionEvent;

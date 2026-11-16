@@ -643,92 +643,142 @@ public sealed partial class SessionReducerTests
         var disconnected = WithImages() with { Status = ConnectionStatus.Disconnected };
 
         Assert.Same(disconnected, Reduce(disconnected, new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:b")])).State);
-        Assert.Same(disconnected, Reduce(disconnected, new CreateVolumeRequested("v")).State);
         Assert.Same(disconnected, Reduce(disconnected, new PullRequested("nginx")).State);
-        Assert.Same(disconnected, Reduce(disconnected, new RunContainerRequested(RunRequest)).State);
         Assert.Same(disconnected, Reduce(disconnected, new DiskUsageRequested()).State);
     }
 
     [Fact]
     public void Create_volume_is_pending_under_its_name_and_reloads_the_volumes_when_done()
     {
-        var (creating, effects) = Reduce(WithVolumes(), new CreateVolumeRequested("berth-check-vol"));
+        var (creating, effects) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "berth-check-vol"));
 
         Assert.Equal(ItemAction.Create, creating.Volumes.Pending["berth-check-vol"]);
-        Assert.Equal(new VolumeCreate("berth-check-vol", VolumeCreateStatus.InProgress, null), creating.VolumeCreate);
+        Assert.Equal(new VolumeCreate(1, "berth-check-vol", VolumeCreateStatus.InProgress), creating.VolumeCreate);
         Assert.Equal([new CreateVolumeEffect("berth-check-vol")], effects);
 
         var (state, doneEffects) = Reduce(creating, new VolumeCreated("berth-check-vol"));
         Assert.Empty(state.Volumes.Pending);
-        Assert.Equal(new VolumeCreate("berth-check-vol", VolumeCreateStatus.Created, null), state.VolumeCreate);
+        Assert.Equal(new VolumeCreate(1, "berth-check-vol", VolumeCreateStatus.Created), state.VolumeCreate);
         Assert.Equal([new ScheduleResourceReloadEffect(ResourceKind.Volumes, SessionReducer.ReloadDebounce)], doneEffects);
     }
 
     [Fact]
     public void A_refused_volume_create_keeps_the_engine_message_for_the_dialog_and_not_on_the_error_bar()
     {
-        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("data"));
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "data"));
 
         var (state, _) = Reduce(creating, new VolumeCreateFailed("data", "volume name is already in use", EngineUnreachable: false));
 
-        Assert.Equal(new VolumeCreate("data", VolumeCreateStatus.Refused, "volume name is already in use"), state.VolumeCreate);
+        Assert.Equal(new VolumeCreate(1, "data", VolumeCreateStatus.Refused, "volume name is already in use"), state.VolumeCreate);
         Assert.Null(state.ActionError);
         Assert.Empty(state.Volumes.Pending);
     }
 
     [Fact]
-    public void A_second_volume_create_while_one_is_under_way_is_dropped()
+    public void A_create_request_while_not_connected_is_answered_not_sent()
     {
-        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+        var disconnected = WithVolumes() with { Status = ConnectionStatus.Disconnected };
 
-        var (again, effects) = Reduce(creating, new CreateVolumeRequested("two"));
+        var (state, effects) = Reduce(disconnected, new CreateVolumeRequested(4, "data"));
 
-        Assert.Same(creating, again);
+        Assert.Equal(new VolumeCreate(4, "data", VolumeCreateStatus.NotConnected), state.VolumeCreate);
+        Assert.Empty(state.Volumes.Pending);
         Assert.Empty(effects);
     }
 
     [Fact]
-    public void A_volume_create_outcome_is_dismissed_and_a_new_create_can_start()
+    public void A_create_request_for_a_name_being_created_or_removed_is_answered_not_sent()
     {
-        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "data"));
+        var (removing, _) = Reduce(WithVolumes(), new RemoveRequested(ResourceKind.Volumes, [new RemovalItem("logs")]));
+
+        var (again, againEffects) = Reduce(creating, new CreateVolumeRequested(2, "data"));
+        var (taken, takenEffects) = Reduce(removing, new CreateVolumeRequested(3, "logs"));
+
+        Assert.Equal(new VolumeCreate(2, "data", VolumeCreateStatus.NameBusy), again.VolumeCreate);
+        Assert.Equal(ItemAction.Create, again.Volumes.Pending["data"]);
+        Assert.Empty(againEffects);
+        Assert.Equal(new VolumeCreate(3, "logs", VolumeCreateStatus.NameBusy), taken.VolumeCreate);
+        Assert.Equal(ItemAction.Remove, taken.Volumes.Pending["logs"]);
+        Assert.Empty(takenEffects);
+    }
+
+    [Fact]
+    public void A_volume_create_outcome_is_dismissed_only_by_its_own_request()
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "one"));
         var (refused, _) = Reduce(creating, new VolumeCreateFailed("one", "refused", EngineUnreachable: false));
 
-        var (dismissed, _) = Reduce(refused, new VolumeCreateDismissed());
+        Assert.Same(refused, Reduce(refused, new VolumeCreateDismissed(2)).State);
+        var (dismissed, _) = Reduce(refused, new VolumeCreateDismissed(1));
         Assert.Null(dismissed.VolumeCreate);
 
-        var (next, effects) = Reduce(dismissed, new CreateVolumeRequested("two"));
-        Assert.Equal(new VolumeCreate("two", VolumeCreateStatus.InProgress, null), next.VolumeCreate);
+        var (next, effects) = Reduce(dismissed, new CreateVolumeRequested(2, "two"));
+        Assert.Equal(new VolumeCreate(2, "two", VolumeCreateStatus.InProgress), next.VolumeCreate);
         Assert.Equal([new CreateVolumeEffect("two")], effects);
     }
 
     [Fact]
-    public void A_volume_create_whose_dialog_closed_sends_a_refusal_to_the_error_bar()
+    public void A_new_request_after_the_same_name_was_refused_never_reads_the_old_refusal()
     {
-        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
-        var (unattended, _) = Reduce(creating, new VolumeCreateDismissed());
-        Assert.Equal(new VolumeCreate("one", VolumeCreateStatus.InProgress, null, Unattended: true), unattended.VolumeCreate);
-        Assert.Same(unattended, Reduce(unattended, new CreateVolumeRequested("two")).State);
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "data"));
+        var (refused, _) = Reduce(creating, new VolumeCreateFailed("data", "refused", EngineUnreachable: false));
 
-        var (refused, _) = Reduce(unattended, new VolumeCreateFailed("one", "refused", EngineUnreachable: false));
-        Assert.Null(refused.VolumeCreate);
+        // The dialog asks again before its dismiss of the first request has been reduced.
+        var (again, effects) = Reduce(refused, new CreateVolumeRequested(2, "data"));
+        Assert.Same(again, Reduce(again, new VolumeCreateDismissed(1)).State);
+
+        Assert.Equal(new VolumeCreate(2, "data", VolumeCreateStatus.InProgress), again.VolumeCreate);
+        Assert.Equal([new CreateVolumeEffect("data")], effects);
+    }
+
+    [Fact]
+    public void A_volume_create_whose_dialog_closed_sends_a_refusal_to_the_error_bar_and_does_not_block_another_create()
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "one"));
+        var (unattended, _) = Reduce(creating, new VolumeCreateDismissed(1));
+        Assert.Null(unattended.VolumeCreate);
+        Assert.Equal(ItemAction.Create, unattended.Volumes.Pending["one"]);
+
+        var (second, secondEffects) = Reduce(unattended, new CreateVolumeRequested(2, "two"));
+        Assert.Equal(new VolumeCreate(2, "two", VolumeCreateStatus.InProgress), second.VolumeCreate);
+        Assert.Equal([new CreateVolumeEffect("two")], secondEffects);
+
+        var (refused, _) = Reduce(second, new VolumeCreateFailed("one", "refused", EngineUnreachable: false));
+        Assert.Equal(new VolumeCreate(2, "two", VolumeCreateStatus.InProgress), refused.VolumeCreate);
         Assert.Equal("refused", refused.ActionError);
+        Assert.False(refused.Volumes.Pending.ContainsKey("one"));
 
         var (created, _) = Reduce(unattended, new VolumeCreated("one"));
         Assert.Null(created.VolumeCreate);
         Assert.Null(created.ActionError);
+        Assert.Empty(created.Volumes.Pending);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void A_change_of_connection_drops_the_volume_create(bool lost)
+    public void A_change_of_connection_interrupts_the_volume_create(bool lost)
     {
-        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "one"));
 
         var (state, _) = Reduce(creating, lost ? new ConnectionLost("connection reset") : new ConnectRequested());
 
-        Assert.Null(state.VolumeCreate);
+        Assert.Equal(new VolumeCreate(1, "one", VolumeCreateStatus.Interrupted), state.VolumeCreate);
         Assert.Same(state, Reduce(state, new VolumeCreated("one")).State);
+        Assert.Null(Reduce(state, new VolumeCreateDismissed(1)).State.VolumeCreate);
+    }
+
+    [Fact]
+    public void A_connection_started_over_and_back_before_any_render_still_ends_the_create()
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested(1, "one"));
+
+        var (over, _) = Reduce(creating, new ConnectRequested());
+        var (back, _) = Reduce(over, new ConnectSucceeded(Version, Info));
+
+        Assert.Equal(ConnectionStatus.Connected, back.Status);
+        Assert.Equal(new VolumeCreate(1, "one", VolumeCreateStatus.Interrupted), back.VolumeCreate);
     }
 
     // Disk use
@@ -1037,103 +1087,119 @@ public sealed partial class SessionReducerTests
     // Running a container
 
     [Fact]
-    public void Run_container_creates_and_starts_once_at_a_time()
+    public void Run_container_creates_and_starts_and_a_later_request_replaces_the_run()
     {
         var connected = Connected();
 
-        var (running, effects) = Reduce(connected, new RunContainerRequested(RunRequest));
+        var (running, effects) = Reduce(connected, new RunContainerRequested(1, RunRequest));
 
-        Assert.Equal(new ContainerRun("alpine", RunStatus.InProgress, null, null), running.Run);
-        Assert.Equal([new RunContainerEffect(RunRequest)], effects);
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.InProgress, null, null), running.Run);
+        Assert.Equal([new RunContainerEffect(1, RunRequest)], effects);
 
-        var (again, againEffects) = Reduce(running, new RunContainerRequested(RunRequest with { Name = "other" }));
-        Assert.Same(running, again);
-        Assert.Empty(againEffects);
+        var other = RunRequest with { Name = "other" };
+        var (again, againEffects) = Reduce(running, new RunContainerRequested(2, other));
+        Assert.Equal(new ContainerRun(2, "alpine", RunStatus.InProgress, null, null), again.Run);
+        Assert.Equal([new RunContainerEffect(2, other)], againEffects);
+
+        // The replaced run's results are dropped.
+        Assert.Same(again, Reduce(again, new RunCreated(1, "c1")).State);
+        Assert.Same(again, Reduce(again, new RunSucceeded(1, "c1")).State);
+        Assert.Same(again, Reduce(again, new RunFailed(1, null, "refused", false)).State);
+    }
+
+    [Fact]
+    public void A_run_request_while_not_connected_is_answered_not_sent()
+    {
+        var disconnected = Connected() with { Status = ConnectionStatus.Disconnected };
+
+        var (state, effects) = Reduce(disconnected, new RunContainerRequested(3, RunRequest));
+
+        Assert.Equal(new ContainerRun(3, "alpine", RunStatus.NotConnected, null, null), state.Run);
+        Assert.Empty(effects);
     }
 
     [Fact]
     public void A_started_container_carries_its_id_and_reloads_the_containers()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
 
-        var (state, effects) = Reduce(running, new RunSucceeded("c1"));
+        var (state, effects) = Reduce(running, new RunSucceeded(1, "c1"));
 
-        Assert.Equal(new ContainerRun("alpine", RunStatus.Started, "c1", null), state.Run);
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.Started, "c1", null), state.Run);
         Assert.Equal([new ScheduleReloadEffect(SessionReducer.ReloadDebounce)], effects);
     }
 
     [Fact]
     public void A_refused_create_keeps_the_engine_message_for_the_dialog()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
 
-        var (state, _) = Reduce(running, new RunFailed(null, "Conflict. The container name \"/berth-it-x\" is already in use", false));
+        var (state, _) = Reduce(running, new RunFailed(1, null, "Conflict. The container name \"/berth-it-x\" is already in use", false));
 
-        Assert.Equal(new ContainerRun("alpine", RunStatus.Failed, null, "Conflict. The container name \"/berth-it-x\" is already in use"), state.Run);
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.Failed, null, "Conflict. The container name \"/berth-it-x\" is already in use"), state.Run);
         Assert.Null(state.ActionError);
     }
 
     [Fact]
     public void A_start_that_fails_after_the_create_says_the_container_exists_with_its_id()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
 
-        var (state, effects) = Reduce(running, new RunFailed("c1", "driver failed programming external connectivity: port is already allocated", false));
+        var (state, effects) = Reduce(running, new RunFailed(1, "c1", "driver failed programming external connectivity: port is already allocated", false));
 
         Assert.Equal(
-            new ContainerRun("alpine", RunStatus.StartFailed, "c1", "driver failed programming external connectivity: port is already allocated"),
+            new ContainerRun(1, "alpine", RunStatus.StartFailed, "c1", "driver failed programming external connectivity: port is already allocated"),
             state.Run);
         Assert.Equal([new ScheduleReloadEffect(SessionReducer.ReloadDebounce)], effects);
     }
 
     [Fact]
-    public void A_run_result_is_dismissed_but_not_while_in_progress()
+    public void A_run_is_dismissed_only_by_its_own_request_in_any_status()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
-        Assert.Same(running, Reduce(running, new RunDismissed()).State);
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
+        Assert.Same(running, Reduce(running, new RunDismissed(2)).State);
 
-        var (failed, _) = Reduce(running, new RunFailed(null, "No such image: alpine", false));
-        var (state, _) = Reduce(failed, new RunDismissed());
+        var (gone, _) = Reduce(running, new RunDismissed(1));
+        Assert.Null(gone.Run);
+        Assert.Same(gone, Reduce(gone, new RunSucceeded(1, "c1")).State);
 
-        Assert.Null(state.Run);
-        var (next, effects) = Reduce(state, new RunContainerRequested(RunRequest));
-        Assert.Equal(RunStatus.InProgress, next.Run?.Status);
-        Assert.Single(effects);
+        var (failed, _) = Reduce(running, new RunFailed(1, null, "No such image: alpine", false));
+        Assert.Null(Reduce(failed, new RunDismissed(1)).State.Run);
     }
 
     [Fact]
     public void Losing_the_connection_during_a_run_interrupts_it()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
 
         var (state, _) = Reduce(running, new ConnectionLost("connection reset"));
 
-        Assert.Equal(new ContainerRun("alpine", RunStatus.Interrupted, null, null), state.Run);
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.Interrupted, null, null), state.Run);
     }
 
     [Fact]
     public void Starting_the_connection_over_during_a_run_interrupts_it_and_keeps_the_created_id()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
-        var (created, effects) = Reduce(running, new RunCreated("c1"));
-        Assert.Equal(new ContainerRun("alpine", RunStatus.InProgress, "c1", null), created.Run);
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
+        var (created, effects) = Reduce(running, new RunCreated(1, "c1"));
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.InProgress, "c1", null), created.Run);
         Assert.Empty(effects);
 
         var (state, _) = Reduce(created, new ConnectRequested());
 
-        Assert.Equal(new ContainerRun("alpine", RunStatus.Interrupted, "c1", null), state.Run);
-        Assert.Null(Reduce(state, new RunDismissed()).State.Run);
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.Interrupted, "c1", null), state.Run);
+        Assert.Null(Reduce(state, new RunDismissed(1)).State.Run);
     }
 
     [Fact]
     public void A_run_that_cannot_reach_the_engine_moves_to_disconnected()
     {
-        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(1, RunRequest));
 
-        var (state, _) = Reduce(running, new RunFailed(null, "connection reset", true));
+        var (state, _) = Reduce(running, new RunFailed(1, null, "connection reset", true));
 
         Assert.Equal(ConnectionStatus.Disconnected, state.Status);
-        Assert.Equal(new ContainerRun("alpine", RunStatus.Failed, null, "connection reset"), state.Run);
+        Assert.Equal(new ContainerRun(1, "alpine", RunStatus.Failed, null, "connection reset"), state.Run);
     }
 
     /// <summary>Connected, with all three lists wanted and loaded.</summary>

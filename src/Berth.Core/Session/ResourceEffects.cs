@@ -33,4 +33,4 @@ public sealed record CancelPullEffect(string Reference) : SessionEffect;
 public sealed record InspectImageEffect(string Id, int Generation) : SessionEffect;
 
 /// <summary>Create a container, then start it; answers with RunSucceeded or RunFailed.</summary>
-public sealed record RunContainerEffect(ContainerCreateRequest Request) : SessionEffect;
+public sealed record RunContainerEffect(int RequestId, ContainerCreateRequest Request) : SessionEffect;

@@ -115,7 +115,7 @@ public sealed partial class EngineIntegrationTests
             session.Dispatch(new ConnectRequested());
             await WaitForAsync(session, s => s.Status == ConnectionStatus.Connected);
 
-            session.Dispatch(new RunContainerRequested(new ContainerCreateRequest(
+            session.Dispatch(new RunContainerRequested(1, new ContainerCreateRequest(
                 "alpine:latest", name, ["BERTH_IT=1"], [new PortBinding(80, "tcp", "127.0.0.1", null)], ["/tmp:/host-tmp:ro"], ["sleep", "300"])));
             var state = await WaitForAsync(session, s => s.Run is { Status: not RunStatus.InProgress });
 

@@ -152,19 +152,31 @@ public static partial class VolumeRows
         : null;
 
     /// <summary>
-    /// Whether Create can send <paramref name="name"/>: not empty, no <see cref="NameError"/>, connected, no other create under way and
-    /// not being created already.
+    /// Whether Create can send <paramref name="name"/>: not empty, no <see cref="NameError"/>, connected, and that name not being
+    /// created or removed.
     /// </summary>
     public static bool CanCreate(string name, EngineState state) =>
         name.Length > 0
         && NameError(name, state) is null
         && state.Status == ConnectionStatus.Connected
-        && state.VolumeCreate?.Status != VolumeCreateStatus.InProgress
         && !state.Volumes.Pending.ContainsKey(name);
 
-    /// <summary>What the create dialog says when the connection changed before its create ended (the session forgets the create then).</summary>
+    /// <summary>What the create dialog says when the connection changed before its create ended.</summary>
     public const string CreateInterruptedText =
         "The connection to the engine changed before the create ended. The volume may have been created; look for it in the list.";
+
+    /// <summary>Why a create of the dialog ended without a volume; null while it is under way or once created.</summary>
+    public static string? CreateFailure(VolumeCreate create) => create.Status switch
+    {
+        VolumeCreateStatus.Refused => create.Error,
+        VolumeCreateStatus.Interrupted => CreateInterruptedText,
+        VolumeCreateStatus.NotConnected => NotConnectedText,
+        VolumeCreateStatus.NameBusy => $"Not sent: a volume named {create.Name} is being created or removed.",
+        _ => null,
+    };
+
+    /// <summary>What a dialog says when its request was not sent because Berth is not connected.</summary>
+    public const string NotConnectedText = "Not sent: Berth is not connected to the engine. Try again once it is.";
 
     /// <summary>Why the table is empty: no volumes at all, nothing matching the search, or nothing the filter keeps.</summary>
     public static string EmptyText(bool engineHasVolumes, UsageFilter filter) => filter.EmptyText("volumes", engineHasVolumes);

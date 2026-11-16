@@ -167,9 +167,9 @@ public sealed partial class EngineSession
         {
             var api = connection.Api!;
             created = await api.CreateContainerAsync(run.Request, ct).ConfigureAwait(false);
-            Post(new RunCreated(created), connection);
+            Post(new RunCreated(run.RequestId, created), connection);
             await api.StartContainerAsync(created, ct).ConfigureAwait(false);
-            result = new RunSucceeded(created);
+            result = new RunSucceeded(run.RequestId, created);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -178,7 +178,7 @@ public sealed partial class EngineSession
         catch (Exception ex)
         {
             Report(RunFailedReport, ex);
-            result = new RunFailed(created, ex.Message, IsUnreachable(ex));
+            result = new RunFailed(run.RequestId, created, ex.Message, IsUnreachable(ex));
         }
 
         Post(result, connection);
