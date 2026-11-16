@@ -61,8 +61,9 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   and a warning says so until it is closed. The first-run settings are saved at once.
 - **Log.** `berth.log` records start and exit, connection switches, a settings file set
   aside, and what failed: connecting, loading the list, the event stream, a container
-  action, a container page's inspect, log or stats stream, saving the settings, and
-  unexpected errors. A failure is logged by its exception type only, never its message, so
+  action, a container page's inspect, log or stats stream, reading a container for its run
+  command, a list stats stream, a copy to the clipboard, saving the settings, and unexpected
+  errors. A failure is logged by its exception type only, never its message, so
   the log holds no addresses, engine messages, secrets, environment values, container log
   lines or inspect data. Settings, "Open log folder" opens its folder.
 
@@ -75,6 +76,11 @@ In the order they are planned:
 3. Starting and stopping a local engine, a tray icon, a single instance, start with Windows.
 4. Files: browse, download and upload in a running container.
 5. SSH connections: password and key sign-in, host key prompt, Credential Manager.
+
+For a later polish pass:
+
+- Choosing and reordering the list's columns.
+- Charts above the containers list.
 
 ## Requirements
 
