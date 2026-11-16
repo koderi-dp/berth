@@ -52,6 +52,15 @@ internal sealed class SettingsPage : Component
                     ConnectionList(settings, profile => setEditor(new EditorRequest(profile)), setDeleting),
                     Button("Add connection", () => setEditor(new EditorRequest(null))).HAlign(HorizontalAlignment.Left)),
                 Section(
+                    "Windows",
+                    ToggleSwitch(
+                            settings.Tray.KeepRunningWhenClosed,
+                            on => Apply(current => current with { Tray = current.Tray with { KeepRunningWhenClosed = on } }),
+                            header: "Keep running in the tray when the window is closed")
+                        .AutomationName("Keep running in the tray when the window is closed")
+                        .AutomationId("keep-running-in-tray"),
+                    Component<StartWithWindowsSwitch>()),
+                Section(
                     "Diagnostics",
                     Button("Open log folder", OpenLogFolder).HAlign(HorizontalAlignment.Left)),
                 editorElement,
