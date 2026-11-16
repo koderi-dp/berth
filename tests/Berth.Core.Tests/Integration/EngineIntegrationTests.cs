@@ -11,7 +11,7 @@ namespace Berth.Tests.Integration;
 /// Runs Berth's client and session against the engine at <c>BERTH_ENGINE</c>. Each container a test needs is a throwaway named
 /// <c>berth-it-…</c>, made with the docker CLI and removed in <c>finally</c>; nothing else on the engine is touched.
 /// </summary>
-public sealed class EngineIntegrationTests
+public sealed partial class EngineIntegrationTests
 {
     /// <summary>A safety net so an engine that stops answering fails the test instead of hanging the run.</summary>
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(60);

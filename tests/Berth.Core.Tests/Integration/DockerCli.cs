@@ -43,6 +43,25 @@ internal sealed class DockerCli(string engineAddress)
             throw new InvalidOperationException($"docker volume rm -f {name} failed ({exitCode}): {error}");
     }
 
+    /// <summary>Removes the network if it exists. Used in <c>finally</c>, so a missing network is not an error.</summary>
+    public async Task RemoveNetworkAsync(string name)
+    {
+        var (exitCode, _, error) = await ExecuteAsync(["network", "rm", name]);
+        if (exitCode != 0 && !error.Contains("not found", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"docker network rm {name} failed ({exitCode}): {error}");
+    }
+
+    /// <summary>
+    /// Removes the image tag if it exists, never forced, so only the tag goes while another tag names the image. Used in <c>finally</c>,
+    /// so a missing tag is not an error.
+    /// </summary>
+    public async Task RemoveTagAsync(string tag)
+    {
+        var (exitCode, _, error) = await ExecuteAsync(["image", "rm", tag]);
+        if (exitCode != 0 && !error.Contains("No such image", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"docker image rm {tag} failed ({exitCode}): {error}");
+    }
+
     /// <summary>Runs the CLI and returns its trimmed output; a non-zero exit throws with what the CLI wrote to stderr.</summary>
     public async Task<string> RunAsync(params string[] arguments)
     {
