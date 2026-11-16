@@ -138,6 +138,52 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
+    public void No_retry_runs_while_a_stop_runs()
+    {
+        var (stopping, _) = Reduce(WithControl(Connected()), new EngineCommandRequested(EngineCommand.Stop));
+        var (lost, _) = Reduce(stopping, new ConnectionLost("The engine closed the connection."));
+
+        var (next, effects) = Reduce(lost, new RetryDue());
+
+        Assert.Same(lost, next);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void A_stop_that_fails_after_the_connection_was_lost_reconnects_at_once()
+    {
+        var (stopping, _) = Reduce(WithControl(Connected()), new EngineCommandRequested(EngineCommand.Stop));
+        var (lost, _) = Reduce(stopping, new ConnectionLost("The engine closed the connection."));
+
+        var (next, effects) = Reduce(lost, new EngineCommandExited(EngineCommand.Stop, 1, "no"));
+
+        Assert.Equal(ConnectionStatus.Connecting, next.Status);
+        Assert.Equal([new ConnectEffect()], effects);
+        Assert.NotNull(next.EngineControl.Failure);
+    }
+
+    [Fact]
+    public void Stopped_from_berth_is_carried_over_to_the_session_of_an_edited_connection()
+    {
+        var (next, effects) = Reduce(WithControl(EngineState.Initial), new EngineStoppedCarriedOver());
+
+        Assert.True(next.EngineControl.StoppedByBerth);
+        Assert.Equal(ConnectionStatus.Disconnected, next.Status);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void Stopped_is_not_carried_over_to_a_connection_without_engine_control_or_once_connecting()
+    {
+        var plain = EngineState.Initial;
+        var (connecting, _) = Reduce(WithControl(EngineState.Initial), new ConnectRequested());
+
+        Assert.Same(plain, Reduce(plain, new EngineStoppedCarriedOver()).State);
+        Assert.Same(connecting, Reduce(connecting, new EngineStoppedCarriedOver()).State);
+    }
+
+
+    [Fact]
     public void Retry_after_a_stop_connects_again_and_ends_the_pause()
     {
         var (stopping, _) = Reduce(WithControl(Connected()), new EngineCommandRequested(EngineCommand.Stop));

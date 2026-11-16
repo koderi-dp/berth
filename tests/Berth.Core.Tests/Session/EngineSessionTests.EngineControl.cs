@@ -163,7 +163,30 @@ public sealed class EngineSessionEngineControlTests
     }
 
     [Fact]
-    public async Task Disposing_the_session_ends_a_command_still_running_and_reports_nothing()
+    public async Task Disposing_the_session_leaves_a_running_command_to_finish_and_drops_its_result()
+    {
+        var control = new FakeEngineControl();
+        var h = new Harness(Refusing, control);
+        var changes = 0;
+        h.Session.StateChanged += _ => Interlocked.Increment(ref changes);
+
+        h.Session.Dispatch(new EngineCommandRequested(EngineCommand.Stop));
+        var token = await control.Entered.Task.WaitAsync(Patience);
+        await h.DisposeAsync().AsTask().WaitAsync(Patience);
+
+        // The command belongs to the connection it was started for: disposing does not end it.
+        Assert.False(token.IsCancellationRequested);
+        var before = Volatile.Read(ref changes);
+        control.Answer.SetResult(new EngineCommandResult(0, ""));
+        await Task.Delay(100);
+
+        Assert.Equal(before, Volatile.Read(ref changes));
+        Assert.Equal(EngineCommand.Stop, h.Session.State.EngineControl.Running);
+        Assert.DoesNotContain(h.Errors, e => e.What.Contains("engine command", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task After_disposal_the_command_is_still_ended_at_the_time_limit()
     {
         var control = new FakeEngineControl();
         var h = new Harness(Refusing, control);
@@ -171,8 +194,20 @@ public sealed class EngineSessionEngineControlTests
         h.Session.Dispatch(new EngineCommandRequested(EngineCommand.Start));
         var token = await control.Entered.Task.WaitAsync(Patience);
         await h.DisposeAsync().AsTask().WaitAsync(Patience);
+        h.Time.Advance(SessionReducer.EngineCommandTimeout);
 
         Assert.True(token.IsCancellationRequested);
-        Assert.DoesNotContain(h.Errors, e => e.What.Contains("engine command", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Stopped_from_berth_carried_over_keeps_the_new_session_from_connecting()
+    {
+        var control = new FakeEngineControl();
+        await using var h = new Harness(() => new FakeEngineApi(), control);
+
+        h.Session.Dispatch(new EngineStoppedCarriedOver());
+        var state = await h.WaitFor(s => s.EngineControl.StoppedByBerth);
+
+        Assert.Equal(ConnectionStatus.Disconnected, state.Status);
     }
 }

@@ -57,8 +57,11 @@ public static partial class SessionReducer
                     },
                     [new StopStreamsEffect(), new ConnectEffect()]);
 
-            // Not while the engine is stopped on purpose: a connect could start a socket-activated engine again.
-            case RetryDue when state.Status == ConnectionStatus.Disconnected && !state.EngineControl.StoppedByBerth:
+            // Not while the engine is stopped on purpose, nor while a stop runs: a connect could start a socket-activated engine
+            // again (between its two units, for one). A stop that fails connects again at once.
+            case RetryDue when state.Status == ConnectionStatus.Disconnected
+                               && !state.EngineControl.StoppedByBerth
+                               && state.EngineControl.Running != EngineCommand.Stop:
                 return (state with { Status = ConnectionStatus.Connecting }, [new ConnectEffect()]);
 
             case ConnectSucceeded success when connecting:

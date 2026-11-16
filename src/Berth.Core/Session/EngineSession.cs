@@ -124,7 +124,8 @@ public sealed partial class EngineSession : IAsyncDisposable
 
         _retryTimer?.Dispose();
         Retire();
-        await Task.WhenAll(_retiring.Append(EndEngineCommandAsync())).ConfigureAwait(false);
+        // An engine command still running is not waited for: it runs to its end or its limit (EngineSession.EngineControl).
+        await Task.WhenAll(_retiring).ConfigureAwait(false);
         _lifetime.Dispose();
     }
 

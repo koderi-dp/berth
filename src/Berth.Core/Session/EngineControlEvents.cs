@@ -6,6 +6,12 @@ public sealed record EngineCommandRequested(EngineCommand Command) : SessionEven
 /// <summary>The command exited with <paramref name="ExitCode"/>; <paramref name="Output"/> is the end of what it wrote, never logged.</summary>
 public sealed record EngineCommandExited(EngineCommand Command, int ExitCode, string Output) : SessionEvent;
 
+/// <summary>
+/// The session replaces one for the same connection, edited without a change of address, whose engine Berth had stopped: the stop
+/// still holds, so the new session does not connect until Start engine or Retry. Ignored without engine control or once connecting.
+/// </summary>
+public sealed record EngineStoppedCarriedOver : SessionEvent;
+
 /// <summary>The command's program could not be started; <paramref name="Message"/> says why, as Windows said it.</summary>
 public sealed record EngineCommandNotStarted(EngineCommand Command, string Message) : SessionEvent;
 

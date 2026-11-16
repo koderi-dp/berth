@@ -27,6 +27,11 @@ public static partial class SessionReducer
                     state with { EngineControl = control with { Running = request.Command, Failure = null } },
                     [new RunEngineCommandEffect(request.Command)]);
 
+            case EngineStoppedCarriedOver:
+                if (!control.Available || state.Status != ConnectionStatus.Disconnected || control.StoppedByBerth)
+                    return (state, None);
+                return (state with { EngineControl = control with { StoppedByBerth = true } }, None);
+
             case EngineCommandExited exited when control.Running == exited.Command:
                 if (exited.ExitCode != 0)
                     return Failed(state, new EngineCommandFailure(exited.Command, EngineCommandFailureKind.ExitCode, exited.ExitCode, exited.Output));
@@ -50,13 +55,19 @@ public static partial class SessionReducer
     /// The failure is kept for the disconnected view and the status bar; while connected the error bar shows it too, since the list is
     /// on screen instead.
     /// </summary>
-    private static (EngineState, ImmutableArray<SessionEffect>) Failed(EngineState state, EngineCommandFailure failure) => (
-        state with
+    private static (EngineState, ImmutableArray<SessionEffect>) Failed(EngineState state, EngineCommandFailure failure)
+    {
+        var next = state with
         {
             EngineControl = state.EngineControl with { Running = null, Failure = failure },
             ActionError = state.Status == ConnectionStatus.Connected ? failure.Message : state.ActionError,
-        },
-        None);
+        };
+
+        // Retries waited while the stop ran; the engine is presumably still up, so connect again now.
+        if (failure.Command == EngineCommand.Stop && state.Status == ConnectionStatus.Disconnected && !state.EngineControl.StoppedByBerth)
+            return Reduce(next, new ConnectRequested());
+        return (next, None);
+    }
 
     /// <summary>The engine was started: connect now (the pause after a stop ends), then retry quickly for a while.</summary>
     private static (EngineState, ImmutableArray<SessionEffect>) Started(EngineState state)
