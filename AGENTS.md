@@ -21,12 +21,21 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             settings when there are none), SettingsFile (the tolerant read shape and its checks),
                             SettingsJson, ConnectionEdits
   Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
-  Engine/                   EngineClient (IEngineApi): version negotiation, info, list, actions, event stream, inspect,
-                            logs (StreamLogsAsync), stats (StreamStatsAsync); EngineHttp, EngineJson (source-generated),
-                            ApiVersion, ConnectionTester, EngineTime, JsonLines (line-delimited JSON streams), LogFrames (the
-                            engine's multiplexed log framing), LogLines (frames or TTY text to LogLine), AnsiText (terminal
-                            output to plain text), StatsMath (CPU and memory from a raw stats line),
-                            Models/ (ContainerDetails/ContainerInspection, LogLine, StatsSample)
+  Engine/                   EngineClient (IEngineApi): version negotiation, info, list (with each container's mounts and
+                            network names), actions, create, event stream, inspect, logs (StreamLogsAsync), stats
+                            (StreamStatsAsync); images (list, inspect, remove, prune, pull as a stream of PullProgress),
+                            volumes (list, create, remove, prune of every unused one), networks (list, inspect with attached
+                            containers, remove, prune), disk usage (/system/df for images and volumes). Pulls, disk usage,
+                            prunes and streams have no deadline; other calls 30 s (stop and restart 90 s).
+                            EngineHttp, EngineJson (source-generated), ApiVersion, ConnectionTester, EngineTime, JsonLines
+                            (line-delimited JSON streams), LogFrames (the engine's multiplexed log framing), LogLines (frames
+                            or TTY text to LogLine), AnsiText (terminal output to plain text), StatsMath (CPU and memory from
+                            a raw stats line), ImageReference (a pull reference split into name and tag or digest, as the
+                            docker CLI does), DiskUsageMapping (/system/df to DiskUsage: the engine's totals from API 1.52,
+                            computed as the CLI does before),
+                            Models/ (ContainerSummary, ContainerDetails/ContainerInspection, ContainerCreateRequest/
+                            PortBinding, ImageSummary/ImageDetails/ImageDeleteResult/PullProgress, VolumeSummary,
+                            NetworkSummary/NetworkDetails/NetworkEndpoint, DiskUsage, PruneResult, LogLine, StatsSample)
   Text/                     text made from engine records for the user to paste: DockerRunCommand (the `docker run`
                             command of an inspected container, PowerShell or bash quoting; ShellKind)
   State/                    value types that more than one layer holds or reads: LogBuffer (last 10,000 lines),

@@ -56,13 +56,16 @@ public interface IEngineApi : IAsyncDisposable
     /// <summary>Removes an image, or one of its tags when it has several; the answer lists each tag removed and image deleted.</summary>
     Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct);
 
-    /// <summary>Removes the untagged images no container uses (<paramref name="danglingOnly"/>), or every image no container uses.</summary>
+    /// <summary>
+    /// Removes the untagged images no container uses (<paramref name="danglingOnly"/>), or every image no container uses. No
+    /// deadline: a prune can run for minutes.
+    /// </summary>
     Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct);
 
     /// <summary>
     /// Pulls an image, read with no deadline: one item per progress line the engine sends. A failure the engine reports in the
-    /// stream throws <see cref="EngineException"/> with its message. <paramref name="reference"/> is split by
-    /// <see cref="ImageReference.Parse"/> ("nginx" pulls nginx:latest).
+    /// stream throws <see cref="EngineException"/> with its message (or a fixed text when it sent none).
+    /// <paramref name="reference"/> is split by <see cref="ImageReference.Parse"/> ("nginx" pulls nginx:latest).
     /// </summary>
     IAsyncEnumerable<PullProgress> PullImageAsync(string reference, CancellationToken ct);
 
@@ -72,7 +75,7 @@ public interface IEngineApi : IAsyncDisposable
 
     Task RemoveVolumeAsync(string name, bool force, CancellationToken ct);
 
-    /// <summary>Removes every volume no container uses, named or anonymous.</summary>
+    /// <summary>Removes every volume no container uses, named or anonymous. No deadline: a prune can run for minutes.</summary>
     Task<PruneResult> PruneVolumesAsync(CancellationToken ct);
 
     Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct);
@@ -82,7 +85,10 @@ public interface IEngineApi : IAsyncDisposable
 
     Task RemoveNetworkAsync(string id, CancellationToken ct);
 
-    /// <summary>Removes every network no container uses (the engine never removes its own bridge, host and none).</summary>
+    /// <summary>
+    /// Removes every network no container uses (the engine never removes its own bridge, host and none). No deadline: a prune can
+    /// run for minutes.
+    /// </summary>
     Task<PruneResult> PruneNetworksAsync(CancellationToken ct);
 
     /// <summary>The disk use of images and volumes, read with no deadline (the engine can take long on a large store).</summary>

@@ -21,6 +21,7 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, Gate> _gates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ContainerInspection> _inspections = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ImageDetails> _images = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ScriptedStream<PullProgress>> _pullsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NetworkDetails> _networks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _cancelledWaiters = new(StringComparer.Ordinal);
@@ -184,6 +185,12 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>The pull stream: push progress lines, end it, or fail it (an error line or a dropped connection).</summary>
     public ScriptedStream<PullProgress> Pulls { get; } = new();
 
+    /// <summary>
+    /// The pull stream of <paramref name="reference"/> alone. Once asked for (before the pull starts), pulls of that reference read
+    /// from it instead of <see cref="Pulls"/>, so two pulls at once can be scripted apart.
+    /// </summary>
+    public ScriptedStream<PullProgress> PullOf(string reference) => _pullsOf.GetOrAdd(reference, _ => new ScriptedStream<PullProgress>());
+
     public IReadOnlyList<VolumeSummary> Volumes { get; set; } = [];
 
     public IReadOnlyList<NetworkSummary> Networks { get; set; } = [];
@@ -229,12 +236,16 @@ internal sealed class FakeEngineApi : IEngineApi
         return Prune;
     }
 
-    /// <summary>Opens after any hold or failure set for "Pull", then yields what the test pushes into <see cref="Pulls"/>.</summary>
+    /// <summary>
+    /// Opens after any hold or failure set for "Pull", then yields what the test pushes into <see cref="PullOf"/> that reference, or
+    /// else into <see cref="Pulls"/>.
+    /// </summary>
     public async IAsyncEnumerable<PullProgress> PullImageAsync(string reference, [EnumeratorCancellation] CancellationToken ct)
     {
         var entry = $"Pull {reference}";
         await EnterAsync("Pull", entry, ct);
-        await foreach (var line in ReadAsync(Pulls, entry, ct))
+        var source = _pullsOf.TryGetValue(reference, out var own) ? own : Pulls;
+        await foreach (var line in ReadAsync(source, entry, ct))
             yield return line;
     }
 

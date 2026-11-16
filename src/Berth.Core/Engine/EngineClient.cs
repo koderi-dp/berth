@@ -14,14 +14,16 @@ using Berth.Engine.Models;
 namespace Berth.Engine;
 
 /// <summary>
-/// The typed client for the Docker Engine API. Plain calls time out after 30 seconds, stop and restart after 90; streams, a pull
-/// and disk usage have no deadline. A timeout or an engine that cannot be reached throws <see cref="EngineException"/> with
+/// The typed client for the Docker Engine API. Plain calls time out after 30 seconds, stop and restart after 90; streams, a pull,
+/// disk usage and the prunes have no deadline. A timeout or an engine that cannot be reached throws <see cref="EngineException"/> with
 /// status 0. Disposing the client disposes the handler.
 /// </summary>
 public sealed class EngineClient : IEngineApi
 {
-    private static readonly TimeSpan PlainTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan LongTimeout = TimeSpan.FromSeconds(90);
+
+    /// <summary>The API from which <c>/system/df</c> takes <c>verbose</c> and then leaves out its older lists.</summary>
+    private static readonly ApiVersion DiskUsageVerboseSince = new(1, 52);
 
     private readonly HttpClient _http;
     private string? _prefix;
@@ -34,6 +36,9 @@ public sealed class EngineClient : IEngineApi
             Timeout = Timeout.InfiniteTimeSpan,
         };
     }
+
+    /// <summary>The deadline of a plain call: 30 seconds. Tests shorten it to show which calls have none, without waiting.</summary>
+    internal TimeSpan PlainTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>The API version later calls use; null until <see cref="ConnectAsync"/> succeeds.</summary>
     public ApiVersion? Negotiated { get; private set; }
@@ -228,7 +233,7 @@ public sealed class EngineClient : IEngineApi
     {
         var filters = Uri.EscapeDataString($$"""{"dangling":["{{(danglingOnly ? "true" : "false")}}"]}""");
         var path = Versioned($"/images/prune?filters={filters}");
-        using var response = await SendAsync(HttpMethod.Post, path, PlainTimeout, ct).ConfigureAwait(false);
+        using var response = await OpenStreamAsync(HttpMethod.Post, path, ct).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.WireImagePrune, ct).ConfigureAwait(false);
         var deleted = wire.ImagesDeleted?.Select(d => d.Deleted).OfType<string>().ToList() ?? [];
         return new PruneResult(deleted, wire.SpaceReclaimed);
@@ -257,8 +262,7 @@ public sealed class EngineClient : IEngineApi
 
             if (line.Error is not null || line.ErrorDetail is not null)
             {
-                var message = string.IsNullOrWhiteSpace(line.ErrorDetail?.Message) ? line.Error ?? "" : line.ErrorDetail.Message;
-                throw new EngineException((int)response.StatusCode, message);
+                throw new EngineException((int)response.StatusCode, PullError(line));
             }
 
             yield return new PullProgress(line.Id ?? "", line.Status ?? "", line.ProgressDetail?.Current, line.ProgressDetail?.Total);
@@ -287,7 +291,7 @@ public sealed class EngineClient : IEngineApi
     {
         // Without the "all" filter the engine removes only anonymous volumes.
         var path = Versioned($"/volumes/prune?filters={Uri.EscapeDataString("""{"all":["true"]}""")}");
-        using var response = await SendAsync(HttpMethod.Post, path, PlainTimeout, ct).ConfigureAwait(false);
+        using var response = await OpenStreamAsync(HttpMethod.Post, path, ct).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.WireVolumePrune, ct).ConfigureAwait(false);
         return new PruneResult(wire.VolumesDeleted ?? [], wire.SpaceReclaimed);
     }
@@ -312,18 +316,21 @@ public sealed class EngineClient : IEngineApi
 
     public async Task<PruneResult> PruneNetworksAsync(CancellationToken ct)
     {
-        using var response = await SendAsync(HttpMethod.Post, Versioned("/networks/prune"), PlainTimeout, ct).ConfigureAwait(false);
+        using var response = await OpenStreamAsync(HttpMethod.Post, Versioned("/networks/prune"), ct).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.WireNetworkPrune, ct).ConfigureAwait(false);
         return new PruneResult(wire.NetworksDeleted ?? [], 0);
     }
 
     /// <summary>
     /// Reads the disk use of images and volumes with no deadline (only those two kinds are asked for: build cache is the slow one).
-    /// An engine from API 1.52 on sends its own totals; for an older one they are computed as the docker CLI does.
+    /// From API 1.52 the engine is asked with <c>verbose</c>, so it sends each item once, inside its own totals; an older engine
+    /// sends only the lists, and the totals are computed as the docker CLI does.
     /// </summary>
     public async Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct)
     {
-        using var response = await OpenStreamAsync(HttpMethod.Get, Versioned("/system/df?type=image&type=volume"), ct).ConfigureAwait(false);
+        var verbose = Negotiated?.CompareTo(DiskUsageVerboseSince) >= 0 ? "&verbose=true" : "";
+        var path = Versioned($"/system/df?type=image&type=volume{verbose}");
+        using var response = await OpenStreamAsync(HttpMethod.Get, path, ct).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.WireDiskUsage, ct).ConfigureAwait(false);
         return DiskUsageMapping.From(wire);
     }
@@ -453,6 +460,12 @@ public sealed class EngineClient : IEngineApi
 
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
+
+    /// <summary>The message of a pull's error line: its details, else its error text, else a fixed text.</summary>
+    private static string PullError(WirePullLine line) =>
+        !string.IsNullOrWhiteSpace(line.ErrorDetail?.Message) ? line.ErrorDetail.Message
+        : !string.IsNullOrWhiteSpace(line.Error) ? line.Error
+        : "The engine reported an error while pulling the image.";
 
     /// <summary>Image tags or digests without the "&lt;none&gt;" placeholders older engines report for an untagged image.</summary>
     private static List<string> Named(List<string>? names) =>

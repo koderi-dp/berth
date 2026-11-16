@@ -129,6 +129,21 @@ public sealed class EnginePullTests
         Assert.Equal("manifest unknown", error.Message);
     }
 
+    [Theory]
+    [InlineData("""{"errorDetail":{}}""")]
+    [InlineData("""{"errorDetail":{"message":""},"error":""}""")]
+    [InlineData("""{"error":"  "}""")]
+    public async Task An_error_line_without_a_message_throws_a_fixed_text(string line)
+    {
+        var body = new ChunkStream().Write(line + "\n").End();
+        var (client, _) = await ConnectedAsync(stub => stub.On(Path, body));
+        await using var _client = client;
+
+        var error = await Assert.ThrowsAsync<EngineException>(() => ReadAllAsync(client.PullImageAsync("alpine:3.19", CancellationToken.None)));
+
+        Assert.Equal("The engine reported an error while pulling the image.", error.Message);
+    }
+
     [Fact]
     public async Task A_malformed_line_is_skipped()
     {
