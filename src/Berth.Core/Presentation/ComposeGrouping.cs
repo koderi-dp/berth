@@ -83,18 +83,30 @@ public static class ComposeGrouping
 
     private static ContainerRow Row(ContainerSummary container, ImmutableDictionary<string, ContainerAction> pending)
     {
-        var shortId = container.Id.Length > ShortIdLength ? container.Id[..ShortIdLength] : container.Id;
-        var name = container.Names.Count > 0 ? container.Names[0].TrimStart('/') : "";
         return new ContainerRow(
             container.Id,
-            shortId,
-            name.Length > 0 ? name : shortId,
+            ShortId(container.Id),
+            NameOf(container),
             container.Image,
             State(container.State),
             container.Status,
             PortFormat.Links(container.Ports),
             DateTimeOffset.FromUnixTimeSeconds(container.Created),
             pending.TryGetValue(container.Id, out var action) ? action : null);
+    }
+
+    /// <summary>A container's name without the engine's leading "/", or its short ID when it has none.</summary>
+    internal static string NameOf(ContainerSummary container)
+    {
+        var name = container.Names.Count > 0 ? container.Names[0].TrimStart('/') : "";
+        return name.Length > 0 ? name : ShortId(container.Id);
+    }
+
+    /// <summary>The first twelve characters of an ID, after any "sha256:" in front, as the docker CLI shows it.</summary>
+    internal static string ShortId(string id)
+    {
+        var hex = id.StartsWith("sha256:", StringComparison.Ordinal) ? id["sha256:".Length..] : id;
+        return hex.Length > ShortIdLength ? hex[..ShortIdLength] : hex;
     }
 
     private static RowState State(string state) => state switch

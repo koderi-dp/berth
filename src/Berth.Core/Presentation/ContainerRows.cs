@@ -19,7 +19,13 @@ public sealed record ContainerRow(
     string Status,
     IReadOnlyList<PortLink> Ports,
     DateTimeOffset Created,
-    ContainerAction? Pending);
+    ContainerAction? Pending) : ISelectableRow
+{
+    string ISelectableRow.Key => Id;
+
+    /// <inheritdoc/>
+    public bool IsPending => Pending is not null;
+}
 
 /// <summary>
 /// A compose project and its containers, or a single container that is not part of compose (<see cref="Project"/> null).

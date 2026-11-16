@@ -21,9 +21,7 @@ public static class ContainerSorting
 
         /// <summary>What a screen reader says for a column title: "Name, sorted ascending", or "Image, not sorted".</summary>
         public string AccessibleName(SortColumn column) =>
-            column != sort.Column ? $"{ContainerSort.Title(column)}, not sorted"
-            : sort.Descending ? $"{ContainerSort.Title(column)}, sorted descending"
-            : $"{ContainerSort.Title(column)}, sorted ascending";
+            SortText.AccessibleName(ContainerSort.Title(column), column == sort.Column, sort.Descending);
 
         /// <summary>
         /// The sort the table shows: a CPU sort shows as <see cref="ContainerSort.Default"/> while the CPU column is not shown (a narrow
@@ -70,20 +68,14 @@ public static class ContainerSorting
     private static IComparer<ContainerRow> RowComparer(ContainerSort sort, IReadOnlyDictionary<string, StatsSample>? stats) => sort.Column switch
     {
         SortColumn.Cpu => Comparer<ContainerRow>.Create((a, b) => ShownCpu(a, stats).CompareTo(ShownCpu(b, stats))),
-        SortColumn.Image => Comparer<ContainerRow>.Create((a, b) => CompareText(a.Image, b.Image)),
+        SortColumn.Image => Comparer<ContainerRow>.Create((a, b) => SortText.Compare(a.Image, b.Image)),
         SortColumn.Status => Comparer<ContainerRow>.Create((a, b) => StatusRank(a.State).CompareTo(StatusRank(b.State))),
         SortColumn.Created => Comparer<ContainerRow>.Create((a, b) => a.Created.CompareTo(b.Created)),
-        _ => Comparer<ContainerRow>.Create((a, b) => CompareText(a.Name, b.Name)),
+        _ => Comparer<ContainerRow>.Create((a, b) => SortText.Compare(a.Name, b.Name)),
     };
 
     private static double ShownCpu(ContainerRow row, IReadOnlyDictionary<string, StatsSample>? stats) =>
         StatsSummary.CpuOf(row, stats) is { } cpu ? Math.Round(cpu, 1, MidpointRounding.AwayFromZero) : -1;
-
-    private static int CompareText(string a, string b)
-    {
-        var ignoringCase = StringComparer.OrdinalIgnoreCase.Compare(a, b);
-        return ignoringCase != 0 ? ignoringCase : StringComparer.Ordinal.Compare(a, b);
-    }
 
     /// <summary>Running first, then restarting, paused, stopped: the more alive, the earlier.</summary>
     private static int StatusRank(RowState state) => state switch

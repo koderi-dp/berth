@@ -51,7 +51,11 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
-                            RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat; detail page: LogView, LogSearch,
+                            RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
+                            list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
+                            and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
+                            Confirmations (what a remove or prune sends and its dialog text), PullFigure (a pull's progress
+                            line), RunDraft (the run dialog's fields, checks and create request); detail page: LogView, LogSearch,
                             InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
                             and CPU column texts), DetailPage (the detail page's lifecycle: when it opens, closes, refreshes
                             or leaves its session, and which state its tabs show)
