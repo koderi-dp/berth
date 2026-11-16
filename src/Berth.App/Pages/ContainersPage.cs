@@ -107,13 +107,15 @@ internal sealed class ContainersPage : EngineStateComponent
             },
         ];
 
+        // Keyed: the connection bar and the bulk bar come and go, and unkeyed children are matched by position, so without keys the
+        // toolbar would be mounted again (with a new, empty search box) each time the connection drops or returns.
         var page = (FlexColumn(
-                Widgets.PageTitle("Containers").Flex(shrink: 0),
-                ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
-                Toolbar(setSearch, runningOnly, searchBox, setSearchFocused),
-                BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
-                Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
-                DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
+                Widgets.PageTitle("Containers").Flex(shrink: 0).WithKey("title"),
+                ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
+                Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused).WithKey("toolbar"),
+                BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks)?.WithKey("bulk"),
+                Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks).WithKey("table"),
+                DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)).WithKey("delete-dialog"))
             with
             {
                 RowGap = 16,
@@ -128,6 +130,13 @@ internal sealed class ContainersPage : EngineStateComponent
     {
         var ids = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
         return [.. visibleRows.Where(r => ids.Contains(r.Id))];
+    }
+
+    /// <summary>A newly mounted search box shows the search in use (setting it reports the same text back, which changes nothing).</summary>
+    private static void StartFrom(FrameworkElement control, string search)
+    {
+        if (control is TextBox box && box.Text != search)
+            box.Text = search;
     }
 
     /// <summary>Escape in the search box: empties it, which reports the empty search.</summary>
@@ -187,11 +196,13 @@ internal sealed class ContainersPage : EngineStateComponent
     /// <summary>
     /// The search box is uncontrolled: it owns its text and reports each change. A controlled box, whose text Reactor writes, drops
     /// the first edit after the page comes back from the navigation cache (Reactor waits for the echo of a write it made while the
-    /// page was out of the window), and the page is kept in that cache while a container's page or Settings shows.
+    /// page was out of the window), and the page is kept in that cache while a container's page or Settings shows. A box that is
+    /// mounted starts from <paramref name="search"/>, so the box and the filter cannot disagree.
     /// </summary>
-    private static Element Toolbar(Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
+    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
         (FlexRow(
                 TextBox(onChanged: setSearch, placeholderText: "Search")
+                    .OnMount(control => StartFrom(control, search))
                     .Ref(searchBox)
                     .AutomationId("search")
                     .AutomationName("Search")
