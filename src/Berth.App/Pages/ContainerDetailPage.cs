@@ -128,13 +128,23 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 AppServices.Current.Session.Dispatch(new ActionRequested(action.Ids, engineAction));
         }
 
+        // The page renders on every batch of log lines (ten a second while a log floods). The header and the tab strip are built again
+        // only when what they show changes; the header's "Running (52 minutes ago)" at most once a minute.
+        var inspected = mine?.Details?.State;
+        // One scalar for the rest of what the header shows: the minute, whether connected, whether compact.
+        var headerKey = (DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0);
+        var header = UseMemo(
+            () => row is null ? null : DetailHeader.Render(row, inspected, connected, compact, () => leave(null), Run),
+            row,
+            inspected,
+            headerKey);
+        var tabStrip = UseMemo(() => SelectorBar(Tabs, tab, setTab).AutomationId("detail-tabs").Flex(shrink: 0), tab);
+
         var page = (FlexColumn(
-                row is null
-                    ? null
-                    : DetailHeader.Render(row, mine?.Details?.State, connected, compact, () => leave(null), Run),
+                header,
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 LoadErrorBar(mine?.LoadError),
-                SelectorBar(Tabs, tab, setTab).AutomationId("detail-tabs").Flex(shrink: 0),
+                tabStrip,
                 Content(mine, row is not null, tab, setLogsClaimEscape).Flex(grow: 1, basis: 0),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
             with
