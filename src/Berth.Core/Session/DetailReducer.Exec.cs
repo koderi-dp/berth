@@ -43,7 +43,9 @@ public static partial class DetailReducer
                 }, None);
 
             case ExecFailed failed when failed.Generation == exec.Generation && exec.IsActive:
-                return (state with { Exec = exec with { Status = ExecStatus.Failed, ExecId = null, Error = failed.Message } }, None);
+                return (
+                    state with { Exec = exec with { Status = ExecStatus.Failed, ExecId = null, Error = failed.Message } },
+                    FailedShellNeedsCleanUp(state) ? [new CleanUpExecEffect(exec.Generation)] : None);
 
             case ExecStopRequested when exec.IsActive:
                 return (
@@ -82,6 +84,14 @@ public static partial class DetailReducer
         && !state.ConnectionLost
         && !state.Removed
         && state.Details?.State is { Running: true, Paused: false, Restarting: false };
+
+    /// <summary>
+    /// Whether a shell that failed (the terminal page died, the stream broke) needs <see cref="ExecCleanUp"/>: the engine keeps it as
+    /// it keeps one ended on purpose, so the same rule holds, but only once it ran. A failure while starting is the engine refusing
+    /// the create or the start, which left no process behind.
+    /// </summary>
+    private static bool FailedShellNeedsCleanUp(DetailState state) =>
+        state.Exec.Status == ExecStatus.Running && ShellNeedsCleanUp(state);
 
     /// <summary>No shell: what the old one still sends is dropped (its generation is passed).</summary>
     private static ExecState ResetExec(ExecState exec) => Cleared(exec) with { Generation = exec.Generation + 1 };

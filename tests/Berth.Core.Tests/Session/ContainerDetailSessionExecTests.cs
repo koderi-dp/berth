@@ -371,6 +371,36 @@ public sealed class ContainerDetailSessionExecTests
     }
 
     [Fact]
+    public async Task A_shell_whose_terminal_failed_is_cleaned_up_by_its_marker()
+    {
+        await using var h = new Harness();
+        var shell = await h.RunningAsync(attachSink: false);
+        h.Session.AttachExecOutput(new ThrowingSink(new InvalidOperationException("page gone")));
+
+        await shell.WriteOutputAsync("hello"u8.ToArray());
+        var run = await h.NextCleanUpAsync();
+
+        Assert.Equal("c", run.ContainerId);
+        Assert.Equal(ExecCleanUp.Command(h.MarkerOf(0)), run.Command);
+        Assert.Equal(ExecStatus.Failed, (await h.WaitFor(s => s.Exec.Status == ExecStatus.Failed)).Exec.Status);
+    }
+
+    [Fact]
+    public async Task A_shell_whose_stream_broke_is_cleaned_up_once_even_when_the_tab_then_stops_it()
+    {
+        var h = new Harness();
+        var shell = await h.RunningAsync();
+
+        shell.Fail(new IOException("An existing connection was forcibly closed by the remote host."));
+        await h.NextCleanUpAsync();
+        h.Session.StopExec();
+        await h.WaitFor(s => s.Exec.Status == ExecStatus.NotStarted);
+        await h.DisposeAsync();
+
+        Assert.Single(h.Api.Calls, c => c.StartsWith("RunDetachedExec", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task A_shell_that_ended_by_itself_is_not_cleaned_up()
     {
         var h = new Harness();

@@ -63,7 +63,7 @@ public sealed record StopExecEffect : DetailEffect;
 
 /// <summary>
 /// End what the shell of <see cref="Generation"/> left in the container (see <see cref="ExecCleanUp"/>): best effort, bounded, silent
-/// to the user. Follows the <see cref="StopExecEffect"/> of that shell.
+/// to the user. Follows the <see cref="StopExecEffect"/> of that shell, or its failure once it ran.
 /// </summary>
 public sealed record CleanUpExecEffect(int Generation) : DetailEffect;
 

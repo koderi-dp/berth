@@ -196,6 +196,43 @@ public sealed class DetailReducerExecTests
     }
 
     [Fact]
+    public void A_running_shell_that_failed_is_cleaned_up_like_one_ended_on_purpose()
+    {
+        // The terminal page died or the stream broke: the engine still keeps the shell and what it started.
+        var (state, effects) = Reduce(Running(), new ExecFailed(1, "broke"));
+
+        Assert.Equal(ExecStatus.Failed, state.Exec.Status);
+        Assert.Equal([new CleanUpExecEffect(1)], effects);
+    }
+
+    [Fact]
+    public void A_failed_shell_is_not_cleaned_up_where_a_stop_would_not_be()
+    {
+        var running = Running();
+        var details = running.Details!;
+        DetailState With(Func<ContainerStateDetails, ContainerStateDetails> change) => running with { Details = details with { State = change(details.State) } };
+
+        foreach (var state in new[]
+                 {
+                     With(s => s with { Running = false }),
+                     With(s => s with { Paused = true }),
+                     With(s => s with { Restarting = true }),
+                     running with { ConnectionLost = true },
+                     running with { Removed = true },
+                 })
+        {
+            Assert.Empty(Reduce(state, new ExecFailed(1, "broke")).Effects);
+        }
+    }
+
+    [Fact]
+    public void A_shell_that_failed_before_it_ran_has_nothing_to_clean_up()
+    {
+        // The create or start was refused: no process was started.
+        Assert.Empty(Reduce(Starting(), new ExecFailed(1, "container c is paused")).Effects);
+    }
+
+    [Fact]
     public void Stop_drops_what_the_old_shell_still_sends()
     {
         var (stopped, effects) = Reduce(Running(), new ExecStopRequested());
@@ -241,7 +278,7 @@ public sealed class DetailReducerExecTests
     }
 
     [Fact]
-    public void A_shell_that_ended_or_failed_by_itself_or_never_started_needs_no_clean_up()
+    public void After_a_shell_ended_failed_or_was_stopped_or_before_one_started_a_stop_needs_no_clean_up()
     {
         Assert.False(DetailReducer.ShellNeedsCleanUp(Loaded()));
         Assert.False(DetailReducer.ShellNeedsCleanUp(Reduce(Running(), new ExecEnded(1, 0, false)).State));
