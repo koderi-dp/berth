@@ -52,7 +52,7 @@ public static class LogSearch
 
             if (timestamps && lines[i].Timestamp is { } time)
             {
-                text.Append(time.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture)).Append(' ');
+                text.Append(Timestamp(time)).Append(' ');
             }
 
             text.Append(lines[i].Text);
@@ -60,4 +60,8 @@ public static class LogSearch
 
         return text.ToString();
     }
+
+    /// <summary>A line's timestamp as the Logs tab shows and copies it: UTC, as "2026-11-16T10:00:00.0000000Z".</summary>
+    public static string Timestamp(DateTimeOffset time) =>
+        time.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture);
 }

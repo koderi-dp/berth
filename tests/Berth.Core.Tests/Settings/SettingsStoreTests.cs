@@ -79,6 +79,41 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Log_view_options_round_trip()
+    {
+        var store = new SettingsStore(_directory, null);
+        var saved = store.Load().Settings with { Logs = new LogViewOptions(Timestamps: true, Wrap: false) };
+
+        store.Save(saved);
+        var loaded = new SettingsStore(_directory, null).Load().Settings;
+
+        Assert.Equal(new LogViewOptions(Timestamps: true, Wrap: false), loaded.Logs);
+        Assert.Contains("\"logs\"", File.ReadAllText(SettingsFile));
+    }
+
+    [Theory]
+    [InlineData("", false, true)]
+    [InlineData(""", "logs": null""", false, true)]
+    [InlineData(""", "logs": { "timestamps": true }""", true, true)]
+    [InlineData(""", "logs": { "wrap": false }""", false, false)]
+    public void Missing_log_view_options_read_as_the_defaults_and_keep_the_rest(string logs, bool timestamps, bool wrap)
+    {
+        File.WriteAllText(SettingsFile, $$"""{ "connections": [ { "id": "one", "name": "Build host", "kind": "Tcp", "host": "build-host" } ]{{logs}} }""");
+
+        var result = new SettingsStore(_directory, null).Load();
+
+        Assert.False(result.SetAside);
+        Assert.Equal(new LogViewOptions(timestamps, wrap), result.Settings.Logs);
+    }
+
+    [Fact]
+    public void Log_view_options_default_to_no_timestamps_and_wrapped_lines()
+    {
+        Assert.Equal(new LogViewOptions(Timestamps: false, Wrap: true), LogViewOptions.Default);
+        Assert.Equal(LogViewOptions.Default, new SettingsStore(_directory, "tcp://127.0.0.1:2375").Load().Settings.Logs);
+    }
+
+    [Fact]
     public void Corrupt_file_loads_defaults_and_is_kept_as_settings_bad_json()
     {
         File.WriteAllText(SettingsFile, "{ this is not json");

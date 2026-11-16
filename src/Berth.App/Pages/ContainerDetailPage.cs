@@ -173,7 +173,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             1 => InspectTab.Render(detail),
             2 => BindMountsTab.Render(detail),
             3 => StatsTab.Render(detail),
-            _ => LogsTab.Render(detail, ClearLogs),
+            _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs)),
         };
     }
 

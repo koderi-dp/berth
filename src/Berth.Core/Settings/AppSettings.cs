@@ -10,5 +10,16 @@ public sealed record ContainerListOptions(bool RunningOnly, ContainerSort Sort)
     public static readonly ContainerListOptions Default = new(RunningOnly: false, ContainerSort.Default);
 }
 
-/// <summary>Everything in <c>settings.json</c>: the saved connections, which one is active, and the containers list options.</summary>
-public sealed record AppSettings(IReadOnlyList<ConnectionProfile> Connections, string? ActiveConnectionId, ContainerListOptions ContainerList);
+/// <summary>How a container's log is shown: with each line's timestamp or not, and long lines wrapped or scrolled sideways.</summary>
+public sealed record LogViewOptions(bool Timestamps, bool Wrap)
+{
+    /// <summary>No timestamps, long lines wrapped.</summary>
+    public static readonly LogViewOptions Default = new(Timestamps: false, Wrap: true);
+}
+
+/// <summary>Everything in <c>settings.json</c>: the saved connections, which one is active, and the containers list and log options.</summary>
+public sealed record AppSettings(IReadOnlyList<ConnectionProfile> Connections, string? ActiveConnectionId, ContainerListOptions ContainerList)
+{
+    /// <summary>How the detail page's Logs tab shows a log.</summary>
+    public LogViewOptions Logs { get; init; } = LogViewOptions.Default;
+}

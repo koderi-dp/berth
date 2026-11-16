@@ -24,6 +24,12 @@ internal static class Glyphs
     public const string ChevronLeft = "";
     public const string Details = ""; // Info
     public const string ChevronRight = "";
+    public const string ChevronUp = "";
+    public const string Search = "";
+    public const string Clock = "";
+    public const string Wrap = ""; // ReturnKey: the arrow that carries a line on to the next
+    public const string Erase = ""; // EraseTool
+    public const string Close = ""; // Cancel
 }
 
 /// <summary>Small pieces shared by the shell and the pages.</summary>

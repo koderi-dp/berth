@@ -16,12 +16,15 @@ internal sealed class SettingsFile
 
     public ContainerListEntry? ContainerList { get; set; }
 
+    public LogsEntry? Logs { get; set; }
+
     /// <summary>
     /// The settings, or null when they cannot be used: no connection, or a connection without a non-blank id and name, a known
     /// kind, a non-blank host and a port in 1..65535 (TCP) or a non-blank pipe name (named pipe), and a CA file when it has TLS;
     /// or two with the same id.
     /// Left out: <c>tls</c> is none, <c>pipeName</c> is "", <c>port</c> is the kind's default, <c>host</c> of a named pipe is
-    /// this machine, <c>containerList</c> and each of its fields is the default (an unknown sort column too), <c>activeConnectionId</c> is the first connection.
+    /// this machine, <c>containerList</c>, <c>logs</c> and each of their fields is the default (an unknown sort column too),
+    /// <c>activeConnectionId</c> is the first connection.
     /// </summary>
     public AppSettings? ToSettings()
     {
@@ -40,7 +43,12 @@ internal sealed class SettingsFile
         var active = connections.Any(c => c.Id == ActiveConnectionId) ? ActiveConnectionId : connections[0].Id;
         return new AppSettings(connections, active, new ContainerListOptions(
             ContainerList?.RunningOnly ?? false,
-            ContainerSort.Read(ContainerList?.Sort?.Column, ContainerList?.Sort?.Descending)));
+            ContainerSort.Read(ContainerList?.Sort?.Column, ContainerList?.Sort?.Descending)))
+        {
+            Logs = new LogViewOptions(
+                Logs?.Timestamps ?? LogViewOptions.Default.Timestamps,
+                Logs?.Wrap ?? LogViewOptions.Default.Wrap),
+        };
     }
 
     internal sealed class ConnectionEntry
@@ -109,6 +117,13 @@ internal sealed class SettingsFile
         public bool? RunningOnly { get; set; }
 
         public SortEntry? Sort { get; set; }
+    }
+
+    internal sealed class LogsEntry
+    {
+        public bool? Timestamps { get; set; }
+
+        public bool? Wrap { get; set; }
     }
 
     /// <summary>The column is read as text, so a name this Berth does not know falls back to the default instead of failing the file.</summary>
