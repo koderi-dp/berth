@@ -58,7 +58,8 @@ internal sealed class VolumeDetailPage : EngineStateComponent<VolumeDetailProps>
         var leave = Props.Leave;
         var state = UseEngineState();
         var nav = UseNavigation<AppRoute>();
-        var (confirm, setConfirm) = UseState<RemovalPlan?>(null);
+        // The open confirmation and the session it was opened on.
+        var (confirm, setConfirm) = UseState<(RemovalPlan Plan, int Session)?>(null);
 
         var active = nav.CurrentRoute == Props.Route;
         var connected = state.Status == ConnectionStatus.Connected;
@@ -82,7 +83,7 @@ internal sealed class VolumeDetailPage : EngineStateComponent<VolumeDetailProps>
                 return;
             var plan = Confirmations.RemoveVolumes((VolumeRow[])[row], (string[])[name], connected);
             if (!plan.IsEmpty)
-                setConfirm(plan);
+                setConfirm((plan, AppServices.Current.SessionNumber));
         }
 
         void OpenContainer(string id) =>
@@ -117,9 +118,9 @@ internal sealed class VolumeDetailPage : EngineStateComponent<VolumeDetailProps>
                 removalPanel?.WithKey("removal"),
                 SelectorBar(Tabs, 0).AutomationId("volume-tabs").Flex(shrink: 0).WithKey("tabs"),
                 Content(row, users, OpenContainer).Flex(grow: 1, basis: 0).WithKey("content"),
-                (confirm is null
+                (confirm is not { } open
                     ? Empty()
-                    : RemoveDialog.Render(confirm.Title, confirm.Text, canConfirm: true, () => ConfirmDelete(name), () => setConfirm(null))).WithKey("dialog"))
+                    : RemoveDialog.Render(open.Plan.Title, open.Plan.Text, canConfirm: true, () => ConfirmDelete(name, open.Session), () => setConfirm(null))).WithKey("dialog"))
             with
             {
                 RowGap = 12,
@@ -129,9 +130,14 @@ internal sealed class VolumeDetailPage : EngineStateComponent<VolumeDetailProps>
         return page.Flex(grow: 1, basis: 0);
     }
 
-    /// <summary>Sends the confirmed delete as it stands now, read from the current session; never forced.</summary>
-    private static void ConfirmDelete(string name)
+    /// <summary>
+    /// Sends the confirmed delete as it stands now, read from the current session; never forced. Nothing when the connection was switched
+    /// since the dialog opened on <paramref name="session"/>.
+    /// </summary>
+    private static void ConfirmDelete(string name, int session)
     {
+        if (!RemoveDialog.IsCurrent(session))
+            return;
         var state = AppServices.Current.Session.State;
         RemoveDialog.Send(Confirmations.RemoveVolumes(VolumeRows.From(state), (string[])[name], state.Status == ConnectionStatus.Connected));
     }

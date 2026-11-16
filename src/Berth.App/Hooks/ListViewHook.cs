@@ -62,13 +62,24 @@ internal abstract class ListPageComponent : EngineStateComponent
         where TRow : ISelectableRow
     {
         var (checkedKeys, updateChecked) = UseReducer(ImmutableHashSet<string>.Empty);
+        // A switch of connection clears them all: the same keys can name other things on another engine.
+        var session = AppServices.Current.SessionNumber;
+        var checkedOn = UseRef(session);
         UseEffect(
             () =>
             {
+                if (checkedOn.Current != session)
+                {
+                    checkedOn.Current = session;
+                    updateChecked(keys => keys.IsEmpty ? keys : keys.Clear());
+                    return;
+                }
+
                 var existing = all.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
                 updateChecked(keys => keys.All(existing.Contains) ? keys : keys.Intersect(existing));
             },
-            all);
+            all,
+            session);
         return (checkedKeys, (keys, value) => updateChecked(current => value ? current.Union(keys) : current.Except(keys)));
     }
 
@@ -90,11 +101,11 @@ internal abstract class ListPageComponent : EngineStateComponent
             var named = keys.ToImmutableArray();
             var opened = planDelete(state, named);
             if (!opened.IsEmpty)
-                setAsk(new RemoveDialog.DeleteAsk(named, opened));
+                setAsk(new RemoveDialog.DeleteAsk(named, opened, AppServices.Current.SessionNumber));
         }
 
         var dialog = RemoveDialog.For(ask, (now, keys) => plan.Current(now, keys), () => setAsk(null));
-        return new RemoveDialogs(dialog, AskDelete, unused => setAsk(new RemoveDialog.UnusedAsk(unused)));
+        return new RemoveDialogs(dialog, AskDelete, unused => setAsk(new RemoveDialog.UnusedAsk(unused, AppServices.Current.SessionNumber)));
     }
 
     /// <summary>The page's search box reference and whether the box has the focus.</summary>
