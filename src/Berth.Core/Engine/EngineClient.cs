@@ -346,7 +346,7 @@ public sealed class EngineClient : IEngineApi
     /// read up to its headers, so the connection can be handed over as an <see cref="ExecStream"/> whose write side can be closed
     /// alone. A client made without that transport throws <see cref="InvalidOperationException"/>.
     /// </summary>
-    public async Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct)
+    public async Task<ExecStream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct)
     {
         var transport = _streams ?? throw new InvalidOperationException("This client was made without a transport for two-way streams.");
         var path = ExecPath(execId, "/start");
@@ -361,7 +361,7 @@ public sealed class EngineClient : IEngineApi
             var answer = await HttpUpgrade.SendAsync(connection, path, body, deadline.Token).ConfigureAwait(false);
             if (answer.Status == (int)HttpStatusCode.SwitchingProtocols)
             {
-                var stream = new ExecStream(connection, answer.Rest.ToArray());
+                var stream = new UpgradedExecStream(connection, answer.Rest.ToArray());
                 connection = null;
                 return stream;
             }

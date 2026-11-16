@@ -110,6 +110,28 @@ public sealed class FakeEngineApiTests
         Assert.Equal(size, create.Size);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_shells_close_write_ends_its_input_where_the_transport_can(bool canCloseWrite)
+    {
+        var api = new FakeEngineApi { ShellsCanCloseWrite = canCloseWrite };
+        var stream = await api.StartExecAsync("e1", new TerminalSize(80, 24), CancellationToken.None);
+        var shell = await api.NextShellAsync();
+        await stream.WriteAsync(new byte[] { 0x61 });
+
+        Assert.Equal(canCloseWrite, await stream.CloseWriteAsync());
+        await shell.WriteClosed;
+        Assert.False(shell.ClosedWriteDuringAWrite);
+        if (canCloseWrite)
+            Assert.Equal([0x61], await shell.ReadAllInputAsync());
+        else
+            Assert.Equal([0x61], await shell.ReadInputAsync(1));
+
+        await stream.DisposeAsync();
+        await shell.Disposed;
+    }
+
     [Fact]
     public async Task Exec_resizes_are_recorded_and_inspections_answer_in_order_then_repeat_the_last()
     {

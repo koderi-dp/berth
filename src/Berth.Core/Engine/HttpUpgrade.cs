@@ -72,7 +72,12 @@ internal sealed class HttpUpgrade
                     throw Unreadable();
                 if (size == 0)
                     break;
-                await CopyAsync(body, size, ct).ConfigureAwait(false);
+
+                // A chunk is read only up to the cap, so one huge chunk cannot pass it; the rest of the answer is not read.
+                var room = MaxBody - (int)body.Length;
+                await CopyAsync(body, Math.Min(size, room), ct).ConfigureAwait(false);
+                if (size > room)
+                    break;
                 await ReadLineAsync(ct).ConfigureAwait(false);
             }
         }

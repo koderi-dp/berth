@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
@@ -315,11 +316,14 @@ internal sealed class FakeEngineApi : IEngineApi
         return ExecId;
     }
 
+    /// <summary>Whether the shells' streams can close their write side (TCP and TLS) or not (Docker Desktop's pipe). True by default.</summary>
+    public bool ShellsCanCloseWrite { get; set; } = true;
+
     /// <summary>Opens after any hold or failure set for "StartExec", then hands out a new <see cref="FakeShell"/>'s stream.</summary>
-    public async Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct)
+    public async Task<ExecStream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct)
     {
         await EnterAsync("StartExec", $"StartExec {execId}", ct);
-        var shell = new FakeShell();
+        var shell = new FakeShell(ShellsCanCloseWrite);
         _shells.Writer.TryWrite(shell);
         return shell.Stream;
     }
@@ -510,24 +514,70 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>
     /// The engine's end of an exec's two-way stream, in memory. <see cref="Stream"/> is what start hands out: what is written to it
     /// arrives in <see cref="Input"/>, and what the test writes with <see cref="WriteOutputAsync"/> is read from it. Neither direction
-    /// waits for the other.
+    /// waits for the other, unless <see cref="HoldWrites"/> holds the writes. Its close-write ends <see cref="Input"/> as a TCP or TLS
+    /// connection's does, or, made with <c>canCloseWrite: false</c>, does nothing and answers false as Docker Desktop's pipe does.
     /// </summary>
     public sealed class FakeShell
     {
         private readonly Pipe _input = new(new PipeOptions(pauseWriterThreshold: 0));
         private readonly Pipe _output = new(new PipeOptions(pauseWriterThreshold: 0));
         private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _writeClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Lock _lock = new();
+        private readonly List<(int Count, TaskCompletionSource Done)> _readWaiters = [];
+        private readonly bool _canCloseWrite;
+        private int _reads;
+        private int _pendingWrites;
+        private int _inputClosed;
+        private volatile Gate? _writeGate;
+        private volatile bool _closedWriteDuringAWrite;
 
-        public FakeShell() => Stream = new ShellStream(this);
+        public FakeShell(bool canCloseWrite = true)
+        {
+            _canCloseWrite = canCloseWrite;
+            Stream = new ShellStream(this);
+        }
 
         /// <summary>The stream start hands out.</summary>
-        public Stream Stream { get; }
+        public ExecStream Stream { get; }
 
-        /// <summary>What was written to <see cref="Stream"/>; it ends once the stream is disposed.</summary>
+        /// <summary>What was written to <see cref="Stream"/>; it ends once the write side is closed or the stream is disposed.</summary>
         public PipeReader Input => _input.Reader;
 
         /// <summary>Completes once <see cref="Stream"/> has been disposed.</summary>
         public Task Disposed => _disposed.Task;
+
+        /// <summary>Completes once <see cref="ExecStream.CloseWriteAsync"/> has been called, whatever it answered.</summary>
+        public Task WriteClosed => _writeClosed.Task;
+
+        /// <summary>Whether a close-write was called while a write was still pending (which TLS does not allow).</summary>
+        public bool ClosedWriteDuringAWrite => _closedWriteDuringAWrite;
+
+        /// <summary>How many reads of <see cref="Stream"/> have started.</summary>
+        public int Reads
+        {
+            get
+            {
+                lock (_lock)
+                    return _reads;
+            }
+        }
+
+        /// <summary>Completes once <paramref name="count"/> reads of <see cref="Stream"/> have started.</summary>
+        public Task WhenReading(int count)
+        {
+            lock (_lock)
+            {
+                if (_reads >= count)
+                    return Task.CompletedTask;
+                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _readWaiters.Add((count, done));
+                return done.Task;
+            }
+        }
+
+        /// <summary>Makes later writes wait (cancellably) until the returned gate is released.</summary>
+        public Gate HoldWrites() => _writeGate = new Gate();
 
         /// <summary>The shell prints <paramref name="bytes"/>.</summary>
         public async Task WriteOutputAsync(byte[] bytes) => await _output.Writer.WriteAsync(bytes);
@@ -538,7 +588,7 @@ internal sealed class FakeEngineApi : IEngineApi
         /// <summary>The connection drops: the read after what was written throws <paramref name="error"/>.</summary>
         public void Fail(Exception error) => _output.Writer.Complete(error);
 
-        /// <summary>Reads all of <see cref="Input"/>, until the stream is disposed.</summary>
+        /// <summary>Reads all of <see cref="Input"/>, until the write side is closed or the stream is disposed.</summary>
         public async Task<byte[]> ReadAllInputAsync(CancellationToken ct = default)
         {
             using var all = new MemoryStream();
@@ -546,54 +596,102 @@ internal sealed class FakeEngineApi : IEngineApi
             return all.ToArray();
         }
 
-        private sealed class ShellStream(FakeShell shell) : Stream
+        /// <summary>Reads exactly <paramref name="count"/> more bytes of <see cref="Input"/>.</summary>
+        public async Task<byte[]> ReadInputAsync(int count, CancellationToken ct = default)
         {
-            private readonly Stream _reads = shell._output.Reader.AsStream();
-            private readonly Stream _writes = shell._input.Writer.AsStream();
+            var result = await _input.Reader.ReadAtLeastAsync(count, ct);
+            if (result.Buffer.Length < count)
+                throw new EndOfStreamException();
+            var bytes = result.Buffer.Slice(0, count).ToArray();
+            _input.Reader.AdvanceTo(result.Buffer.GetPosition(count));
+            return bytes;
+        }
 
-            public override bool CanRead => true;
-
-            public override bool CanSeek => false;
-
-            public override bool CanWrite => true;
-
-            public override long Length => throw new NotSupportedException();
-
-            public override long Position
+        private void ReadStarted()
+        {
+            List<TaskCompletionSource> reached;
+            lock (_lock)
             {
-                get => throw new NotSupportedException();
-                set => throw new NotSupportedException();
+                _reads++;
+                reached = _readWaiters.Where(w => w.Count <= _reads).Select(w => w.Done).ToList();
+                _readWaiters.RemoveAll(w => w.Count <= _reads);
             }
 
-            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-                _reads.ReadAsync(buffer, cancellationToken);
+            reached.ForEach(done => done.TrySetResult());
+        }
+
+        private async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _pendingWrites);
+            try
+            {
+                if (_writeGate is { } gate)
+                {
+                    gate.MarkEntered();
+                    await gate.Released.WaitAsync(ct);
+                }
+
+                await _input.Writer.WriteAsync(bytes, ct);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _pendingWrites);
+            }
+        }
+
+        private Task<bool> CloseWriteAsync()
+        {
+            if (Volatile.Read(ref _pendingWrites) > 0)
+                _closedWriteDuringAWrite = true;
+            _writeClosed.TrySetResult();
+            if (!_canCloseWrite)
+                return Task.FromResult(false);
+            CloseInput();
+            return Task.FromResult(true);
+        }
+
+        private void CloseInput()
+        {
+            if (Interlocked.Exchange(ref _inputClosed, 1) == 0)
+                _input.Writer.Complete();
+        }
+
+        private sealed class ShellStream(FakeShell shell) : ExecStream
+        {
+            private readonly Stream _reads = shell._output.Reader.AsStream();
+
+            public override Task<bool> CloseWriteAsync() => shell.CloseWriteAsync();
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            {
+                shell.ReadStarted();
+                return _reads.ReadAsync(buffer, cancellationToken);
+            }
 
             public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-                _reads.ReadAsync(buffer, offset, count, cancellationToken);
+                ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-            public override int Read(byte[] buffer, int offset, int count) => _reads.Read(buffer, offset, count);
+            public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
             public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
-                _writes.WriteAsync(buffer, cancellationToken);
+                shell.WriteAsync(buffer, cancellationToken);
 
             public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-                _writes.WriteAsync(buffer, offset, count, cancellationToken);
+                WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-            public override void Write(byte[] buffer, int offset, int count) => _writes.Write(buffer, offset, count);
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
-            public override Task FlushAsync(CancellationToken cancellationToken) => _writes.FlushAsync(cancellationToken);
+            public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-            public override void Flush() => _writes.Flush();
-
-            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-
-            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Flush()
+            {
+            }
 
             protected override void Dispose(bool disposing)
             {
                 if (disposing)
                 {
-                    _writes.Dispose();
+                    shell.CloseInput();
                     _reads.Dispose();
                     shell._disposed.TrySetResult();
                 }

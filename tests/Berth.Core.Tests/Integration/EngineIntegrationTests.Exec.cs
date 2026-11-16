@@ -78,7 +78,7 @@ public sealed partial class EngineIntegrationTests
             await client.ConnectAsync(cts.Token);
 
             var execId = await client.CreateExecAsync(id, ["cat"], ExecSize, cts.Token);
-            await using var stream = Assert.IsType<ExecStream>(await client.StartExecAsync(execId, ExecSize, cts.Token));
+            await using var stream = await client.StartExecAsync(execId, ExecSize, cts.Token);
             await stream.WriteAsync("berth\n"u8.ToArray(), cts.Token);
             await stream.FlushAsync(cts.Token);
             await ReadUntilAsync(stream, "berth", cts.Token);

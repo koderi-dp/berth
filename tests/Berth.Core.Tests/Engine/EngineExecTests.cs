@@ -173,6 +173,19 @@ public sealed class EngineExecTests : IDisposable
     }
 
     [Fact]
+    public async Task Start_reads_at_most_64_KB_of_a_chunked_error_body_even_from_one_huge_chunk()
+    {
+        // The chunk says it is almost 2 GB; 70 KB of it arrive and the connection stays open. Only 64 KB are read.
+        var answer = $"HTTP/1.1 409 Conflict\r\nTransfer-Encoding: chunked\r\n\r\n{0x7ffffff0:x}\r\n" + new string('x', 70 * 1024);
+        await using var engine = await LoopbackAsync(answer, deadline: TimeSpan.FromSeconds(10));
+
+        var error = await Assert.ThrowsAsync<EngineException>(() => engine.Client.StartExecAsync("e1", Size, _timeout.Token));
+
+        Assert.Equal(409, error.StatusCode);
+        Assert.Equal("409 Conflict", error.Message);
+    }
+
+    [Fact]
     public async Task Start_with_an_error_body_that_is_not_json_throws_the_status_line()
     {
         await using var engine = await LoopbackAsync("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\n\r\noops");

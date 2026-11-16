@@ -80,7 +80,7 @@ internal sealed class EngineConnection : IEngineApi
     public Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct) =>
         _client.CreateExecAsync(containerId, command, size, ct);
 
-    public Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct) => _client.StartExecAsync(execId, size, ct);
+    public Task<ExecStream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct) => _client.StartExecAsync(execId, size, ct);
 
     public Task ResizeExecAsync(string execId, TerminalSize size, CancellationToken ct) => _client.ResizeExecAsync(execId, size, ct);
 

@@ -85,7 +85,7 @@ public sealed class ExecUpgradeLoopbackTests : IDisposable
     {
         var ct = _timeout.Token;
         await using var engine = await Harness.StartAsync(kind, ct);
-        await using var stream = Assert.IsType<ExecStream>(await engine.Client.StartExecAsync("e1", Size, ct));
+        await using var stream = await engine.Client.StartExecAsync("e1", Size, ct);
         await stream.WriteAsync("ping"u8.ToArray(), ct);
         await stream.FlushAsync(ct);
 

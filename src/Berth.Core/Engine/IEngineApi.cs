@@ -94,9 +94,9 @@ public interface IEngineApi : IAsyncDisposable
     /// the shell's input, what is read is its output, and a read returns 0 when the shell has ended. The caller owns the stream;
     /// disposing it closes the connection. The engine's answer has the 30 s deadline; the stream has none, and its reads and writes
     /// throw what the transport throws. An answer that does not switch the connection, or any error answer, throws
-    /// <see cref="EngineException"/>. <see cref="EngineClient"/> returns an <see cref="ExecStream"/>, whose write side can be closed alone.
+    /// <see cref="EngineException"/>. Its write side can be closed alone (<see cref="ExecStream.CloseWriteAsync"/>).
     /// </summary>
-    Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct);
+    Task<ExecStream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct);
 
     /// <summary>Resizes a running exec's terminal. 30 s deadline.</summary>
     Task ResizeExecAsync(string execId, TerminalSize size, CancellationToken ct);
