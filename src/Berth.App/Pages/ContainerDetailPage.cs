@@ -34,7 +34,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     private static readonly object SessionLost = new();
 
     // The tabs on the strip, built once: a new item array on every render leaks native memory.
-    private static readonly IReadOnlyList<DetailTab> ShownTabs = DetailTabs.Shown(exec: true);
+    private static readonly IReadOnlyList<DetailTab> ShownTabs = DetailTabs.Shown;
     private static readonly SelectorBarItemData[] TabItems = [.. ShownTabs.Select(t => SelectorBarItem(DetailTabs.Title(t)))];
 
     public override Element Render()

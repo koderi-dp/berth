@@ -7,14 +7,13 @@ namespace Berth.Presentation;
 public enum ExecViewKind { Waiting, NotRunning, Paused, Restarting, Ready, Starting, Running, Ended, Failed, Lost }
 
 /// <summary>The one button the Exec tab's line offers, if any.</summary>
-public enum ExecButton { None, StartContainer, ResumeContainer, StartAgain, TryAgain, StartSh }
+public enum ExecButton { None, StartContainer, ResumeContainer, StartAgain, StartSh }
 
 /// <summary>The Exec tab's state, decided from the detail state.</summary>
 /// <param name="Text">The line shown; null when the view needs none (Ready, Running).</param>
 /// <param name="ShowTerminal">Whether the terminal is on screen (Ready, Starting, Running, Ended, Failed, Lost).</param>
 /// <param name="AcceptsInput">Whether typing goes to the shell: Running only.</param>
-/// <param name="IsError">Failed: the text is the engine's own.</param>
-public sealed record ExecViewModel(ExecViewKind Kind, string? Text, ExecButton Button, bool ShowTerminal, bool AcceptsInput, bool IsError);
+public sealed record ExecViewModel(ExecViewKind Kind, string? Text, ExecButton Button, bool ShowTerminal, bool AcceptsInput);
 
 /// <summary>The Exec tab's whole behaviour: which state it is in, the line it shows and the button it offers.</summary>
 public static class ExecView
@@ -23,26 +22,26 @@ public static class ExecView
     public static readonly System.Collections.Immutable.ImmutableArray<string> ShCommand = ["sh"];
 
     private static readonly ExecViewModel WaitingView =
-        new(ExecViewKind.Waiting, DetailPage.WaitingText, ExecButton.None, ShowTerminal: false, AcceptsInput: false, IsError: false);
+        new(ExecViewKind.Waiting, DetailPage.WaitingText, ExecButton.None, ShowTerminal: false, AcceptsInput: false);
 
     private static readonly ExecViewModel NotRunningView = new(
-        ExecViewKind.NotRunning, "Start the container to open a terminal.", ExecButton.StartContainer, false, false, false);
+        ExecViewKind.NotRunning, "Start the container to open a terminal.", ExecButton.StartContainer, false, false);
 
     private static readonly ExecViewModel PausedView = new(
-        ExecViewKind.Paused, "Resume the container to open a terminal.", ExecButton.ResumeContainer, false, false, false);
+        ExecViewKind.Paused, "Resume the container to open a terminal.", ExecButton.ResumeContainer, false, false);
 
     private static readonly ExecViewModel RestartingView =
-        new(ExecViewKind.Restarting, "The container is restarting.", ExecButton.None, false, false, false);
+        new(ExecViewKind.Restarting, "The container is restarting.", ExecButton.None, false, false);
 
-    private static readonly ExecViewModel ReadyView = new(ExecViewKind.Ready, null, ExecButton.None, true, false, false);
+    private static readonly ExecViewModel ReadyView = new(ExecViewKind.Ready, null, ExecButton.None, true, false);
 
     private static readonly ExecViewModel LostView = new(
-        ExecViewKind.Lost, "The shell ended when the connection was lost.", ExecButton.StartAgain, true, false, false);
+        ExecViewKind.Lost, "The shell ended when the connection was lost.", ExecButton.StartAgain, true, false);
 
-    private static readonly ExecViewModel RunningView = new(ExecViewKind.Running, null, ExecButton.None, true, AcceptsInput: true, false);
+    private static readonly ExecViewModel RunningView = new(ExecViewKind.Running, null, ExecButton.None, true, AcceptsInput: true);
 
     private static readonly ExecViewModel TerminalStoppedView = new(
-        ExecViewKind.Failed, ContainerDetailSession.TerminalFailedText, ExecButton.StartAgain, true, false, IsError: true);
+        ExecViewKind.Failed, ContainerDetailSession.TerminalFailedText, ExecButton.StartAgain, true, false);
 
     /// <param name="detail">The detail state the page shows.</param>
     /// <param name="waiting"><see cref="DetailPage.Waiting"/>: the session is closed, reopening or its connection is lost.</param>
@@ -73,11 +72,11 @@ public static class ExecView
         return exec.Status switch
         {
             ExecStatus.Starting => new ExecViewModel(
-                ExecViewKind.Starting, $"Starting {string.Join(' ', exec.Command)}…", ExecButton.None, true, false, false),
+                ExecViewKind.Starting, $"Starting {string.Join(' ', exec.Command)}…", ExecButton.None, true, false),
             ExecStatus.Running => RunningView,
             ExecStatus.Ended => new ExecViewModel(
-                ExecViewKind.Ended, EndedText(exec), SuggestsSh(exec) ? ExecButton.StartSh : ExecButton.StartAgain, true, false, false),
-            ExecStatus.Failed => new ExecViewModel(ExecViewKind.Failed, exec.Error, ExecButton.TryAgain, true, false, IsError: true),
+                ExecViewKind.Ended, EndedText(exec), SuggestsSh(exec) ? ExecButton.StartSh : ExecButton.StartAgain, true, false),
+            ExecStatus.Failed => new ExecViewModel(ExecViewKind.Failed, exec.Error, ExecButton.StartAgain, true, false),
             _ => startedOnce ? LostView : ReadyView,
         };
     }

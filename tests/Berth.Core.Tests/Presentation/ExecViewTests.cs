@@ -38,10 +38,9 @@ public sealed class ExecViewTests
         };
 
     private static void AssertView(
-        ExecViewModel view, ExecViewKind kind, string? text, ExecButton button, bool showTerminal, bool acceptsInput = false,
-        bool isError = false)
+        ExecViewModel view, ExecViewKind kind, string? text, ExecButton button, bool showTerminal, bool acceptsInput = false)
     {
-        Assert.Equal(new ExecViewModel(kind, text, button, showTerminal, acceptsInput, isError), view);
+        Assert.Equal(new ExecViewModel(kind, text, button, showTerminal, acceptsInput), view);
     }
 
     [Fact]
@@ -126,7 +125,7 @@ public sealed class ExecViewTests
     public void Failed_shows_the_engines_message() =>
         AssertView(
             ExecView.For(Detail(Exec(ExecStatus.Failed, error: "container abc is not running")), waiting: false, startedOnce: true),
-            ExecViewKind.Failed, "container abc is not running", ExecButton.TryAgain, showTerminal: true, isError: true);
+            ExecViewKind.Failed, "container abc is not running", ExecButton.StartAgain, showTerminal: true);
 
     [Fact]
     public void A_stopped_container_wins_over_an_ended_shell()
@@ -149,7 +148,6 @@ public sealed class ExecViewTests
     public void The_buttons_say_what_they_start()
     {
         Assert.Equal("Start again", ExecView.ButtonLabel(ExecButton.StartAgain));
-        Assert.Equal("Start again", ExecView.ButtonLabel(ExecButton.TryAgain));
         Assert.Equal("Start sh", ExecView.ButtonLabel(ExecButton.StartSh));
         Assert.Equal(["sh"], ExecView.ShCommand.ToArray());
     }

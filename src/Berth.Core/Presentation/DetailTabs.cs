@@ -6,14 +6,9 @@ public enum DetailTab { Logs, Inspect, BindMounts, Exec, Stats }
 /// <summary>Which tabs a container's page shows, in Docker Desktop's order, and what they are called.</summary>
 public static class DetailTabs
 {
-    private static readonly IReadOnlyList<DetailTab> WithoutExec =
-        [DetailTab.Logs, DetailTab.Inspect, DetailTab.BindMounts, DetailTab.Stats];
-
-    private static readonly IReadOnlyList<DetailTab> WithExec =
+    /// <summary>Logs, Inspect, Bind mounts, Exec, Stats. One list, so a strip built from it can be kept.</summary>
+    public static IReadOnlyList<DetailTab> Shown { get; } =
         [DetailTab.Logs, DetailTab.Inspect, DetailTab.BindMounts, DetailTab.Exec, DetailTab.Stats];
-
-    /// <summary>Logs, Inspect, Bind mounts, Exec when <paramref name="exec"/>, Stats. The same list each time, so a strip built from it can be kept.</summary>
-    public static IReadOnlyList<DetailTab> Shown(bool exec) => exec ? WithExec : WithoutExec;
 
     /// <summary>The tab's title on the strip.</summary>
     public static string Title(DetailTab tab) => tab switch
