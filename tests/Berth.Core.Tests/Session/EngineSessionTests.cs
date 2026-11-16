@@ -185,6 +185,8 @@ public sealed partial class EngineSessionTests
         var lost = await h.WaitFor(s => s.Status == ConnectionStatus.Disconnected);
         Assert.Equal("The engine closed the connection.", lost.ConnectionError);
         Assert.Equal(1, lost.RetryAttempt);
+        var reported = await h.WaitForError(e => e.What == "the engine ended the event stream");
+        Assert.Equal("The engine closed the connection.", reported.Exception.Message);
 
         h.Time.Advance(TimeSpan.FromSeconds(1));
         await h.WaitFor(s => s.Status == ConnectionStatus.Connected);

@@ -22,6 +22,15 @@ var window = new WindowSpec
     Backdrop = BackdropChoice.Of(BackdropKind.Mica),
 }.WithPersistence("main");
 
+// An exception in a component's render, an effect, a cleanup or the reconcile is caught by Reactor, never reaches the handlers above,
+// and shows as red text in place of the component until a later render succeeds. Logged here; returning null keeps Reactor's own
+// panel, so it still shows on screen.
+ReactorApp.DefaultRenderErrorHandler = error =>
+{
+    AppLog.RenderError(error.Source.ToString(), error.ComponentName ?? "?", error.Exception);
+    return null;
+};
+
 ReactorApp.Run<App>(window, _ =>
 {
     // Logged; Reactor's own handling of the exception goes on.

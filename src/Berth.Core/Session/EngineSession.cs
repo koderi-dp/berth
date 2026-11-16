@@ -23,6 +23,7 @@ public sealed partial class EngineSession : IAsyncDisposable
     private const string ConnectFailedReport = "connecting to the engine failed";
     private const string LoadFailedReport = "loading the containers failed";
     private const string StreamFailedReport = "the engine event stream failed";
+    private const string StreamEndedReport = "the engine ended the event stream";
     private const string ActionFailedReport = "a container action failed";
     private const string RunCommandFailedReport = "inspecting a container for its run command failed";
     private const string HandlerFailedReport = "a state change handler failed";
@@ -335,6 +336,8 @@ public sealed partial class EngineSession : IAsyncDisposable
             await foreach (var received in connection.Api!.StreamEventsAsync(ct).ConfigureAwait(false))
                 Post(new EngineEventReceived(received), connection);
             message = EngineClosedConnection;
+            // Shown as the connection's error, so logged like the others, though nothing was thrown.
+            Report(StreamEndedReport, new EngineException(0, EngineClosedConnection));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
