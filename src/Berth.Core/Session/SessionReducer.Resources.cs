@@ -101,6 +101,10 @@ public static partial class SessionReducer
             case DiskUsageRequested when connected:
                 return LoadDiskUsage(state);
 
+            case DiskUsageRequested when !state.DiskUsage.Asked:
+                // Asked for while not connected (a page shown just after a switch of connection): read once connected.
+                return (state with { DiskUsage = state.DiskUsage with { Asked = true } }, None);
+
             case DiskUsageLoaded loaded when connected && state.DiskUsage.Loading && loaded.Generation == state.DiskUsage.Generation:
                 return ReadEnded(state with { DiskUsage = state.DiskUsage with { Usage = loaded.Usage } });
 

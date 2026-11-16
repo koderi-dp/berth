@@ -685,7 +685,22 @@ public sealed partial class SessionReducerTests
 
         Assert.Same(disconnected, Reduce(disconnected, new RemoveRequested(ResourceKind.Images, [new RemovalItem("sha256:b")])).State);
         Assert.Same(disconnected, Reduce(disconnected, new PullRequested("nginx")).State);
-        Assert.Same(disconnected, Reduce(disconnected, new DiskUsageRequested()).State);
+    }
+
+    [Fact]
+    public void Disk_use_asked_for_while_connecting_is_read_once_connected()
+    {
+        // A switch of connection: the new session hears the page's request while it is still connecting.
+        var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
+
+        var (asked, askEffects) = Reduce(connecting, new DiskUsageRequested());
+        Assert.True(asked.DiskUsage.Asked);
+        Assert.False(asked.DiskUsage.Loading);
+        Assert.Empty(askEffects);
+
+        var (connected, effects) = Reduce(asked, new ConnectSucceeded(Version, Info));
+        Assert.True(connected.DiskUsage.Loading);
+        Assert.Contains(new LoadDiskUsageEffect(connected.DiskUsage.Generation), effects);
     }
 
     [Fact]

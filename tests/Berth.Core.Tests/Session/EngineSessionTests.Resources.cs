@@ -17,6 +17,53 @@ public sealed partial class EngineSessionTests
     private static PullProgress Line(string layer, long current) => new(layer, "Downloading", current, 100);
 
     [Fact]
+    public async Task Starting_over_twice_quickly_drops_the_failures_of_the_reads_left_behind_and_leaves_no_error()
+    {
+        // The first connection's reads do not stop when cancelled and fail later, as a transport torn down under them would.
+        var first = new FakeEngineApi { IgnoreCancellation = true, Images = [Image("sha256:old", "old:1")] };
+        var images = first.Hold("ListImages");
+        var diskUse = first.Hold("DiskUsage");
+        var second = new FakeEngineApi { IgnoreCancellation = true };
+        var connect = second.Hold("Connect");
+        await using var h = Harness.With(first, second, new FakeEngineApi { Images = [Image("sha256:new", "new:1")] });
+        try
+        {
+            await h.ConnectAsync();
+            h.Session.Dispatch(new ImagesWanted());
+            h.Session.Dispatch(new DiskUsageRequested());
+            await images.Entered.WaitAsync(Patience);
+            await diskUse.Entered.WaitAsync(Patience);
+            first.Fail("ListImages", new EngineException(500, "images of the old connection broke"));
+            first.Fail("DiskUsage", new EngineException(500, "disk use of the old connection broke"));
+
+            h.Session.Dispatch(new ConnectRequested());
+            await connect.Entered.WaitAsync(Patience);
+            h.Session.Dispatch(new ConnectRequested());
+            var dropped = h.WaitForDropped<ResourceLoadFailed>();
+            images.Release();
+            diskUse.Release();
+            connect.Release();
+            await dropped;
+            var state = await h.WaitFor(s => s.Status == ConnectionStatus.Connected && s.Images.Loaded && s.DiskUsage.Usage is not null);
+
+            Assert.Equal(["sha256:new"], state.Images.Items.Select(i => i.Id));
+            Assert.Null(state.ActionError);
+            Assert.Null(state.ConnectionError);
+            Assert.Null(state.Images.LoadError);
+            Assert.Null(state.ContainersLoadError);
+        }
+        finally
+        {
+            // The old connections are retired only once their calls end, and these ignore cancelling.
+            images.Release();
+            diskUse.Release();
+            connect.Release();
+            first.EndStream();
+            second.EndStream();
+        }
+    }
+
+    [Fact]
     public async Task Each_list_is_read_when_its_page_is_first_shown()
     {
         var api = new FakeEngineApi
