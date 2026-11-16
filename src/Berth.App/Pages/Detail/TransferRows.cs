@@ -65,6 +65,12 @@ internal sealed class TransferRows : EngineStateComponent<TransferRowsProps>
                 {
                     RowGap = 0,
                 }))
+            // No horizontal scrolling: the rows take the panel's width, so the buttons at their end stay in view.
+            .Set(viewer =>
+            {
+                viewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                viewer.HorizontalScrollMode = ScrollMode.Disabled;
+            })
             .MaxHeight(RowsMaxHeight);
 
         return (FlexColumn(header?.WithKey("header"), rows.WithKey("rows"), Question(asking).WithKey("question")) with { RowGap = 0 })
