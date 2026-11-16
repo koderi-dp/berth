@@ -49,6 +49,12 @@ internal sealed class ContainersPage : ListPageComponent
         var (search, collapsed) = (view.Search, view.Collapsed);
         var (checkedIds, updateChecked) = UseReducer(NoIds);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
+        // A switch of connection: the checked containers and an open delete belonged to the old engine.
+        UseSessionReset(() =>
+        {
+            updateChecked(_ => NoIds);
+            setDeleteRequest(null);
+        });
         var searchBox = UseListSearch();
         var nav = UseNavigation<AppRoute>();
 

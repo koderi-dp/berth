@@ -55,6 +55,28 @@ internal abstract class ListPageComponent : EngineStateComponent
     }
 
     /// <summary>
+    /// Calls <paramref name="reset"/> after a switch of connection (a new <see cref="AppServices.SessionNumber"/>). A list page stays
+    /// mounted across a switch, so what it holds about the old engine (checked rows, an open dialog, a note) must go; its search, filter
+    /// and sort stay.
+    /// </summary>
+    protected void UseSessionReset(Action reset)
+    {
+        var session = AppServices.Current.SessionNumber;
+        var seen = UseRef(session);
+        var latest = UseRef(reset);
+        latest.Current = reset;
+        UseEffect(
+            () =>
+            {
+                if (seen.Current == session)
+                    return;
+                seen.Current = session;
+                latest.Current();
+            },
+            session);
+    }
+
+    /// <summary>
     /// The checked rows of a list (view state, not kept by route) and the action that checks (true) or unchecks keys. A row that is no
     /// longer in <paramref name="all"/> (the whole list, a memoized instance) cannot stay checked.
     /// </summary>
@@ -63,23 +85,14 @@ internal abstract class ListPageComponent : EngineStateComponent
     {
         var (checkedKeys, updateChecked) = UseReducer(ImmutableHashSet<string>.Empty);
         // A switch of connection clears them all: the same keys can name other things on another engine.
-        var session = AppServices.Current.SessionNumber;
-        var checkedOn = UseRef(session);
+        UseSessionReset(() => updateChecked(keys => keys.IsEmpty ? keys : keys.Clear()));
         UseEffect(
             () =>
             {
-                if (checkedOn.Current != session)
-                {
-                    checkedOn.Current = session;
-                    updateChecked(keys => keys.IsEmpty ? keys : keys.Clear());
-                    return;
-                }
-
                 var existing = all.Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
                 updateChecked(keys => keys.All(existing.Contains) ? keys : keys.Intersect(existing));
             },
-            all,
-            session);
+            all);
         return (checkedKeys, (keys, value) => updateChecked(current => value ? current.Union(keys) : current.Except(keys)));
     }
 
@@ -93,6 +106,8 @@ internal abstract class ListPageComponent : EngineStateComponent
     protected RemoveDialogs UseRemoveDialogs(EngineState state, Func<EngineState, ImmutableArray<string>, RemovalPlan> planDelete)
     {
         var (ask, setAsk) = UseState<RemoveDialog.Ask?>(null);
+        // A confirmation opened on the old engine closes (it would send nothing: RemoveDialog.IsCurrent).
+        UseSessionReset(() => setAsk(null));
         var plan = UseRef(planDelete);
         plan.Current = planDelete;
 

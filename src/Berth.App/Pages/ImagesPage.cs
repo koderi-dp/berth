@@ -53,6 +53,13 @@ internal sealed class ImagesPage : ListPageComponent
         var handlers = UseMemo(() => new ImageTableHandlers(), Array.Empty<object>());
         // The pull whose Cancel was clicked: the engine may still finish it, so a note says so until it is closed.
         var (cancelledPull, setCancelledPull) = UseState<string?>(null);
+        // A switch of connection: the dialogs (Run and Inspect name an image of the old engine) and the note about its pull go.
+        UseSessionReset(() =>
+        {
+            setDialog(null);
+            setCancelledPull(null);
+            setPullFocus(NoPullFocus);
+        });
         var onPullCancelled = UseMemo(() => new Action<string>(reference => handlers.PullCancelled(reference)), Array.Empty<object>());
 
         var connected = state.Status == ConnectionStatus.Connected;

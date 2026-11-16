@@ -39,6 +39,8 @@ internal sealed class VolumesPage : ListPageComponent
         var searchBox = UseListSearch();
         var nav = UseNavigation<AppRoute>();
         var (dialog, setDialog) = UseState<Dialog?>(null);
+        // A switch of connection closes the create dialog (its create belonged to the old engine).
+        UseSessionReset(() => setDialog(null));
         var handlers = UseMemo(() => new VolumeTableHandlers(), Array.Empty<object>());
 
         var connected = state.Status == ConnectionStatus.Connected;
