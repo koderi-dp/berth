@@ -76,16 +76,22 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             engine state), DetailStateHook.cs (the open detail session's state as an external store),
                             UiThreadSubscription.cs (shared by both: follows a replaceable source and coalesces its
                             thread-pool changes into one pending UI-thread callback), SettingsHook.cs (settings as an
-                            external store)
+                            external store), ListViewHook.cs (ListPageComponent, the base class of the four list pages:
+                            UseListView keeps a list's search, filter, sort and collapsed groups by route in
+                            ListViewStore, so a page the navigation cache dropped starts again from them; UseListSearch)
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
                             above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
                             row and the detail header), ListPage (a list page's sections, toolbar, search box, bulk bar
-                            and shortcuts) and ListTable (columns with wide and compact widths, header with sortable
-                            titles, rows, the virtualized table, loading and empty states), shared by the four lists, DeleteDialog, DetailHeader (breadcrumb, name, ID,
-                            image, ports, status, actions), StatsStrip (total CPU and memory above the list)
-  Pages/                    ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage, ConnectionEditor, ContainerDetailPage (header,
-                            tab strip, keeps a detail session open while shown)
+                            and its shortcuts) and ListTable (columns with wide and compact widths, header with sortable
+                            titles, rows, the virtualized table, loading and empty states), shared by the four lists;
+                            ShellKeys (the app's shortcuts at the window root, Ctrl+F, F5, Delete, Escape, Alt+Left,
+                            acting for the page shown through the PageKeys it registers), DeleteDialog, DetailHeader
+                            (breadcrumb, name, ID, image, ports, status, actions), StatsStrip (total CPU and memory
+                            above the list)
+  Pages/                    ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage,
+                            ConnectionEditor, ContainerDetailPage (header, tab strip, keeps a detail session open while
+                            shown)
     Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
@@ -317,6 +323,9 @@ wrong or could be better before they do.
     the state dot), and a child's name drops what the parent row already says.
   - Destructive actions confirm, name what will be lost, and default to Cancel.
   - Light and dark working does not mean High Contrast works; that has not been checked yet.
+  - Keyboard shortcuts are registered with `ShellKeys` (a page's `PageKeys`), never with a `CommandHost`: Reactor's host takes its
+    key even while its command is disabled (an inner disabled Escape kept the page's Escape from running) and works only while the
+    focus is inside it (not after a click in the sidebar).
 
 ## Reactor
 

@@ -1,5 +1,6 @@
 using Berth.Components;
 using Berth.Hooks;
+using Berth.Presentation;
 using Berth.Session;
 using Microsoft.UI.Reactor.Core;
 
@@ -14,7 +15,7 @@ internal sealed class VolumesPage : ListPageComponent
     public override Element Render()
     {
         var state = UseEngineState();
-        var (search, setSearch) = UseState("");
+        var (view, updateView) = UseListView(AppRoute.Volumes, new ResourceListView<UsageFilter, VolumeColumn>(UsageFilter.All, VolumeRows.DefaultSort));
         var searchBox = UseListSearch();
 
         var connected = state.Status == ConnectionStatus.Connected;
@@ -27,7 +28,7 @@ internal sealed class VolumesPage : ListPageComponent
             state,
             summary: null,
             ListPage.Toolbar(
-                ListPage.SearchBox(search, setSearch, searchBox, "Search by name (Ctrl+F)"),
+                ListPage.SearchBox(view.Filter.Search, value => updateView(v => v with { Filter = v.Filter with { Search = value } }), searchBox, "Search by name (Ctrl+F)"),
                 filter: null),
             bulkBar: null,
             // Until the table is built: the loading state until the list arrives, then how many there are.

@@ -21,6 +21,12 @@ namespace Berth.Pages;
 /// </summary>
 internal sealed class ContainersPage : ListPageComponent
 {
+    /// <summary>
+    /// What the list shows apart from its rows and is kept if the page is built again: the search and the collapsed compose projects.
+    /// The "running only" switch and the sort are in the settings.
+    /// </summary>
+    private sealed record View(string Search, ImmutableHashSet<string> Collapsed);
+
     /// <summary>One line of the virtualized list: a compose project's row or a container's row.</summary>
     private abstract record ListItem(string Key);
 
@@ -39,8 +45,8 @@ internal sealed class ContainersPage : ListPageComponent
         // A narrow window has no room for a button per action: Restart and Pause then go into a menu on each row.
         var compact = !UseBreakpoint(ContainerRowView.WideLayoutMinWidth);
         var settings = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot);
-        var (search, setSearch) = UseState("");
-        var (collapsed, updateCollapsed) = UseReducer(NoIds);
+        var (view, updateView) = UseListView(AppRoute.Containers, new View("", NoIds));
+        var (search, collapsed) = (view.Search, view.Collapsed);
         var (checkedIds, updateChecked) = UseReducer(NoIds);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
         var searchBox = UseListSearch();
@@ -68,7 +74,7 @@ internal sealed class ContainersPage : ListPageComponent
         var callbacks = new ContainerListCallbacks(
             Send,
             (ids, value) => updateChecked(current => value ? current.Union(ids) : current.Except(ids)),
-            project => updateCollapsed(current => current.Contains(project) ? current.Remove(project) : current.Add(project)),
+            project => updateView(v => v with { Collapsed = v.Collapsed.Contains(project) ? v.Collapsed.Remove(project) : v.Collapsed.Add(project) }),
             rows => setDeleteRequest(DeleteRequest.For(rows)),
             row => nav.Navigate(new AppRoute.ContainerDetail(row.Id, AppServices.Current.SessionNumber), new NavigateOptions { Transition = NavigationTransition.DrillIn() }));
 
@@ -87,7 +93,7 @@ internal sealed class ContainersPage : ListPageComponent
             "Containers",
             state,
             Strip(state),
-            Toolbar(search, setSearch, runningOnly, searchBox),
+            Toolbar(search, value => updateView(v => v with { Search = value }), runningOnly, searchBox),
             BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
             Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
             DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)));

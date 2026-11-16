@@ -168,7 +168,8 @@ internal sealed class App : EngineStateComponent
                     // A page left stays mounted, so a list keeps its search, sort and scroll while another page shows. The cache holds
                     // the pages not shown and drops the one used longest ago. There are five fixed pages (four lists and Settings) and
                     // a page per container opened: six hold every list and Settings while a container's page shows, and one more
-                    // container's page besides; a list is mounted again only when it was left before three or more container pages.
+                    // container's page besides. A list left before more container pages were opened is mounted again and starts from
+                    // its search, filter and sort kept by route (ListPageComponent.UseListView); only its scroll and checked rows go.
                     CacheMode = NavigationCacheMode.Enabled,
                     CacheSize = 6,
                 })
