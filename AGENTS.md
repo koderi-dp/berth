@@ -449,6 +449,10 @@ On the detail page:
   title are hidden from UI Automation; each card's title carries the latest and highest
   figures as its name ("CPU usage 49.8%. Highest in the last 2 minutes: ...").
 
+Checks that drive the terminal through WebView2's remote debugging port
+(`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=...`) need a Debug build: a Release build clears every
+`WEBVIEW2_*` variable at start.
+
 For memory measurements use a Release build without devtools:
 `dotnet build -c Release -p:PublishTrimmed=false src/Berth.App`, then
 `dotnet run -c Release --no-build -p:PublishTrimmed=false --project src/Berth.App`

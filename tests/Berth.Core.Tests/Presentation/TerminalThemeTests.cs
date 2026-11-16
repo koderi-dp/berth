@@ -19,6 +19,18 @@ public sealed class TerminalThemeTests
         Assert.Equal(4.5, colors.Contrast);
     }
 
+    [Theory]
+    // The card fill the terminal sits on: 70 % white over the light surface, 5 % white over the dark one.
+    [InlineData(false, "#fbfbfb", 4.5)]
+    [InlineData(true, "#2b2b2b", 3)]
+    public void Every_colour_also_reads_on_the_card_the_terminal_sits_on(bool dark, string card, double minimum)
+    {
+        var colors = TerminalTheme.For(dark, highContrast: false, card, dark ? "#ffffff" : "#1a1a1a");
+
+        Assert.All(colors.Ansi.Skip(dark ? 1 : 0), c => Assert.True(
+            TerminalTheme.ContrastRatio(c, card) >= minimum, $"{c} on {card}: {TerminalTheme.ContrastRatio(c, card):0.00}"));
+    }
+
     [Fact]
     public void Lights_three_greys_stay_apart()
     {

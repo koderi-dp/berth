@@ -9,18 +9,18 @@ namespace Berth.Pages.Detail;
 /// The app's end of the byte path from a shell to the terminal page. Each chunk the session's pump hands over is copied into one
 /// buffer and posted on the UI thread as an <c>output</c> message (chunks that arrive while a post is pending go out together). Every
 /// byte is counted in a <see cref="TerminalFlow"/>: <see cref="WriteAsync"/> completes only while the flow is not paused, so a shell
-/// that floods output waits on xterm's acknowledgements instead of piling bytes up. A new shell (a higher generation, from the
-/// session's pump or from <see cref="Begin"/>) clears the screen first and starts the count again.
+/// that floods output waits on xterm's acknowledgements instead of piling bytes up. Which shell is shown is decided by a
+/// <see cref="TerminalScreen"/>: a new shell (a higher generation, from the session's pump or from <see cref="Begin"/>) clears the
+/// screen first and starts the count again, and <see cref="NewSession"/> forgets one detail session's numbering for the next.
 /// </summary>
 /// <remarks><see cref="WriteAsync"/> is called on a thread-pool thread; everything else on the UI thread.</remarks>
 internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
 {
     private readonly Lock _lock = new();
-    private readonly TerminalFlow _flow = new();
+    private readonly TerminalScreen _screen = new();
     private readonly ArrayBufferWriter<byte> _pending = new();
     private TerminalHandle? _handle;
     private TaskCompletionSource? _resume;
-    private int _generation;
     private bool _resetPending;
     private bool _postQueued;
 
@@ -30,8 +30,25 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         get
         {
             lock (_lock)
-                return _generation;
+                return _screen.Generation;
         }
+    }
+
+    /// <summary>
+    /// The terminal follows another detail session, whose shells are numbered from 1 again: what the old one sent and had
+    /// outstanding is forgotten, and its pump, if still waiting, is let go.
+    /// </summary>
+    public void NewSession()
+    {
+        TaskCompletionSource? resume;
+        lock (_lock)
+        {
+            _screen.NewSession();
+            _pending.ResetWrittenCount();
+            resume = TakeResume();
+        }
+
+        resume?.TrySetResult();
     }
 
     /// <summary>A new terminal page (a new WebView, or the same one loaded again): nothing it was sent is outstanding.</summary>
@@ -41,7 +58,7 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         lock (_lock)
         {
             _handle = handle;
-            _flow.Reset();
+            _screen.Flow.Reset();
             resume = TakeResume();
         }
 
@@ -58,7 +75,7 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
                 return;
             _handle = null;
             _pending.ResetWrittenCount();
-            _flow.Reset();
+            _screen.Flow.Reset();
             resume = TakeResume();
         }
 
@@ -71,9 +88,9 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         TaskCompletionSource? resume;
         lock (_lock)
         {
-            if (generation <= _generation)
+            if (!_screen.Begin(generation))
                 return;
-            resume = StartGeneration(generation);
+            resume = NewScreen();
             QueuePost();
         }
 
@@ -86,8 +103,8 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         TaskCompletionSource? resume = null;
         lock (_lock)
         {
-            _flow.Acked(bytes);
-            if (!_flow.Paused)
+            _screen.Flow.Acked(bytes);
+            if (!_screen.Flow.Paused)
                 resume = TakeResume();
         }
 
@@ -100,15 +117,18 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         Task wait;
         lock (_lock)
         {
-            if (generation < _generation || _handle is null)
+            if (_handle is null)
                 return ValueTask.CompletedTask;
-            if (generation > _generation)
-                released = StartGeneration(generation);
+            var output = _screen.Output(generation);
+            if (output == TerminalOutput.Drop)
+                return ValueTask.CompletedTask;
+            if (output == TerminalOutput.NewScreen)
+                released = NewScreen();
 
             _pending.Write(bytes.Span);
-            _flow.Sent(bytes.Length);
+            _screen.Flow.Sent(bytes.Length);
             QueuePost();
-            if (!_flow.Paused)
+            if (!_screen.Flow.Paused)
             {
                 released?.TrySetResult();
                 return ValueTask.CompletedTask;
@@ -122,13 +142,11 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         return new ValueTask(wait.WaitAsync(ct));
     }
 
-    // Under the lock.
-    private TaskCompletionSource? StartGeneration(int generation)
+    // Under the lock, once the screen has started a new shell (and reset its flow): the page is cleared before what follows.
+    private TaskCompletionSource? NewScreen()
     {
-        _generation = generation;
         _resetPending = true;
         _pending.ResetWrittenCount();
-        _flow.Reset();
         return TakeResume();
     }
 

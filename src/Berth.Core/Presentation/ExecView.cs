@@ -7,7 +7,7 @@ namespace Berth.Presentation;
 public enum ExecViewKind { Waiting, NotRunning, Paused, Restarting, Ready, Starting, Running, Ended, Failed, Lost }
 
 /// <summary>The one button the Exec tab's line offers, if any.</summary>
-public enum ExecButton { None, StartContainer, ResumeContainer, StartAgain, TryAgain }
+public enum ExecButton { None, StartContainer, ResumeContainer, StartAgain, TryAgain, StartSh }
 
 /// <summary>The Exec tab's state, decided from the detail state.</summary>
 /// <param name="Text">The line shown; null when the view needs none (Ready, Running).</param>
@@ -19,6 +19,9 @@ public sealed record ExecViewModel(ExecViewKind Kind, string? Text, ExecButton B
 /// <summary>The Exec tab's whole behaviour: which state it is in, the line it shows and the button it offers.</summary>
 public static class ExecView
 {
+    /// <summary>What <see cref="ExecButton.StartSh"/> starts.</summary>
+    public static readonly System.Collections.Immutable.ImmutableArray<string> ShCommand = ["sh"];
+
     private static readonly ExecViewModel WaitingView =
         new(ExecViewKind.Waiting, DetailPage.WaitingText, ExecButton.None, ShowTerminal: false, AcceptsInput: false, IsError: false);
 
@@ -72,11 +75,22 @@ public static class ExecView
             ExecStatus.Starting => new ExecViewModel(
                 ExecViewKind.Starting, $"Starting {string.Join(' ', exec.Command)}…", ExecButton.None, true, false, false),
             ExecStatus.Running => RunningView,
-            ExecStatus.Ended => new ExecViewModel(ExecViewKind.Ended, EndedText(exec), ExecButton.StartAgain, true, false, false),
+            ExecStatus.Ended => new ExecViewModel(
+                ExecViewKind.Ended, EndedText(exec), SuggestsSh(exec) ? ExecButton.StartSh : ExecButton.StartAgain, true, false, false),
             ExecStatus.Failed => new ExecViewModel(ExecViewKind.Failed, exec.Error, ExecButton.TryAgain, true, false, IsError: true),
             _ => startedOnce ? LostView : ReadyView,
         };
     }
+
+    /// <summary>The words on the line's button: Start again (also after a failure), or Start sh where the text suggests sh.</summary>
+    public static string ButtonLabel(ExecButton button) => button == ExecButton.StartSh ? "Start sh" : "Start again";
+
+    /// <summary>
+    /// Whether the tab still counts a shell as started once it follows a new detail session: only when the old one lost its
+    /// connection (then "The shell ended when the connection was lost." is true). A page left and shown again starts a new shell by
+    /// itself, as a first visit does.
+    /// </summary>
+    public static bool StartedOnceAfterNewSession(bool startedOnce, bool previousLost) => startedOnce && previousLost;
 
     /// <summary>The terminal's size as the toolbar shows it: "120 × 30".</summary>
     public static string SizeText(Engine.Models.TerminalSize size) =>
@@ -95,7 +109,7 @@ public static class ExecView
 
     /// <summary>
     /// The exit code, and for 126 or 127 before anything was typed (the shell could not be run, most likely because it is not in
-    /// the image) a hint that names it and suggests sh, unless it was sh.
+    /// the image) a hint that names it and suggests sh, unless it was sh; the button then starts sh (<see cref="ExecButton.StartSh"/>).
     /// </summary>
     private static string EndedText(ExecState exec)
     {
@@ -103,11 +117,16 @@ public static class ExecView
             return "The shell exited.";
 
         var text = string.Create(CultureInfo.InvariantCulture, $"The shell exited with code {code}.");
-        if (code is not (126 or 127) || exec.HadInput || exec.Command.IsDefaultOrEmpty)
+        if (!LooksMissing(exec))
             return text;
 
-        var shell = exec.Command[0];
-        var hint = $"{text} {shell} may not be in this image.";
-        return shell == "sh" ? hint : $"{hint} Try sh.";
+        var hint = $"{text} {exec.Command[0]} may not be in this image.";
+        return SuggestsSh(exec) ? $"{hint} Try sh." : hint;
     }
+
+    /// <summary>126 or 127 before anything was typed: the command could not be run.</summary>
+    private static bool LooksMissing(ExecState exec) =>
+        exec.ExitCode is 126 or 127 && !exec.HadInput && !exec.Command.IsDefaultOrEmpty;
+
+    private static bool SuggestsSh(ExecState exec) => LooksMissing(exec) && exec.Command[0] != "sh";
 }

@@ -114,11 +114,11 @@ public sealed class ExecViewTests
     {
         AssertView(
             ExecView.For(Detail(Exec(ExecStatus.Ended, Bash, exitCode: 127)), waiting: false, startedOnce: true),
-            ExecViewKind.Ended, "The shell exited with code 127. bash may not be in this image. Try sh.", ExecButton.StartAgain,
+            ExecViewKind.Ended, "The shell exited with code 127. bash may not be in this image. Try sh.", ExecButton.StartSh,
             showTerminal: true);
         AssertView(
             ExecView.For(Detail(Exec(ExecStatus.Ended, ["ash"], exitCode: 126)), waiting: false, startedOnce: true),
-            ExecViewKind.Ended, "The shell exited with code 126. ash may not be in this image. Try sh.", ExecButton.StartAgain,
+            ExecViewKind.Ended, "The shell exited with code 126. ash may not be in this image. Try sh.", ExecButton.StartSh,
             showTerminal: true);
     }
 
@@ -136,6 +136,31 @@ public sealed class ExecViewTests
         Assert.Equal(ExecViewKind.NotRunning, view.Kind);
         Assert.Equal(ExecButton.StartContainer, view.Button);
     }
+
+    [Fact]
+    public void A_missing_sh_or_a_shell_that_was_typed_into_offers_to_start_again_not_sh()
+    {
+        Assert.Equal(ExecButton.StartAgain, ExecView.For(Detail(Exec(ExecStatus.Ended, Sh, exitCode: 127)), false, true).Button);
+        Assert.Equal(ExecButton.StartAgain, ExecView.For(Detail(Exec(ExecStatus.Ended, Bash, exitCode: 127, hadInput: true)), false, true).Button);
+        Assert.Equal(ExecButton.StartAgain, ExecView.For(Detail(Exec(ExecStatus.Ended, Bash, exitCode: 1)), false, true).Button);
+    }
+
+    [Fact]
+    public void The_buttons_say_what_they_start()
+    {
+        Assert.Equal("Start again", ExecView.ButtonLabel(ExecButton.StartAgain));
+        Assert.Equal("Start again", ExecView.ButtonLabel(ExecButton.TryAgain));
+        Assert.Equal("Start sh", ExecView.ButtonLabel(ExecButton.StartSh));
+        Assert.Equal(["sh"], ExecView.ShCommand.ToArray());
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, true)]
+    public void A_new_session_says_the_shell_was_lost_only_after_a_real_connection_loss(bool startedOnce, bool previousLost, bool kept) =>
+        Assert.Equal(kept, ExecView.StartedOnceAfterNewSession(startedOnce, previousLost));
 
     [Fact]
     public void Code_127_after_typing_gets_no_hint() =>

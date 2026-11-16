@@ -16,13 +16,14 @@ public sealed record TerminalColors(
 public static class TerminalTheme
 {
     /// <summary>
-    /// Windows Terminal's "Campbell", with the four entries that read below 3:1 on the dark surface (#202020) lightened until they
-    /// pass: red #c50f1f, blue #0037da, magenta #881798 and bright magenta #b4009e. Black stays: it is the background's colour.
+    /// Windows Terminal's "Campbell", with the four entries that read below 3:1 on the dark card the terminal sits on (#2b2b2b: 5 %
+    /// white over #202020) lightened until they pass: red #c50f1f, blue #0037da, magenta #881798 and bright magenta #b4009e. Black
+    /// stays: it is the background's colour.
     /// </summary>
     private static readonly ImmutableArray<string> Dark =
     [
-        "#0c0c0c", "#cb2735", "#13a10e", "#c19c00", "#3661e2", "#9f43ac", "#3a96dd", "#cccccc",
-        "#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#bc1ca9", "#61d6d6", "#f2f2f2",
+        "#0c0c0c", "#d13f4b", "#13a10e", "#c19c00", "#466ee4", "#a854b3", "#3a96dd", "#cccccc",
+        "#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#c437b3", "#61d6d6", "#f2f2f2",
     ];
 
     /// <summary>

@@ -237,6 +237,9 @@
         break;
       case 'enabled':
         term.options.disableStdin = m.on !== true;
+        // No blinking cursor where nothing is taken (a shell that ended): it would suggest typing still goes somewhere. Written
+        // to the screen only, never sent to the shell.
+        term.write(m.on === true ? '\x1b[?25h' : '\x1b[?25l');
         break;
       case 'focus':
         term.focus();

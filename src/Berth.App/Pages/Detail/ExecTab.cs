@@ -49,9 +49,10 @@ internal sealed record ExecTabProps(
 /// </summary>
 internal sealed class ExecTab : Component<ExecTabProps>
 {
-    private const string StartAgainLabel = "Start again";
-
     private static readonly string[] ShellLabels = [.. ExecCommand.Choices.Select(c => c.Label)];
+
+    // The picker's entry for sh, chosen by "Start sh".
+    private static readonly int ShIndex = ExecCommand.Choices.ToList().FindIndex(c => !c.IsCustom && c.Command.SequenceEqual(ExecView.ShCommand));
 
     // Built once: a grid handed new definitions on every render is updated on every render.
     private static readonly GridSize[] PageColumns = [GridSize.Star()];
@@ -92,6 +93,8 @@ internal sealed class ExecTab : Component<ExecTabProps>
         link.SetThemeDark = setThemeDark;
         link.SetWebViewError = setWebViewError;
         link.UpdateNote = setNote;
+        link.StartedOnce = startedOnce;
+        link.SetStartedOnce = setStartedOnce;
         link.Note = note;
         link.OnPageLost = () =>
         {
@@ -181,7 +184,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
             terminalShown);
 
         var toolbar = view.ShowTerminal || webViewError is not null
-            ? Toolbar(view, choice, props, size, customError, OnChoose, () => StartChosen(choice, props.CustomCommand))
+            ? Toolbar(view, choice, props, size, customError, OnChoose, text => StartChosen(choice, text ?? props.CustomCommand))
             : null;
 
         void OnChoose(int index)
@@ -205,14 +208,25 @@ internal sealed class ExecTab : Component<ExecTabProps>
         if (!view.ShowTerminal)
             return Placeholder(view, props, BeforeContainerAction);
 
-        var startAgain = () => Start(link.LastCommand is { IsDefaultOrEmpty: false } last ? last : ChosenCommand(choice, props.CustomCommand) ?? []);
+        void StartAgain()
+        {
+            if (view.Button == ExecButton.StartSh)
+            {
+                // The shell was not in the image: sh is chosen in the picker too, so the next start is sh as well.
+                if (ShIndex >= 0)
+                    props.SetShellChoice(ShIndex);
+                Start(ExecView.ShCommand);
+                return;
+            }
+
+            Start(link.LastCommand is { IsDefaultOrEmpty: false } last ? last : ChosenCommand(choice, props.CustomCommand) ?? []);
+        }
+
         Element terminal = webViewError is not null
             ? Widgets.RetryBar("The terminal could not start: " + webViewError, null).VAlign(VerticalAlignment.Top).AutomationId("exec-webview-error")
             : Border(Component<TerminalView, TerminalViewProps>(
                     new(props.Name, colors.Background, link.OnMessage, link.OnReady, link.OnFailed, link.PageLost)))
                 .Background(colors.Background)
-                .BorderBrush(Theme.CardStroke)
-                .BorderThickness(1)
                 .CornerRadius(4)
                 .Padding(8);
 
@@ -221,7 +235,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
                 PageColumns,
                 PageRows,
                 toolbar?.Grid(row: 0, column: 0).Margin(0, 0, 0, 8).WithKey("toolbar"),
-                StatusLine(view, startAgain)?.Grid(row: 1, column: 0).Margin(0, 0, 0, 8).WithKey("status"),
+                StatusLine(view, StartAgain)?.Grid(row: 1, column: 0).Margin(0, 0, 0, 8).WithKey("status"),
                 terminal.Grid(row: 2, column: 0).WithKey("terminal"),
                 noteText is null
                     ? null
@@ -247,7 +261,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
         TerminalSize? size,
         string? customError,
         Action<int> choose,
-        Action runCustom)
+        Action<string?> runCustom)
     {
         var picker = ComboBox(ShellLabels, props.ShellChoice, choose)
             .Width(192)
@@ -266,18 +280,19 @@ internal sealed class ExecTab : Component<ExecTabProps>
             custom = Widgets.TextField(props.CustomCommand, props.SetCustomCommand, "/bin/zsh -l")
                 .AutomationName("Custom command")
                 .AutomationId("exec-custom")
-                .OnKeyDown((_, e) =>
+                .OnKeyDown((sender, e) =>
                 {
                     if (e.Key == VirtualKey.Enter)
                     {
+                        // The box's own text: the last change may not have reached the page's state yet.
                         e.Handled = true;
-                        runCustom();
+                        runCustom((sender as TextBox)?.Text);
                     }
                 })
                 .VAlign(VerticalAlignment.Center)
                 .Margin(8, 0, 0, 0)
                 .Grid(row: 0, column: 1);
-            run = Button("Run", runCustom)
+            run = Button("Run", () => runCustom(null))
                 .AutomationId("exec-run")
                 .IsEnabled(view.Kind != ExecViewKind.Starting)
                 .VAlign(VerticalAlignment.Center)
@@ -322,21 +337,21 @@ internal sealed class ExecTab : Component<ExecTabProps>
                     .AutomationId("exec-status")
                     .Height(32);
             case ExecViewKind.Ended or ExecViewKind.Lost:
-                return Bar(view.Text ?? "", isError: false, startAgain, "exec-ended", "exec-start-again");
+                return Bar(view, isError: false, startAgain, "exec-ended", "exec-start-again");
             case ExecViewKind.Failed:
-                return Bar(view.Text ?? "", isError: true, startAgain, "exec-failed", "exec-retry");
+                return Bar(view, isError: true, startAgain, "exec-failed", "exec-retry");
             default:
                 return null;
         }
     }
 
-    /// <summary>An open bar that cannot be closed, with "Start again" as its button.</summary>
-    private static Element Bar(string text, bool isError, Action startAgain, string id, string buttonId)
+    /// <summary>An open bar that cannot be closed, with "Start again" (or "Start sh") as its button.</summary>
+    private static Element Bar(ExecViewModel view, bool isError, Action startAgain, string id, string buttonId)
     {
-        var bar = (InfoBar(message: text) with
+        var bar = (InfoBar(message: view.Text ?? "") with
             {
                 IsOpen = true,
-                ActionButtonContent = StartAgainLabel,
+                ActionButtonContent = ExecView.ButtonLabel(view.Button),
                 OnActionButtonClick = startAgain,
             })
             .IsClosable(false)
@@ -350,8 +365,9 @@ internal sealed class ExecTab : Component<ExecTabProps>
     }
 
     /// <summary>
-    /// No terminal: the container is not running, paused, restarting, or the page waits for the engine. The sentence near the top,
-    /// with Start or Resume where it helps; the button shows a ring while the container's action is under way.
+    /// No terminal: the container is not running, paused, restarting, or the page waits for the engine. The sentence in the middle of
+    /// the tab, as the Stats tab's, with Start or Resume under it where it helps; the button shows a ring while the container's
+    /// action is under way.
     /// </summary>
     private static Element Placeholder(ExecViewModel view, ExecTabProps props, Action beforeAction)
     {
@@ -373,8 +389,8 @@ internal sealed class ExecTab : Component<ExecTabProps>
 
         return VStack(12, text, button?.HAlign(HorizontalAlignment.Center))
             .HAlign(HorizontalAlignment.Center)
-            .VAlign(VerticalAlignment.Top)
-            .Margin(0, 48, 0, 16);
+            .VAlign(VerticalAlignment.Center)
+            .Margin(0, 0, 0, 16);
     }
 
     private static Element ActionButton(string label, string id, ContainerAction action, ExecTabProps props, Action beforeAction)
@@ -395,15 +411,16 @@ internal sealed class ExecTab : Component<ExecTabProps>
     }
 
     /// <summary>
-    /// The terminal's colours from Presentation, over the theme's solid background and primary text; under a Windows contrast theme,
-    /// over the system's window colours.
+    /// The terminal's colours from Presentation, over the card fill the app's other cards use (blended over the theme's solid
+    /// background, so xterm and the area around it are one solid colour) and primary text; under a Windows contrast theme, over the
+    /// system's window colours.
     /// </summary>
     internal static TerminalColors Colors(bool dark, bool highContrast)
     {
         if (highContrast && SystemColor("SystemColorWindowColor") is { } window && SystemColor("SystemColorWindowTextColor") is { } text)
             return TerminalTheme.For(dark, highContrast: true, Hex(window), Hex(text));
 
-        var background = ColorOf("SolidBackgroundFillColorBaseBrush", dark, null);
+        var background = ColorOf("CardBackgroundFillColorDefaultBrush", dark, ColorOf("SolidBackgroundFillColorBaseBrush", dark, null));
         var foreground = ColorOf("TextFillColorPrimaryBrush", dark, background);
         return TerminalTheme.For(dark, highContrast: false, Hex(background), Hex(foreground));
     }
@@ -473,6 +490,14 @@ internal sealed class ExecLink
 
     public Action OnPageLost { get; set; } = () => { };
 
+    /// <summary>The tab's own "a shell was started since it was shown", as last rendered, and its setter.</summary>
+    public bool StartedOnce { get; set; }
+
+    public Action<bool> SetStartedOnce { get; set; } = _ => { };
+
+    // Whether the session followed before the current one had lost its connection when it went.
+    private bool _previousLost;
+
     /// <summary>The detail session the shell runs in; null while none is open for this container.</summary>
     public ContainerDetailSession? Session { get; private set; }
 
@@ -482,16 +507,31 @@ internal sealed class ExecLink
     /// <summary>The terminal's fitted size; null before the page said ready.</summary>
     public TerminalSize? Size { get; private set; }
 
-    /// <summary>Attaches the bridge to <paramref name="session"/> when it is this container's, and detaches it from the one before.</summary>
+    /// <summary>
+    /// Attaches the bridge to <paramref name="session"/> when it is this container's, and detaches it from the one before. A new
+    /// session numbers its shells from 1 again, so the bridge starts over; and unless the old one lost its connection, the tab
+    /// starts a shell by itself again (<see cref="ExecView.StartedOnceAfterNewSession"/>).
+    /// </summary>
     public void Follow(ContainerDetailSession? session)
     {
         if (session is not null && session.State.ContainerId != ContainerId)
             session = null;
         if (ReferenceEquals(session, Session))
             return;
-        Session?.AttachExecOutput(null);
+        if (Session is { } previous)
+        {
+            previous.AttachExecOutput(null);
+            _previousLost = previous.State.ConnectionLost;
+        }
+
         Session = session;
-        session?.AttachExecOutput(Bridge);
+        if (session is null)
+            return;
+        Bridge.NewSession();
+        var startedOnce = ExecView.StartedOnceAfterNewSession(StartedOnce, _previousLost);
+        if (startedOnce != StartedOnce)
+            SetStartedOnce(startedOnce);
+        session.AttachExecOutput(Bridge);
     }
 
     /// <summary>The tab is left: the shell ends and its output goes nowhere.</summary>

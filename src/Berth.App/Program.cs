@@ -3,6 +3,17 @@ using Berth.Session;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 
+#if !DEBUG
+// WebView2 reads WEBVIEW2_* variables in any app (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS can open a remote debugging port, through
+// which another process could read the terminal and type into the shell). A Release build drops them before any WebView is made;
+// Debug keeps them for the checks.
+foreach (var name in Environment.GetEnvironmentVariables().Keys.OfType<string>())
+{
+    if (name.StartsWith("WEBVIEW2_", StringComparison.OrdinalIgnoreCase))
+        Environment.SetEnvironmentVariable(name, null);
+}
+#endif
+
 AppLog.Install();
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
 {
