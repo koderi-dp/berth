@@ -53,68 +53,137 @@ public sealed class CommandRunnerTests
     }
 
     [Fact]
+    public async Task Runs_in_the_user_profile_folder_whatever_folder_berth_was_started_from()
+    {
+        var outcome = await CommandRunner.RunAsync("cmd.exe", ["/c", "cd"], CancellationToken.None).WaitAsync(Patience);
+
+        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), outcome.Output, ignoreCase: true);
+    }
+
+    [Fact]
     public async Task Ends_when_the_command_exits_even_if_a_program_it_started_keeps_its_output_open()
     {
-        var started = DateTime.Now;
+        using var child = new ChildPid();
         try
         {
-            // A start command that launches something long-lived (a stand-in engine) and returns: the child inherits the output pipe.
-            var outcome = await CommandRunner.RunAsync("cmd.exe", ["/c", "start /b ping -n 30 127.0.0.1& echo started"], CancellationToken.None).WaitAsync(Patience);
+            // A start command that launches something long-lived (a stand-in engine) and returns: the child shares the console and
+            // its output handles. The child's process id goes to a file this test owns.
+            var outcome = await CommandRunner.RunAsync(
+                    "powershell.exe",
+                    ["-NoProfile", "-Command", $"$p = Start-Process ping.exe -ArgumentList '-n','30','127.0.0.1' -NoNewWindow -PassThru; Set-Content -LiteralPath '{child.File}' -Value $p.Id; 'started'"],
+                    CancellationToken.None)
+                .WaitAsync(Patience);
 
             Assert.Equal(0, outcome.ExitCode);
-            Assert.StartsWith("started", outcome.Output);
+            // The ping shares the output, so its lines may come before or after.
+            Assert.Contains("started", outcome.Output.Split('\n'));
+            Assert.True(child.IsRunning(), "the started program should still run");
         }
         finally
         {
-            KillPingsStartedAfter(started);
+            child.EndIfRunning();
         }
     }
 
     [Fact]
     public async Task Cancelling_ends_the_whole_process_tree()
     {
-        var started = DateTime.Now;
-        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        using var child = new ChildPid();
+        using var cancel = new CancellationTokenSource();
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                () => CommandRunner.RunAsync("cmd.exe", ["/c", "ping -n 60 127.0.0.1"], cancel.Token).WaitAsync(Patience));
+            var run = CommandRunner.RunAsync(
+                "powershell.exe",
+                ["-NoProfile", "-Command", $"$p = Start-Process ping.exe -ArgumentList '-n','60','127.0.0.1' -NoNewWindow -PassThru; Set-Content -LiteralPath '{child.File}' -Value $p.Id; Wait-Process -Id $p.Id"],
+                cancel.Token);
+            await child.WaitForPid().WaitAsync(Patience);
+            Assert.True(child.IsRunning());
 
-            // Ended processes can take a moment to show as exited.
-            for (var i = 0; i < 50 && PingsStartedAfter(started).Length > 0; i++)
+            cancel.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(Patience));
+
+            // An ended process can take a moment to show as exited.
+            for (var i = 0; i < 50 && child.IsRunning(); i++)
                 await Task.Delay(100);
-            Assert.Empty(PingsStartedAfter(started));
+            Assert.False(child.IsRunning(), "the grandchild should have been ended with the tree");
         }
         finally
         {
-            KillPingsStartedAfter(started);
+            child.EndIfRunning();
         }
     }
 
-    private static Process[] PingsStartedAfter(DateTime time) =>
-        [.. Process.GetProcessesByName("PING").Where(p =>
-        {
-            try
-            {
-                return !p.HasExited && p.StartTime >= time.AddSeconds(-1);
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        })];
-
-    private static void KillPingsStartedAfter(DateTime time)
+    /// <summary>
+    /// The process id of the one program a test's command starts, written by the command to a file the test owns. Only that process
+    /// is ever looked at or ended, and only while it is still the ping.exe started after the test began.
+    /// </summary>
+    private sealed class ChildPid : IDisposable
     {
-        foreach (var ping in PingsStartedAfter(time))
+        private readonly DateTime _since = DateTime.Now.AddSeconds(-1);
+
+        public string File { get; } = Path.Combine(Path.GetTempPath(), "berth-test-" + Guid.NewGuid().ToString("N") + ".pid");
+
+        public async Task WaitForPid()
+        {
+            while (Read() is null)
+                await Task.Delay(50);
+        }
+
+        public bool IsRunning() => Owned() is { } process && !process.HasExited;
+
+        public void EndIfRunning()
         {
             try
             {
-                ping.Kill();
+                if (Owned() is { HasExited: false } process)
+                    process.Kill();
             }
             catch (Exception)
             {
                 // Already gone.
+            }
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                System.IO.File.Delete(File);
+            }
+            catch (IOException)
+            {
+                // A leftover temp file is harmless.
+            }
+        }
+
+        private int? Read()
+        {
+            try
+            {
+                return int.TryParse(System.IO.File.ReadAllText(File).Trim(), out var pid) ? pid : null;
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+        }
+
+        private Process? Owned()
+        {
+            if (Read() is not { } pid)
+                return null;
+            try
+            {
+                var process = Process.GetProcessById(pid);
+                return process.ProcessName.Equals("PING", StringComparison.OrdinalIgnoreCase) && process.StartTime >= _since ? process : null;
+            }
+            catch (ArgumentException)
+            {
+                return null; // exited
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
             }
         }
     }

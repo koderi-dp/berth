@@ -17,6 +17,8 @@ internal static class WslList
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                // As CommandRunner: never a program in whatever folder Berth was started from.
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };

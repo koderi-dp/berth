@@ -33,6 +33,9 @@ public static class CommandRunner
         {
             UseShellExecute = false,
             CreateNoWindow = true,
+            // A fixed folder, not Berth's current one (whatever a terminal was in for a Debug launch): a bare program name is then
+            // looked up in Berth's own folder, System32, Windows and PATH, never in a folder someone could have put a wsl.exe in.
+            WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
