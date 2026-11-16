@@ -17,6 +17,9 @@ internal static class DetailHeader
 {
     private const string ContainersTag = "containers";
 
+    // The breadcrumb items last made, for the container named; read and written on the UI thread only.
+    private static (string? Name, BreadcrumbBarItemData[] Items) _crumbs = (null, []);
+
     /// <summary>How many ports the header lists before it sums up the rest.</summary>
     private const int ShownPorts = 4;
 
@@ -37,7 +40,7 @@ internal static class DetailHeader
         void Run(RowAction action) => ContainerParts.Run(action, row, actions, run);
 
         var breadcrumb = BreadcrumbBar(
-                [Breadcrumb("Containers", ContainersTag), Breadcrumb(row.Name)],
+                Crumbs(row.Name),
                 item =>
                 {
                     if (Equals(item.Tag, ContainersTag))
@@ -95,6 +98,22 @@ internal static class DetailHeader
         return (FlexColumn(breadcrumb, summary) with { RowGap = 8 })
             .WithContextFlyout(ContainerParts.ContextMenu(actions, Run))
             .Flex(shrink: 0);
+    }
+
+    /// <summary>
+    /// "Containers > name", the same array while the name stays. Reactor gives the bar a new item list whenever it gets a new array,
+    /// and WinUI kept the memory of every list it was given: with a new array on each render the page grew by about 20 MB a minute
+    /// while a log flooded (it re-renders ten times a second).
+    /// </summary>
+    private static BreadcrumbBarItemData[] Crumbs(string name)
+    {
+        var last = _crumbs;
+        if (last.Name == name)
+            return last.Items;
+
+        BreadcrumbBarItemData[] items = [Breadcrumb("Containers", ContainersTag), Breadcrumb(name)];
+        _crumbs = (name, items);
+        return items;
     }
 
     /// <summary>The short ID with a copy button, then the image, which ends in an ellipsis when it does not fit.</summary>
