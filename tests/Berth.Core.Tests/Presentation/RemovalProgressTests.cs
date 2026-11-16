@@ -41,11 +41,11 @@ public sealed class RemovalProgressTests
     {
         var batch = Ten with { Finished = 10 } with
         {
-            Skips = [new RemovalSkip("sha256:1", SkipReason.TagMoved), new RemovalSkip("v4", SkipReason.InUse)],
+            Skips = [new RemovalSkip("sha256:1", SkipReason.TagsChanged), new RemovalSkip("v4", SkipReason.InUse)],
         };
 
         Assert.Equal(
-            ["sha256:1: skipped, a tag it was to lose now names another image.", "v4: skipped, a container uses it now."],
+            ["sha256:1: skipped, its tags changed after the confirmation.", "v4: skipped, a container uses it now."],
             RemovalProgress.Details(batch));
     }
 

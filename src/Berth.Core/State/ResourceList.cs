@@ -17,7 +17,11 @@ public enum ItemAction { Remove, Create }
 /// session checks that it is still listed and, for an image, that every tag among its keys still names this image.
 /// </param>
 /// <param name="OnlyIfUnused">"Remove unused …": the item is also skipped if a container uses it by the time it is sent.</param>
-public sealed record RemovalItem(string Id, ImmutableArray<string> Keys, bool OnlyIfUnused = false)
+/// <param name="Tags">
+/// For an image, every tag it had when the confirmation was made (none for an untagged one): the item is skipped if the image's tags are
+/// not exactly these by the time it is sent, since the confirmation then said something else would happen. Null for a volume or network.
+/// </param>
+public sealed record RemovalItem(string Id, ImmutableArray<string> Keys, bool OnlyIfUnused = false, ImmutableArray<string>? Tags = null)
 {
     /// <summary>An item whose only key is its <paramref name="id"/>: a volume, a network, or an image removed by ID.</summary>
     public RemovalItem(string id)
@@ -25,9 +29,10 @@ public sealed record RemovalItem(string Id, ImmutableArray<string> Keys, bool On
     {
     }
 
-    /// <summary>Equal when the ID, the flag and the keys are the same, the keys in the same order.</summary>
+    /// <summary>Equal when the ID, the flag, the keys (in the same order) and the tags seen (in any order) are the same.</summary>
     public bool Equals(RemovalItem? other) =>
-        other is not null && Id == other.Id && OnlyIfUnused == other.OnlyIfUnused && Keys.SequenceEqual(other.Keys, StringComparer.Ordinal);
+        other is not null && Id == other.Id && OnlyIfUnused == other.OnlyIfUnused && Keys.SequenceEqual(other.Keys, StringComparer.Ordinal)
+        && (Tags is { } tags ? other.Tags is { } otherTags && tags.ToHashSet(StringComparer.Ordinal).SetEquals(otherTags) : other.Tags is null);
 
     public override int GetHashCode()
     {
@@ -36,6 +41,7 @@ public sealed record RemovalItem(string Id, ImmutableArray<string> Keys, bool On
         hash.Add(OnlyIfUnused);
         foreach (var key in Keys)
             hash.Add(key, StringComparer.Ordinal);
+        hash.Add(Tags?.Length ?? -1);
         return hash.ToHashCode();
     }
 }
@@ -43,8 +49,11 @@ public sealed record RemovalItem(string Id, ImmutableArray<string> Keys, bool On
 /// <summary>A key the engine refused to remove, with its message as it is.</summary>
 public sealed record RemovalRefusal(string Key, string Message);
 
-/// <summary>Why an item was not sent: it is no longer listed, one of its tags now names another image, or a container uses it now.</summary>
-public enum SkipReason { Gone, TagMoved, InUse }
+/// <summary>
+/// Why an item was not sent: it is no longer listed; an image's tags are not the ones its confirmation saw (one gained, lost or moved to
+/// another image); or a container uses it now.
+/// </summary>
+public enum SkipReason { Gone, TagsChanged, InUse }
 
 /// <summary>An item the session did not send when its turn came, by its <see cref="RemovalItem.Id"/>.</summary>
 public sealed record RemovalSkip(string Id, SkipReason Reason);

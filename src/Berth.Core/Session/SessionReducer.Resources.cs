@@ -384,7 +384,8 @@ public static partial class SessionReducer
 
     /// <summary>
     /// Why <paramref name="item"/> must not be sent now, from the lists as they are: it is no longer listed; for an image, a tag among its
-    /// keys now names another image (it was built again or moved); for "Remove unused", a container of any state uses it now. Null to send.
+    /// keys now names another image (it was built again or moved) or its tags are not the ones the confirmation saw; for "Remove unused", a
+    /// container of any state uses it now. Null to send.
     /// </summary>
     private static SkipReason? SkipReasonOf(EngineState state, ResourceKind kind, RemovalItem item)
     {
@@ -395,8 +396,9 @@ public static partial class SessionReducer
                 var image = state.Images.Items.FirstOrDefault(i => i.Id == item.Id);
                 if (image is null)
                     return SkipReason.Gone;
-                if (item.Keys.Any(k => k != image.Id && !image.RepoTags.Contains(k)))
-                    return SkipReason.TagMoved;
+                if (item.Keys.Any(k => k != image.Id && !image.RepoTags.Contains(k))
+                    || item.Tags is { } seen && !seen.ToHashSet(StringComparer.Ordinal).SetEquals(image.RepoTags))
+                    return SkipReason.TagsChanged;
                 var used = (image.Containers ?? 0) > 0 || state.Containers.Any(c => c.ImageId == image.Id);
                 return item.OnlyIfUnused && used ? SkipReason.InUse : null;
             }

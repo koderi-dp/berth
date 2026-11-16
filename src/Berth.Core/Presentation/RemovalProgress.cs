@@ -56,7 +56,7 @@ public static class RemovalProgress
     private static string Why(SkipReason reason) => reason switch
     {
         SkipReason.Gone => "it is no longer listed.",
-        SkipReason.TagMoved => "a tag it was to lose now names another image.",
+        SkipReason.TagsChanged => "its tags changed after the confirmation.",
         _ => "a container uses it now.",
     };
 }

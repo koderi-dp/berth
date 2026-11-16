@@ -506,6 +506,42 @@ public sealed partial class SessionReducerTests
         return Reduce(wanted, new ImagesLoaded(load.Generation, [.. Enumerable.Range(1, count).Select(i => Image($"sha256:{i}", $"app{i}:1"))])).State;
     }
 
+    [Theory]
+    // An image whose every tag was to go gains a tag: the checked tags would go and the image stay, counted as removed.
+    [InlineData(new[] { "t:1", "t:2" }, new[] { "t:1", "t:2" }, new[] { "t:1", "t:2", "t:3" }, true)]
+    // An untagged image gains a tag: the delete by ID would remove it with a tag the dialog never showed.
+    [InlineData(new string[0], new[] { "sha256:t" }, new[] { "t:9" }, true)]
+    // Some tags checked and the unchecked one moves away: the last untag would delete the image the dialog said stays.
+    [InlineData(new[] { "t:1", "t:2" }, new[] { "t:1" }, new[] { "t:1" }, true)]
+    // Nothing changed: sent.
+    [InlineData(new[] { "t:1", "t:2" }, new[] { "t:1" }, new[] { "t:2", "t:1" }, false)]
+    public void A_queued_image_item_is_skipped_when_the_images_tags_are_not_the_ones_the_confirmation_saw(
+        string[] seen, string[] keys, string[] now, bool skipped)
+    {
+        var busy = Enumerable.Range(1, 4).Select(i => Image($"sha256:{i}", $"app{i}:1")).ToArray();
+        var (wanted, effects) = Reduce(Connected(), new ImagesWanted());
+        var first = Assert.IsType<LoadResourceEffect>(Assert.Single(effects));
+        var loaded = Reduce(wanted, new ImagesLoaded(first.Generation, [.. busy, Image("sha256:t", seen)])).State;
+        var target = new RemovalItem("sha256:t", [.. keys], Tags: [.. seen]);
+        var (removing, _) = Reduce(loaded, new RemoveRequested(ResourceKind.Images, [.. busy.Select(b => Tags(b.Id, b.RepoTags[0])), target]));
+
+        var (reloading, reloadEffects) = Reduce(removing, new ReloadRequested());
+        var load = reloadEffects.OfType<LoadResourceEffect>().Single();
+        var (changed, _) = Reduce(reloading, new ImagesLoaded(load.Generation, [.. busy, Image("sha256:t", now)]));
+        var (next, nextEffects) = Reduce(changed, new RemoveItemFinished(ResourceKind.Images, Tags("sha256:1", "app1:1"), null));
+
+        if (skipped)
+        {
+            Assert.Empty(nextEffects);
+            Assert.Equal<RemovalSkip>([new RemovalSkip("sha256:t", SkipReason.TagsChanged)], next.Images.Removal!.Skips);
+        }
+        else
+        {
+            Assert.Equal([new RemoveItemEffect(ResourceKind.Images, target)], nextEffects);
+            Assert.Empty(next.Images.Removal!.Skips);
+        }
+    }
+
     [Fact]
     public void A_queued_image_item_whose_tag_now_names_another_image_is_skipped_not_sent()
     {
@@ -523,7 +559,7 @@ public sealed partial class SessionReducerTests
         var (two, twoEffects) = Reduce(one, new RemoveItemFinished(ResourceKind.Images, Tags("sha256:2", "app2:1"), null));
 
         Assert.Empty(twoEffects);
-        Assert.Equal<RemovalSkip>([new RemovalSkip("sha256:6", SkipReason.TagMoved)], two.Images.Removal!.Skips);
+        Assert.Equal<RemovalSkip>([new RemovalSkip("sha256:6", SkipReason.TagsChanged)], two.Images.Removal!.Skips);
         Assert.False(two.Images.Pending.ContainsKey("app6:1"));
         Assert.Equal(3, two.Images.Removal.Finished);
     }

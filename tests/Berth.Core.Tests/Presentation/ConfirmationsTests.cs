@@ -13,6 +13,12 @@ public sealed class ConfirmationsTests
     /// <summary>A "Remove unused" item: skipped if a container uses it by its turn.</summary>
     private static RemovalItem Unused(string id, params string[] keys) => new(id, keys.Length == 0 ? [id] : [.. keys], OnlyIfUnused: true);
 
+    /// <summary>An image item: its keys (the image ID when none are given) and every tag the image had when it was confirmed.</summary>
+    private static RemovalItem Img(string id, string[] tags, params string[] keys) => new(id, keys.Length == 0 ? [id] : [.. keys], Tags: [.. tags]);
+
+    /// <summary>A "Remove unused" image item.</summary>
+    private static RemovalItem UnusedImg(string id, string[] tags, params string[] keys) => Img(id, tags, keys) with { OnlyIfUnused = true };
+
     private static RemovalPlan RemoveImages(IReadOnlyList<ImageRow> rows, params string[] keys) =>
         Confirmations.RemoveImages(rows, rows, keys, connected: true, usage: null);
 
@@ -25,7 +31,7 @@ public sealed class ConfirmationsTests
 
         var plan = RemoveImages(rows, "nginx:1.27");
 
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a", ["nginx:1.27"])], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:a", ["nginx:latest", "nginx:1.27"], "nginx:1.27")], plan.Items);
         Assert.Equal("Remove tag?", plan.Title);
         Assert.Equal("The tag nginx:1.27 will be removed. The image keeps its other tags.", plan.Text);
     }
@@ -35,7 +41,7 @@ public sealed class ConfirmationsTests
     {
         var plan = RemoveImages(ImageRowsOf(Image("sha256:a", ["nginx:latest"])), "nginx:latest");
 
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a")], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:a", ["nginx:latest"])], plan.Items);
         Assert.Equal("Remove image?", plan.Title);
         Assert.Equal("nginx:latest will be deleted from this engine.", plan.Text);
     }
@@ -45,7 +51,7 @@ public sealed class ConfirmationsTests
     {
         var plan = RemoveImages(ImageRowsOf(Image("sha256:aaaabbbbccccdddd")), "sha256:aaaabbbbccccdddd");
 
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:aaaabbbbccccdddd")], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:aaaabbbbccccdddd", [])], plan.Items);
         Assert.Equal("<none>:<none> (aaaabbbbcccc) will be deleted from this engine.", plan.Text);
     }
 
@@ -56,13 +62,28 @@ public sealed class ConfirmationsTests
 
         var plan = RemoveImages(rows, "redis:7", "nginx:1.27", "nginx:latest");
 
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:b"), new RemovalItem("sha256:a", ["nginx:latest", "nginx:1.27"])], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:b", ["redis:7"]), Img("sha256:a", ["nginx:latest", "nginx:1.27"], "nginx:latest", "nginx:1.27")], plan.Items);
         var sent = Assert.IsType<RemoveRequested>(plan.ToEvent());
         Assert.Equal(ResourceKind.Images, sent.Kind);
         Assert.Equal<RemovalItem>(plan.Items, sent.Items);
         Assert.Equal<string>(["sha256:b", "nginx:latest", "nginx:1.27"], plan.Keys);
         Assert.Equal("Remove 2 images?", plan.Title);
         Assert.Equal("These will be removed:\nredis:7\nnginx:1.27\nnginx:latest", plan.Text);
+    }
+
+    [Fact]
+    public void Each_image_item_carries_the_tags_the_confirmation_saw()
+    {
+        var state = StateWith(images: [Image("sha256:a", ["a:1", "a:2"]), Image("sha256:b")]);
+        var rows = ImageRows.From(state);
+
+        var delete = RemoveImages(rows, "a:1", "sha256:b");
+        var unused = Confirmations.PruneImages(state, danglingOnly: false);
+
+        Assert.Equal<string>(["a:1", "a:2"], delete.Items[0].Tags!.Value);
+        Assert.Empty(delete.Items[1].Tags!.Value);
+        Assert.Equal<string>(["a:1", "a:2"], unused.Items[0].Item.Tags!.Value);
+        Assert.Empty(unused.Items[1].Item.Tags!.Value);
     }
 
     [Fact]
@@ -73,7 +94,7 @@ public sealed class ConfirmationsTests
 
         var plan = Confirmations.RemoveImages(shown, all, ["nginx:1.27"], connected: true, usage: null);
 
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a", ["nginx:1.27"])], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:a", ["nginx:latest", "nginx:1.27"], "nginx:1.27")], plan.Items);
         Assert.Equal("The tag nginx:1.27 will be removed. The image keeps its other tags.", plan.Text);
     }
 
@@ -101,7 +122,7 @@ public sealed class ConfirmationsTests
         var plan = Confirmations.RemoveImages(rows, rows, ["a:1", "b:1"], connected: true, usage);
 
         // b keeps its tag b:2, so only a is deleted.
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:a"), new RemovalItem("sha256:b", ["b:1"])], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:a", ["a:1"]), Img("sha256:b", ["b:1", "b:2"], "b:1")], plan.Items);
         Assert.Equal(
             "These will be removed:\na:1\nb:1\nImages that keep other tags lose only the tag.\n3 KB will be freed; 1 KB is shared with other images and stays.",
             plan.Text);
@@ -171,7 +192,7 @@ public sealed class ConfirmationsTests
         var shown = ImageRows.Shown(all, new ImageFilter("db-", ImageShow.All), ImageRows.DefaultSort); // web and cache are hidden
 
         var plan = Confirmations.RemoveImages(shown, all, ["web:1", "db-redis:7", "db-mysql:8"], connected: true, usage: null);
-        Assert.Equal<RemovalItem>([new RemovalItem("sha256:b")], plan.Items);
+        Assert.Equal<RemovalItem>([Img("sha256:b", ["db-redis:7"])], plan.Items);
 
         // Between opening the dialog and confirming, the image went away.
         var later = ImageRows.From(StateWith(images: [Image("sha256:a", ["web:1"])]));
@@ -326,10 +347,10 @@ public sealed class ConfirmationsTests
 
         Assert.Equal("Remove unused images?", plan.Title);
         Assert.Equal("2 images that no container uses will be removed:\nredis:7, redis:latest\n<none>:<none> (cccccccccccc)\n5 MB will be freed.", plan.Text);
-        Assert.Equal<RemovalItem>([Unused("sha256:b", "redis:7", "redis:latest"), Unused("sha256:cccccccccccccc")], [.. plan.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([UnusedImg("sha256:b", ["redis:7", "redis:latest"], "redis:7", "redis:latest"), UnusedImg("sha256:cccccccccccccc", [])], [.. plan.Items.Select(i => i.Item)]);
         var sent = Assert.IsType<RemoveRequested>(plan.ToEvent());
         Assert.Equal(ResourceKind.Images, sent.Kind);
-        Assert.Equal<RemovalItem>([Unused("sha256:b", "redis:7", "redis:latest"), Unused("sha256:cccccccccccccc")], sent.Items);
+        Assert.Equal<RemovalItem>([UnusedImg("sha256:b", ["redis:7", "redis:latest"], "redis:7", "redis:latest"), UnusedImg("sha256:cccccccccccccc", [])], sent.Items);
     }
 
     [Fact]
@@ -341,7 +362,7 @@ public sealed class ConfirmationsTests
 
         Assert.Equal("Remove dangling images?", plan.Title);
         Assert.Equal("1 untagged image that no container uses will be removed:\n<none>:<none> (cccccccccccc)", plan.Text);
-        Assert.Equal<RemovalItem>([Unused("sha256:cccccccccccccc")], [.. plan.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([UnusedImg("sha256:cccccccccccccc", [])], [.. plan.Items.Select(i => i.Item)]);
     }
 
     [Fact]
@@ -397,11 +418,11 @@ public sealed class ConfirmationsTests
     public void Removing_unused_images_at_confirm_keeps_an_image_by_id_and_its_tags_as_they_are_now()
     {
         var named = Confirmations.PruneImages(StateWith(images: [Image("sha256:a", ["a:1", "a:2"]), Image("sha256:b", ["b:1"])]), danglingOnly: false);
-        Assert.Equal<RemovalItem>([Unused("sha256:a", "a:1", "a:2"), Unused("sha256:b")], [.. named.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([UnusedImg("sha256:a", ["a:1", "a:2"], "a:1", "a:2"), UnusedImg("sha256:b", ["b:1"])], [.. named.Items.Select(i => i.Item)]);
 
         var confirmed = Confirmations.ConfirmPrune(named, StateWith(images: [Image("sha256:a", ["a:2"]), Image("sha256:b", ["b:1"], containers: 1)]));
 
-        Assert.Equal<RemovalItem>([Unused("sha256:a")], [.. confirmed.Items.Select(i => i.Item)]);
+        Assert.Equal<RemovalItem>([UnusedImg("sha256:a", ["a:2"])], [.. confirmed.Items.Select(i => i.Item)]);
     }
 
     [Fact]

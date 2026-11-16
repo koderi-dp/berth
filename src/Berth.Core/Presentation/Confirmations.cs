@@ -71,10 +71,7 @@ public static class Confirmations
         {
             var tags = all.Where(r => r.ImageId == imageId && r.IsTagged).Select(r => r.Key).ToList();
             var chosenTags = tags.Where(chosen.Contains).ToList();
-            if (tags.Count <= 1)
-                items.Add(new RemovalItem(imageId));
-            else
-                items.Add(new RemovalItem(imageId, chosenTags.ToImmutableArray()));
+            items.Add(new RemovalItem(imageId, tags.Count <= 1 ? [imageId] : [.. chosenTags], Tags: [.. tags]));
 
             if (tags.Count <= 1 || chosenTags.Count == tags.Count)
             {
@@ -231,7 +228,7 @@ public static class Confirmations
             .Select(rows => new PlannedRemoval(
                 rows[0].ImageId,
                 string.Join(", ", rows.Select(r => r.DisplayName)),
-                Unused(rows[0].ImageId, rows.Count > 1 ? [.. rows.Select(r => r.Key)] : [rows[0].ImageId])))
+                Unused(rows[0].ImageId, rows.Count > 1 ? [.. rows.Select(r => r.Key)] : [rows[0].ImageId], [.. rows.Where(r => r.IsTagged).Select(r => r.Key)])))
             .OrderBy(i => only?.IndexOf(i.Id) ?? 0)
             .ToImmutableArray();
         var usage = state.DiskUsage.Usage;
@@ -310,8 +307,11 @@ public static class Confirmations
         public int IndexOf(string id) => _index[id];
     }
 
-    /// <summary>A "Remove unused" item: the session skips it if a container uses it by the time its turn comes.</summary>
-    private static RemovalItem Unused(string id, ImmutableArray<string> keys) => new(id, keys, OnlyIfUnused: true);
+    /// <summary>
+    /// A "Remove unused" item: the session skips it if a container uses it by the time its turn comes, or for an image if its tags are no
+    /// longer <paramref name="tags"/>.
+    /// </summary>
+    private static RemovalItem Unused(string id, ImmutableArray<string> keys, ImmutableArray<string>? tags = null) => new(id, keys, OnlyIfUnused: true, tags);
 
     private static string Listed(string heading, IEnumerable<string> names) =>
         string.Join("\n", [heading, .. RowSelection.NameLines([.. names])]);
