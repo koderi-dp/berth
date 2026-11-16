@@ -1,6 +1,7 @@
 using System.Text;
 using Berth.Engine;
 using Berth.Engine.Models;
+using Berth.Session;
 
 namespace Berth.Tests.Integration;
 
@@ -96,7 +97,7 @@ public sealed partial class EngineIntegrationTests
     }
 
     [EngineFact]
-    public async Task The_clean_up_ends_a_marked_shell_and_what_it_started_but_not_another_shell()
+    public async Task The_clean_up_hangs_up_a_marked_shell_and_what_it_started_but_spares_nohup_and_another_shell()
     {
         await using var engine = TestEngine.FromEnvironment();
         var name = DockerCli.NewContainerName();
@@ -106,27 +107,32 @@ public sealed partial class EngineIntegrationTests
             await using var client = engine.CreateClient();
             using var cts = new CancellationTokenSource(Patience);
             await client.ConnectAsync(cts.Token);
-            var marker = Berth.Session.ExecCleanUp.NewMarker();
-            var other = Berth.Session.ExecCleanUp.NewMarker();
+            var marker = ExecCleanUp.NewMarker();
+            var other = ExecCleanUp.NewMarker();
 
             // The engine keeps a TTY shell after its connection closes; only the clean-up ends it.
-            var marked = await client.CreateExecAsync(id, ["sh"], ExecSize, [Berth.Session.ExecCleanUp.Variable(marker)], cts.Token);
-            var spared = await client.CreateExecAsync(id, ["sh"], ExecSize, [Berth.Session.ExecCleanUp.Variable(other)], cts.Token);
+            var marked = await client.CreateExecAsync(id, ["sh"], ExecSize, [ExecCleanUp.Variable(marker)], cts.Token);
+            var spared = await client.CreateExecAsync(id, ["sh"], ExecSize, [ExecCleanUp.Variable(other)], cts.Token);
             await using var markedStream = await client.StartExecAsync(marked, ExecSize, cts.Token);
             await using var sparedStream = await client.StartExecAsync(spared, ExecSize, cts.Token);
-            await markedStream.WriteAsync("trap '' HUP; sleep 600 & echo started\n"u8.ToArray(), cts.Token);
+            await markedStream.WriteAsync("nohup sleep 600 >/dev/null 2>&1 & sleep 601 & top\n"u8.ToArray(), cts.Token);
             await markedStream.FlushAsync(cts.Token);
-            await ReadUntilAsync(markedStream, "started", cts.Token);
+            await WaitUntilAsync(async () => (await engine.Cli.TopAsync(name)) is var top && top.Contains("top", StringComparison.Ordinal)
+                && top.Contains("sleep 600", StringComparison.Ordinal) && top.Contains("sleep 601", StringComparison.Ordinal), cts.Token);
 
-            await client.RunDetachedExecAsync(id, Berth.Session.ExecCleanUp.Command(marker), cts.Token);
+            await client.RunDetachedExecAsync(id, ExecCleanUp.Command(marker), cts.Token);
 
             Assert.False((await EndedAsync(client, marked, cts.Token)).Running);
-            // The sleep ignored the hang-up; the kill a second later ends it.
-            await WaitUntilAsync(async () => !(await engine.Cli.TopAsync(name)).Contains("sleep 600", StringComparison.Ordinal), cts.Token);
+            // The shell, top and the plain background job end with the hang-up; the nohup job ignores it and stays.
+            await WaitUntilAsync(async () => !(await engine.Cli.TopAsync(name)).Contains("sleep 601", StringComparison.Ordinal), cts.Token);
+            var left = await engine.Cli.TopAsync(name);
+            Assert.DoesNotContain(left.Split('\n'), line => line.TrimEnd().EndsWith(" top", StringComparison.Ordinal));
+            Assert.Contains("sleep 600", left, StringComparison.Ordinal);
             Assert.True((await client.InspectExecAsync(spared, cts.Token)).Running);
         }
         finally
         {
+            // The nohup job goes with the container.
             await engine.Cli.RemoveAsync(name);
         }
     }

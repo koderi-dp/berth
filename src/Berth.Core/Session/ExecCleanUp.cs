@@ -7,7 +7,9 @@ namespace Berth.Session;
 /// Ending a shell the engine keeps. A TTY exec does not end when Berth closes its stream (the shell reads no end of input and the
 /// engine does not hang up), so each shell Berth starts carries <c>BERTH_EXEC=&lt;marker&gt;</c> in its environment, which what it
 /// starts inherits, and a shell ended on purpose is followed by <see cref="Command"/>: a detached exec in the same container that
-/// hangs up every process carrying that exact marker, then kills those still there a second later. The marker is never logged.
+/// hangs up every process carrying that exact marker, as closing a terminal does: the shell and what it started end, and what the
+/// user protected from the hang-up (<c>nohup</c>, or a program that handles HUP itself) stays. Nothing is killed. The marker is never
+/// logged.
 /// </summary>
 public static class ExecCleanUp
 {
@@ -20,8 +22,8 @@ public static class ExecCleanUp
     /// The clean-up, for a POSIX <c>sh</c> (busybox, dash, bash). Its first argument is the marker; it is never part of the text.
     /// It checks the marker again (lowercase hex only), finds the processes whose <c>/proc/&lt;pid&gt;/environ</c> holds
     /// <c>BERTH_EXEC=&lt;marker&gt;</c> as a whole entry (never pid 1 or itself; the clean-up's own processes do not carry it), sends
-    /// them HUP (an interactive shell ignores TERM), waits a second, and sends KILL to those that are still there. Processes it may
-    /// not read are skipped quietly. Exits 0 unless the marker was refused. Line breaks are LF whatever the checkout's are.
+    /// them HUP (an interactive shell ignores TERM) and ends at once. Processes it may not read are skipped quietly. Exits 0 unless the
+    /// marker was refused. Line breaks are LF whatever the checkout's are.
     /// </summary>
     public static readonly string Script =
         """
@@ -37,9 +39,6 @@ public static class ExecCleanUp
         p=$(marked)
         [ -n "$p" ] || exit 0
         kill -HUP $p 2>/dev/null
-        sleep 1
-        p=$(marked)
-        [ -n "$p" ] && kill -KILL $p 2>/dev/null
         exit 0
         """.ReplaceLineEndings("\n");
 

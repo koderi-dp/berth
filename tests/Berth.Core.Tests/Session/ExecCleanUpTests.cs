@@ -43,7 +43,7 @@ public sealed class ExecCleanUpTests
     }
 
     [Fact]
-    public void The_script_hangs_up_then_kills_only_exact_matches_and_spares_itself_and_pid_one()
+    public void The_script_hangs_up_only_exact_matches_and_spares_itself_and_pid_one()
     {
         var script = ExecCleanUp.Script;
 
@@ -51,11 +51,16 @@ public sealed class ExecCleanUpTests
         Assert.Contains("m=\"BERTH_EXEC=$1\"", script, StringComparison.Ordinal);
         Assert.Contains("grep -qxF -- \"$m\"", script, StringComparison.Ordinal);
         Assert.Contains("case \"$p\" in 1|\"$$\") continue;; esac", script, StringComparison.Ordinal);
-        var hup = script.IndexOf("kill -HUP", StringComparison.Ordinal);
-        var sleep = script.IndexOf("sleep 1", StringComparison.Ordinal);
-        var kill = script.IndexOf("kill -KILL", StringComparison.Ordinal);
-        Assert.True(hup >= 0 && hup < sleep && sleep < kill);
+        Assert.Contains("kill -HUP", script, StringComparison.Ordinal);
         // The id is checked again in the container: anything but lowercase hex ends the script before /proc is read.
         Assert.StartsWith("case \"$1\" in \"\"|*[!0-9a-f]*) exit 2;; esac", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_script_never_kills_what_ignores_the_hang_up()
+    {
+        // Closing a terminal hangs up; what the user protected with nohup (or that handles HUP itself) stays, as with docker exec.
+        Assert.DoesNotContain("KILL", ExecCleanUp.Script, StringComparison.Ordinal);
+        Assert.DoesNotContain("sleep", ExecCleanUp.Script, StringComparison.Ordinal);
     }
 }
