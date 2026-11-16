@@ -75,7 +75,14 @@ public static class EngineStatus
             EnginePhase.Starting => new DisconnectedText("Starting the engine", null, null, Busy: true, CanRetry: false, OfferStart: false),
             EnginePhase.Stopping => new DisconnectedText("Stopping the engine", null, null, Busy: true, CanRetry: false, OfferStart: false),
             EnginePhase.WaitingForStart => new DisconnectedText("Waiting for the engine to start", null, failure, Busy: true, CanRetry: false, OfferStart: false),
-            EnginePhase.Connecting => new DisconnectedText("Connecting to the engine", null, failure, Busy: true, CanRetry: false, OfferStart: false),
+            // A retry keeps the last error and "Start engine" on screen: a refused connect takes seconds, and the view would flicker.
+            EnginePhase.Connecting => new DisconnectedText(
+                "Connecting to the engine",
+                state.ConnectionError,
+                failure,
+                Busy: true,
+                CanRetry: false,
+                OfferStart: canStart && state.ConnectionError is not null),
             EnginePhase.Stopped => new DisconnectedText("The engine was stopped.", null, failure, Busy: false, CanRetry: true, OfferStart: canStart),
             _ => new DisconnectedText("Not connected to the engine", state.ConnectionError, failure, Busy: false, CanRetry: true, OfferStart: canStart),
         };

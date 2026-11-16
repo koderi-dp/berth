@@ -66,6 +66,18 @@ public sealed class EngineStatusTests
     }
 
     [Fact]
+    public void A_retry_under_way_still_offers_start_engine_but_a_first_connect_does_not()
+    {
+        var retrying = EngineStatus.Disconnected(Controlled with { Status = ConnectionStatus.Connecting });
+        var first = EngineStatus.Disconnected(Controlled with { Status = ConnectionStatus.Connecting, ConnectionError = null });
+
+        Assert.True(retrying.Busy);
+        Assert.True(retrying.OfferStart);
+        Assert.Equal("connection refused", retrying.Message);
+        Assert.False(first.OfferStart);
+    }
+
+    [Fact]
     public void Starting_shows_progress_and_offers_nothing()
     {
         var view = EngineStatus.Disconnected(Controlled with { EngineControl = EngineControlState.Ready with { Running = EngineCommand.Start } });
