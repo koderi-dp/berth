@@ -1,3 +1,4 @@
+using Berth.Engine;
 using Berth.Files;
 
 namespace Berth.Session;
@@ -32,6 +33,30 @@ public sealed partial class EngineSession
         }
     }
 
+    /// <summary>
+    /// Stops every transfer and waits, at most <paramref name="limit"/>, for them to end: a download removes what it saved under its
+    /// temporary name. For the app's exit. True when all ended in time. Safe from any thread.
+    /// </summary>
+    public async Task<bool> StopTransfersAsync(TimeSpan limit)
+    {
+        if (Volatile.Read(ref _transfers) is not { } runner)
+            return true;
+        try
+        {
+            await Task.WhenAll(runner.StopAll()).WaitAsync(limit).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        catch (Exception)
+        {
+            // The runs report their own failures.
+            return true;
+        }
+    }
+
     /// <summary>Stops the transfers of the connection being retired (a download removes what it saved under its temporary name).</summary>
     private void RetireTransfers()
     {
@@ -60,7 +85,19 @@ public sealed partial class EngineSession
             }
 
             var token = transfer.Stop.Token;
-            connection.Run(_ => RunAsync(transfer, request, token));
+            transfer.Running = connection.Run(_ => RunAsync(transfer, request, token));
+        }
+
+        /// <summary>Stops every transfer and returns their runs, to wait for (a download removes its partial as it stops). Safe from any thread.</summary>
+        public Task[] StopAll()
+        {
+            lock (_lock)
+            {
+                var running = _transfers.Select(t => t.Running).ToArray();
+                foreach (var transfer in _transfers.ToList())
+                    Stop(transfer);
+                return running;
+            }
         }
 
         public void Cancel(int id)
@@ -95,7 +132,7 @@ public sealed partial class EngineSession
                         api, download.ContainerId, download.Sources, download.Destination, download.Replace, transfer.Add, transfer.Size, ct)
                         .ConfigureAwait(false),
                     UploadRequest upload => await ArchiveTransfer.UploadAsync(
-                        api, upload.ContainerId, upload.Sources, upload.Destination, transfer.Add, transfer.Size, ct)
+                        api, upload.ContainerId, upload.Sources, upload.Destination, upload.Replace, transfer.Add, transfer.Size, ct)
                         .ConfigureAwait(false),
                     _ => TransferSummary.Empty,
                 };
@@ -105,15 +142,21 @@ public sealed partial class EngineSession
             {
                 return;
             }
+            catch (ReplaceNeededException asking)
+            {
+                end = new TransferNeedsAnswer(transfer.Id, [.. asking.Names]);
+            }
             catch (Exception ex)
             {
                 session.Report(request is DownloadRequest ? DownloadFailedReport : UploadFailedReport, ex);
-                end = new TransferFailed(transfer.Id, ex.Message, IsUnreachable(ex));
+                // A call that ran out of its time failed; the engine is still there (as for a slow image remove).
+                end = new TransferFailed(transfer.Id, ex.Message, IsUnreachable(ex) && ex is not EngineException { TimedOut: true });
             }
 
             lock (_lock)
             {
-                if (ct.IsCancellationRequested)
+                // A cancel that came after the work was done does not undo it: the summary is still sent.
+                if (ct.IsCancellationRequested && end is not TransferFinished)
                     return;
                 Flush(transfer);
                 session.Post(end, connection);
@@ -162,6 +205,9 @@ public sealed partial class EngineSession
         public int Id { get; } = id;
 
         public CancellationTokenSource Stop { get; } = stop;
+
+        /// <summary>The transfer's run on the connection.</summary>
+        public Task Running { get; set; } = Task.CompletedTask;
 
         public void Add(long bytes)
         {

@@ -22,7 +22,9 @@ public static partial class SessionReducer
             case TransferProgressed progress when IsTransferring(state, progress.Id, out var transfer):
                 return (state with { Transfers = state.Transfers.SetItem(transfer.Id, transfer with { Done = progress.Done, Total = progress.Total }) }, None);
 
-            case TransferFinished finished when IsTransferring(state, finished.Id, out var transfer):
+            // A cancel that came after the work was done (the files were saved) does not undo it: the transfer is done.
+            case TransferFinished finished when state.Transfers.TryGetValue(finished.Id, out var transfer)
+                && transfer.Status is TransferStatus.Running or TransferStatus.Cancelled:
             {
                 var done = transfer with { Status = TransferStatus.Done, Summary = finished.Summary, Done = finished.Summary.Bytes };
                 return (state with { Transfers = state.Transfers.SetItem(transfer.Id, done) }, None);
@@ -34,6 +36,9 @@ public static partial class SessionReducer
                 return failure.EngineUnreachable ? Lose(failed, failure.Message) : (failed, None);
             }
 
+            case TransferNeedsAnswer asking when IsTransferring(state, asking.Id, out var transfer):
+                return (state with { Transfers = state.Transfers.SetItem(transfer.Id, transfer with { Status = TransferStatus.Asking, Asks = asking.Names }) }, None);
+
             case TransferCancelRequested cancel when IsTransferring(state, cancel.Id, out var transfer):
                 return (
                     state with { Transfers = state.Transfers.SetItem(transfer.Id, transfer with { Status = TransferStatus.Cancelled }) },
@@ -42,7 +47,7 @@ public static partial class SessionReducer
             case TransferDismissed dismissed when state.Transfers.TryGetValue(dismissed.Id, out var transfer) && transfer.Status != TransferStatus.Running:
                 return (state with { Transfers = state.Transfers.Remove(transfer.Id) }, None);
 
-            case TransferProgressed or TransferFinished or TransferFailed or TransferCancelRequested or TransferDismissed:
+            case TransferProgressed or TransferFinished or TransferFailed or TransferCancelRequested or TransferDismissed or TransferNeedsAnswer:
                 return (state, None);
 
             default:

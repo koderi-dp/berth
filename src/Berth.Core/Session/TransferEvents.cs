@@ -13,6 +13,9 @@ public sealed record TransferFinished(int Id, TransferSummary Summary) : Session
 /// <param name="EngineUnreachable">The engine could not be reached: the connection is lost too.</param>
 public sealed record TransferFailed(int Id, string Message, bool EngineUnreachable) : SessionEvent;
 
+/// <summary>An upload found <see cref="Names"/> in the folder that the user has not agreed to replace; it waits for an answer.</summary>
+public sealed record TransferNeedsAnswer(int Id, System.Collections.Immutable.ImmutableArray<string> Names) : SessionEvent;
+
 /// <summary>Stop a running transfer: a download leaves nothing behind; an upload keeps what the engine already unpacked.</summary>
 public sealed record TransferCancelRequested(int Id) : SessionEvent;
 

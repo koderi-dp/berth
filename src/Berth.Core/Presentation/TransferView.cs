@@ -15,6 +15,9 @@ public sealed record TransferLine(
 {
     /// <summary>A download (the panel draws its glyph); an upload otherwise.</summary>
     public bool IsDownload { get; init; }
+
+    /// <summary>An upload waiting for the user's answer to its replace question.</summary>
+    public bool IsAsking { get; init; }
 }
 
 /// <summary>The Files tab's transfer rows.</summary>
@@ -50,6 +53,12 @@ public static class TransferView
                 return Ended(transfer, title, transfer.IsDownload
                     ? "Cancelled. Nothing partial was left in the folder."
                     : "Cancelled. What the engine unpacked before the cancel stays in the container: an upload cannot be undone.");
+
+            case TransferStatus.Asking:
+                return Ended(transfer, title, $"Waiting for your answer: {string.Join(", ", transfer.Asks)} {(transfer.Asks.Length == 1 ? "is" : "are")} already there.") with
+                {
+                    IsAsking = true,
+                };
 
             case TransferStatus.Interrupted:
                 return Ended(transfer, title, "Stopped: the connection to the engine was lost.");

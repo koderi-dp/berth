@@ -3,7 +3,8 @@ using Berth.Files;
 
 namespace Berth.Session;
 
-public enum TransferStatus { Running, Done, Failed, Cancelled, Interrupted }
+/// <summary>Asking: an upload found same-named entries in the container and waits for the user's yes; nothing was sent.</summary>
+public enum TransferStatus { Running, Done, Failed, Cancelled, Interrupted, Asking }
 
 /// <summary>A download or upload the user asked for, in one container of the session's connection.</summary>
 public abstract record FileTransferRequest(string ContainerId);
@@ -17,7 +18,11 @@ public sealed record DownloadRequest(string ContainerId, ImmutableArray<Containe
 
 /// <summary>Put the local files or folders <see cref="Sources"/> into the container's folder <see cref="Destination"/>.</summary>
 public sealed record UploadRequest(string ContainerId, ImmutableArray<string> Sources, ContainerPath Destination)
-    : FileTransferRequest(ContainerId);
+    : FileTransferRequest(ContainerId)
+{
+    /// <summary>The names the user agreed to replace; any other name already in the folder makes the upload ask (<see cref="UploadCheck"/>).</summary>
+    public ImmutableArray<string> Replace { get; init; } = [];
+}
 
 /// <summary>
 /// A transfer, tracked as a pull is: the bytes done, the total when known, and how it ended (its summary, or the failure as it was
@@ -27,4 +32,7 @@ public sealed record FileTransfer(
     int Id, FileTransferRequest Request, TransferStatus Status, long Done, long? Total, TransferSummary? Summary, string? Error)
 {
     public bool IsDownload => Request is DownloadRequest;
+
+    /// <summary>While <see cref="TransferStatus.Asking"/>: the names already in the folder that the user has not agreed to replace.</summary>
+    public ImmutableArray<string> Asks { get; init; } = [];
 }

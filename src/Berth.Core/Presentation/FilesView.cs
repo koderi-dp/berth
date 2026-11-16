@@ -110,20 +110,15 @@ public static class TransferConfirmations
     }
 
     /// <summary>
-    /// The question before an upload of <paramref name="sources"/> (local paths) into the folder <paramref name="listing"/> shows, or null
-    /// when no entry there has an item's name (compared as Linux does, case and all).
+    /// The question before an upload replaces <paramref name="names"/>: the names the engine said are in <paramref name="folder"/> just
+    /// before sending (<see cref="UploadCheck"/>), never the listing on screen.
     /// </summary>
-    public static TransferConfirmation? Upload(IReadOnlyList<string> sources, FileListing listing)
+    public static TransferConfirmation Upload(IReadOnlyList<string> names, ContainerPath folder)
     {
-        var names = listing.Entries.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
-        var there = sources.Select(s => Path.GetFileName(Path.TrimEndingDirectorySeparator(s))).Where(names.Contains).ToList();
-        if (there.Count == 0)
-            return null;
-        var text = $"{List(there)} {(there.Count == 1 ? "is" : "are")} already in {listing.Path.Value}. Replace {(there.Count == 1 ? "it" : "them")}? "
+        var text = $"{List(names)} {(names.Count == 1 ? "is" : "are")} already in {folder.Value}. Replace {(names.Count == 1 ? "it" : "them")}? "
             + "An upload cannot be undone.";
-        return new TransferConfirmation($"Replace {Items(there.Count)} in {listing.Path.Value}?", text, there, "Replace");
+        return new TransferConfirmation($"Replace {Items(names.Count)} in {folder.Value}?", text, names, "Replace");
     }
-
     private static string Items(int count) => count == 1 ? "1 item" : $"{count} items";
 
     private static string List(IReadOnlyList<string> names)

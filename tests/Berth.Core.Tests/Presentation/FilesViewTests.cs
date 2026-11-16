@@ -161,15 +161,12 @@ public sealed class FilesViewTests
     [Fact]
     public void An_upload_over_a_same_named_entry_asks_first_and_says_it_cannot_be_undone()
     {
-        var listing = Listing(ListingWay.Exec, Entry("notes.txt", FileKind.File, 1), Entry("site", FileKind.Folder));
+        // The names come from the engine just before sending (the transfer asks), not from the listing on screen.
+        var confirm = TransferConfirmations.Upload(["notes.txt"], Etc);
 
-        var confirm = TransferConfirmations.Upload([@"C:\x\notes.txt", @"C:\x\other.txt", @"C:\x\Site"], listing);
-
-        Assert.NotNull(confirm);
         Assert.Equal("Replace 1 item in /etc?", confirm.Title);
         Assert.Equal(["notes.txt"], confirm.Names);
         Assert.Contains("An upload cannot be undone.", confirm.Text, StringComparison.Ordinal);
-        Assert.Null(TransferConfirmations.Upload([@"C:\x\other.txt"], listing));
     }
 
     [Fact]

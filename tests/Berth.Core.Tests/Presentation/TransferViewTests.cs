@@ -101,4 +101,15 @@ public sealed class TransferViewTests
     {
         Assert.Equal("Stopped: the connection to the engine was lost.", Line(Download(TransferStatus.Interrupted)).Text);
     }
+
+    [Fact]
+    public void An_upload_waiting_for_an_answer_says_so_and_can_only_be_dismissed()
+    {
+        var line = Line(Upload(TransferStatus.Asking) with { Asks = ["notes.txt"] });
+
+        Assert.Equal("Waiting for your answer: notes.txt is already there.", line.Text);
+        Assert.True(line.IsAsking);
+        Assert.False(line.CanCancel);
+        Assert.True(line.CanDismiss);
+    }
 }

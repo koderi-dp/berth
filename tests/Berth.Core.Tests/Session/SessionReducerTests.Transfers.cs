@@ -96,8 +96,8 @@ public sealed partial class SessionReducerTests
 
         Assert.Equal(TransferStatus.Cancelled, cancelled.Transfers[id].Status);
         Assert.Equal([new CancelTransferEffect(id)], effects);
-        Assert.Same(cancelled, Reduce(cancelled, new TransferFinished(id, Saved)).State);
         Assert.Same(cancelled, Reduce(cancelled, new TransferProgressed(id, 5, null)).State);
+        Assert.Same(cancelled, Reduce(cancelled, new TransferFailed(id, "x", false)).State);
     }
 
     [Fact]
@@ -123,5 +123,29 @@ public sealed partial class SessionReducerTests
         Assert.Equal(TransferStatus.Interrupted, state.Transfers[running].Status);
         Assert.Equal(TransferStatus.Done, state.Transfers[finished].Status);
         Assert.Same(state, Reduce(state, new TransferFinished(running, Saved)).State);
+    }
+
+    [Fact]
+    public void An_upload_that_would_replace_something_waits_for_an_answer_and_can_be_dismissed()
+    {
+        var (state, id) = Transferring(Upload);
+
+        state = Reduce(state, new TransferNeedsAnswer(id, ["x.txt"])).State;
+
+        Assert.Equal(TransferStatus.Asking, state.Transfers[id].Status);
+        Assert.Equal(["x.txt"], state.Transfers[id].Asks.ToArray());
+        Assert.Empty(Reduce(state, new TransferDismissed(id)).State.Transfers);
+    }
+
+    [Fact]
+    public void A_transfer_that_finished_after_its_cancel_was_asked_for_is_done()
+    {
+        var (state, id) = Transferring(Download);
+        state = Reduce(state, new TransferCancelRequested(id)).State;
+
+        state = Reduce(state, new TransferFinished(id, Saved)).State;
+
+        Assert.Equal(TransferStatus.Done, state.Transfers[id].Status);
+        Assert.Equal(Saved, state.Transfers[id].Summary);
     }
 }

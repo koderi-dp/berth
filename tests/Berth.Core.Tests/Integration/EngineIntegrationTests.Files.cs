@@ -142,14 +142,14 @@ public sealed partial class EngineIntegrationTests
             Random.Shared.NextBytes(payload);
             var source = Path.Combine(local, "upload.bin");
             await File.WriteAllBytesAsync(source, payload);
-            var uploaded = await ArchiveTransfer.UploadAsync(client, id, [source], t, _ => { }, _ => { }, cts.Token);
+            var uploaded = await ArchiveTransfer.UploadAsync(client, id, [source], t, [], _ => { }, _ => { }, cts.Token);
             var hash = await engine.Cli.RunAsync("exec", name, "sha256sum", "/tmp/t/upload.bin");
 
             Assert.Equal(1, uploaded.Files);
             Assert.StartsWith(Convert.ToHexStringLower(SHA256.HashData(payload)), hash, StringComparison.Ordinal);
 
             var refused = await Assert.ThrowsAsync<EngineException>(() =>
-                ArchiveTransfer.UploadAsync(client, id, [source], ContainerPath.Root.Join("nope"), _ => { }, _ => { }, cts.Token));
+                ArchiveTransfer.UploadAsync(client, id, [source], ContainerPath.Root.Join("nope"), [], _ => { }, _ => { }, cts.Token));
             _output.WriteLine($"upload into a missing folder: {refused.StatusCode} {refused.Message}");
             Assert.NotEqual(0, refused.StatusCode);
         }
