@@ -4,7 +4,8 @@ Berth is a Windows desktop GUI for a Docker engine, used as a daily driver on a 
 that runs docker-ce inside WSL. It is meant to cover containers, images, volumes and
 networks, and to manage engines on other machines too. This version covers connections,
 the containers list and each container's detail page with a terminal in the container, and
-the images, volumes and networks pages.
+the images, volumes and networks pages, starting and stopping a local engine, and a tray
+icon that keeps Berth running when its window is closed.
 
 The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`, pinned) on WinUI 3. There is no XAML.
@@ -126,6 +127,37 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   actions are disabled until the engine is back; search and "running only" still work.
   Berth reconnects on its own (after 1 s, doubling up to 30 s), or at once with Retry.
   Until a connection's first list arrives, the page shows a progress ring.
+- **Engine control.** A connection can have engine control: a start command and a stop
+  command, each one command line typed as in a console window (no shell: nothing is expanded,
+  redirected or chained). The connection editor's "Engine control" section has the two
+  commands and "Use the WSL default" with a picker of the WSL distributions:
+  `wsl.exe -d <distro> -u root -- systemctl start docker` and
+  `wsl.exe -d <distro> -u root -- systemctl stop docker.socket docker` (docker-ce in WSL is
+  socket-activated, so the stop also stops its socket, or the next client in the distro would
+  start it again). While the engine is not reachable the page offers "Start engine"; the status
+  bar's engine item has a menu with Start engine or Stop engine, and a stop asks first, naming
+  how many running containers will stop. A command runs at most 60 seconds (then it and what it
+  started are ended); a failure shows what failed and the command's last lines as it wrote
+  them. After a start Berth reconnects at once and every second for half a minute; after a
+  stop the page says "The engine was stopped." and Berth does not reconnect until Start engine
+  or Retry. The log gets the exit code only, never the command or its output.
+- **Tray.** Berth has an icon in the notification area: the app icon with a state dot (green
+  running, amber working, red not reachable, grey stopped) and a tooltip with the connection
+  and its state. Left click opens the window; right click opens the menu: Open Berth, the
+  connection and its state, the running containers (by name, at most 15) each with Stop and
+  Restart, Start engine or Stop engine when the connection has engine control (a stop asks
+  first, in the menu), and Quit Berth. A container action from the menu that fails shows in
+  the error bar and as a notification.
+- **Closing the window** hides it to the tray while "Keep running in the tray when the window
+  is closed" (Settings, on by default) is on; the first time, a notification says so. Quit in
+  the tray menu exits: a shell open in the Exec tab is ended as on any exit, and the icon is
+  removed. While hidden, the pages do no rendering work and list stats are not followed; the
+  connection stays up so the tray stays right.
+- **One Berth at a time.** Starting Berth again brings the running one's window forward
+  (back from the tray) instead of opening a second.
+- **Start with Windows** (Settings) uses the package's startup task; started that way, Berth
+  starts hidden in the tray. The switch shows the real state, and says so when it was turned
+  off in Windows settings or by a policy.
 - **Settings file.** `settings.json` may leave out optional fields (TLS, pipe name, port,
   list options, active connection) and may hold fields Berth does not know. A file Berth
   cannot use is kept as `settings.bad.json`, Berth starts with the first-run connection,
@@ -144,9 +176,8 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 
 In the order they are planned:
 
-1. Starting and stopping a local engine, a tray icon, a single instance, start with Windows.
-2. Files: browse, download and upload in a running container.
-3. SSH connections: password and key sign-in, host key prompt, Credential Manager.
+1. Files: browse, download and upload in a running container.
+2. SSH connections: password and key sign-in, host key prompt, Credential Manager.
 
 For a later polish pass:
 

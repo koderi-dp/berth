@@ -11,15 +11,22 @@ Logs, Inspect, Bind mounts and Stats tabs plus live CPU and memory on the list (
 the Images, Volumes and Networks pages with pulls, the run dialog, image inspect, volume
 create, a volume's page and removes (phase 3), and the Exec tab: a terminal (xterm.js in a
 WebView2) on a shell in the container, the shell picker, "Open terminal" on a row, "Open in
-external terminal" and "Copy command" (phase 4). Engine control and tray, files and SSH are
-not built yet.
+external terminal" and "Copy command" (phase 4), engine control (start and stop commands a
+connection stores), the tray icon and its menu, closing to the tray, one instance and start with
+Windows (phase 5). Files and SSH are not built yet.
 
 ## Layout
 
 ```
 Berth.slnx                  the solution: /src/ (Berth.App, Berth.Core), /tests/
 src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; pure logic, unit-tested (root namespace Berth)
-  Connections/              ConnectionProfile, EngineAddress (tcp:// and npipe:// parsing), ConnectionDraft (editor logic)
+  Connections/              ConnectionProfile, EngineAddress (tcp:// and npipe:// parsing), ConnectionDraft (editor logic),
+                            EngineControl (a connection's start and stop commands, the WSL default), CommandLine (a
+                            command line split as the Windows C runtime splits it; here, not in Text, because the draft
+                            checks it, and the Exec tab's ExecCommand splits for a Linux shell, where "\" escapes)
+  Processes/                CommandRunner (a program run with no shell and no window, the end of its output kept, its
+                            process tree ended on cancel), OutputTail, ConsoleText (UTF-16 or UTF-8 console output),
+                            WslDistros (`wsl.exe -l -q` parsed)
   Settings/                 AppSettings, SettingsStore (atomic save, damaged-file handling, first-run save), FirstRun (the
                             settings when there are none), SettingsFile (the tolerant read shape and its checks),
                             SettingsJson, ConnectionEdits
@@ -95,6 +102,11 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             the open container page (OpenDetail, CloseDetail, DetailChanged); sends session failures and a
                             set-aside settings file to the log
   EngineConnection.cs       an EngineClient plus the transport it runs on, disposed together
+  EngineCommands.cs         runs a connection's engine commands for its session (IEngineControl over CommandRunner);
+                            logs fixed words and the exit code only
+  WslList.cs                asks wsl.exe for the distributions (read only) for the editor's WSL default
+  Shell/                    the window outside its pages (see "The tray and the window"): TrayIcon, TrayIcons,
+                            TrayFlyout, TrayFlyoutWindow, MainWindow, SingleInstance, StartWithWindows, Notifications
   App.cs                    the window component: title bar, navigation (AppRoute: Containers, Images, Volumes, Networks,
                             ContainerDetail, VolumeDetail, Settings), status bar; switches list stats on and off (see below) and tells the
                             session which of the images, volumes and networks lists is wanted when its page is shown
@@ -158,6 +170,7 @@ the table or a file's namespace is not its folder's.
 | `Settings` | `Connections`, `State`, `Storage` |
 | `Logging` | nothing |
 | `Storage` | nothing |
+| `Processes` | nothing |
 
 Text the engine client needs itself (`AnsiText`) lives in `Engine`, since `Engine` may not use
 `Text`. `Presentation` uses only `Session`'s plain records: the state (`EngineState`, `DetailState`
@@ -262,6 +275,50 @@ sends `StatsWantedChanged(route == Containers && !minimized)` and sends it again
 session after a switch: the list page stays in the navigation cache and does not render
 while another page shows, so it cannot see the route change itself. Minimized is read from
 Win32 `IsIconic`, because Reactor's window state does not report the restore.
+
+## Engine control
+
+A connection may carry `EngineControl`: a start and a stop command line. `SessionReducer.EngineControl` decides everything
+(one command at a time, a 60 s limit, quick reconnects after a start, no reconnects after a stop until Start engine or Retry,
+`EngineControlState.StoppedByBerth`); `EngineSession` runs the command through `IEngineControl`, which the app gives each
+session (`EngineCommands`). Commands run with no shell (`CommandRunner`: `UseShellExecute=false`, no window, standard input
+closed, the last 20 lines kept, the process tree ended on timeout, returning when the program exits even if a program it
+started holds the output). Neither a command line nor its output is ever logged: fixed words and the exit code only.
+
+**Never stop, restart or reconfigure a real engine in a check** (the daily engine, Docker Desktop's). Check engine control
+with a stand-in: a small TCP forwarder (a spare local port to `127.0.0.1:2375`) added as a connection whose start command
+launches the forwarder and returns, and whose stop command ends it. A failing command (`powershell.exe -NoProfile -Command
+"Write-Output 'no'; exit 3"`) and a slow one (`... Start-Sleep -Seconds 120`) check the failure and the timeout. Remove the
+stand-in connection and end the forwarder afterwards. Reading the WSL side is allowed (`wsl.exe -l -v`, `systemctl
+is-active|is-enabled|cat`); nothing that changes it.
+
+## The tray and the window
+
+- `Shell/TrayIcon` owns the notification area icon through Reactor's own tray icon (`ReactorApp.OpenTrayIcon`;
+  Shell_NotifyIcon underneath, works trimmed). Its icon and tooltip, and the menu, come from `Presentation/TrayMenu`, a pure
+  function of the state whose instances compare equal when nothing shown changed: the icon is updated, and the menu built
+  again, only then. It follows the session directly (not through the hooks), so it stays right while the window is hidden.
+  It is removed in `Program`'s window-closed handler, so Quit leaves no ghost icon.
+- The menu (`TrayFlyout`) is a Reactor component in Reactor's tray flyout window; `TrayFlyoutWindow` fits that window to the
+  menu (Reactor makes it a fixed size in physical pixels). Container actions from it go through the session like the list's;
+  a failure shows in the error bar and as a notification (`Notifications`). A stop of the engine asks first in the menu.
+- `Shell/MainWindow`: closing the window hides it to the tray only while "Keep running in the tray" is on **and the tray icon
+  is open** (a hidden window with no icon would strand Berth). Quit closes the window for good; the exit path (a shell ended
+  within one second, the icon removed) is the same as before.
+- One instance: `SingleInstance.Claim` (Windows App SDK `AppInstance` redirection) runs first in `Program`; a second launch
+  hands its activation to the first, which shows its window, and exits. `dotnet run` re-registers the package and ends a
+  running Berth, so check a second launch with `explorer.exe shell:AppsFolder\Koderi.Berth_<id>!App`.
+- Start with Windows: the `windows.startupTask` extension (`BerthStartup`) in `Package.appxmanifest`, read and set by
+  `StartWithWindows`; started that way (`ExtendedActivationKind.StartupTask`) the window starts hidden.
+- **A hidden window does no rendering work.** `UiThreadSubscription` holds back the engine and detail state changes while
+  `MainWindow.IsHidden` and delivers the latest once the window shows; `App` treats hidden like minimized (no list stats).
+  Anything new that renders from a store must go through it, and anything that must stay live while hidden (the tray) must
+  not.
+- Checks without a mouse: the tray icon's callbacks can be posted to Reactor's `ReactorTrayHiddenWindow` (a message-only
+  window of the Berth process) as Explorer sends them: message `WM_APP+1`, lParam low word `WM_CONTEXTMENU` (right click) or
+  `NIN_SELECT` (left click), high word the icon id. The menu is the window titled `ReactorTrayFlyout`; its items have
+  AutomationIds `tray-open`, `tray-stop-<name>`, `tray-restart-<name>`, `tray-more`, `tray-start-engine`,
+  `tray-stop-engine`, `tray-stop-cancel`, `tray-stop-confirm`, `tray-quit`.
 
 ## The exec terminal
 
@@ -545,6 +602,12 @@ The images, volumes and networks pages: `pull-image`, `create-volume`, `remove-u
 `delete-<name>` (an image by its tag), `open-<volume>` (its page), `containers-<network>` (a menu of the attached
 containers). Dialogs: `pull-reference`, `pull-dialog-status`; `run-name`, `run-outcome`;
 `volume-name`, `volume-create-error`; a remove confirmation's text is `confirm-text`.
+
+Engine control and the window: the disconnected view's `disconnected-title`, `start-engine`, `retry-disconnected` and
+`engine-command-failure`; the bar above a kept list's `start-engine-bar`; the status bar's `engine-status` (a menu with
+"Start engine" or "Stop engine…" when the connection has engine control; the stop's question is `confirm-text`); the
+connection editor's `engine-control`, `engine-start-command`, `engine-stop-command`, `wsl-distro`, `wsl-default`; Settings'
+`keep-running-in-tray`, `start-with-windows` and `start-with-windows-note`. The tray menu is in "The tray and the window".
 
 On the detail page:
 
