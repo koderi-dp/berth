@@ -126,7 +126,7 @@ the table or a file's namespace is not its folder's.
 | `Connections` | nothing |
 | `Transport` | `Connections` |
 | `Engine` | `Connections`, `Transport` |
-| `Text` | `Engine` (the model records it formats) |
+| `Text` | `Connections` (the connection a command names), `Engine` (the model records it formats) |
 | `State` | `Engine` |
 | `Session` | `Engine`, `State`, `Text` |
 | `Presentation` | `Engine`, `State`, `Session`, `Text` |

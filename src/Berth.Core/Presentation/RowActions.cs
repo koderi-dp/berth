@@ -5,7 +5,7 @@ using Berth.Text;
 namespace Berth.Presentation;
 
 /// <summary>Everything a row of the containers or images table, or the header of a container's detail page, can do.</summary>
-public enum RowActionKind { ViewDetails, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, CopyRunPowerShell, CopyRunBash, Delete, Run, PullAgain, Inspect }
+public enum RowActionKind { ViewDetails, OpenTerminal, Start, Stop, Restart, Pause, Resume, OpenInBrowser, CopyName, CopyId, CopyRunPowerShell, CopyRunBash, Delete, Run, PullAgain, Inspect }
 
 /// <summary>When an action is a button on its row; when it is not, it is in the row's "more" menu.</summary>
 public enum ButtonWhen
@@ -84,7 +84,8 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
         action.Button == ButtonWhen.Always || (action.Button == ButtonWhen.Wide && !compact);
 
     /// <summary>
-    /// A container: View details (on its own, first, always enabled); then Start (stopped) or Stop (active), Restart, Pause (enabled
+    /// A container: View details (first, always enabled) and Open terminal (a shell on its page's Exec tab; enabled while connected
+    /// and the container runs, not paused or restarting; never a button); then Start (stopped) or Stop (active), Restart, Pause (enabled
     /// only while running) or Resume (paused); then Open in browser (only with a published port), Copy name, Copy ID, and Copy docker
     /// run for PowerShell and for bash (enabled while connected, since the list has to read the container first); then Delete.
     /// </summary>
@@ -121,10 +122,11 @@ public sealed record RowActions(IReadOnlyList<IReadOnlyList<RowAction>> Sections
             Local(RowActionKind.CopyRunBash, "Copy docker run (bash)", enabled: connected),
         ];
         RowAction delete = new(RowActionKind.Delete, "Delete", canAct, ButtonWhen.Always, IsMain: false, EngineAction: null, ids);
+        var openTerminal = Local(RowActionKind.OpenTerminal, "Open terminal", enabled: connected && row.State == RowState.Running);
 
         return viewDetails
-            ? new RowActions([[Local(RowActionKind.ViewDetails, "View details")], run, other, [delete]], browserUrl)
-            : new RowActions([run, other, [delete]], browserUrl);
+            ? new RowActions([[Local(RowActionKind.ViewDetails, "View details"), openTerminal], run, other, [delete]], browserUrl)
+            : new RowActions([[openTerminal], run, other, [delete]], browserUrl);
     }
 
     /// <summary>

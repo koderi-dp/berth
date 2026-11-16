@@ -1,6 +1,6 @@
 using System.Net;
-using System.Text;
 using Berth.Engine.Models;
+using static Berth.Text.ShellQuote;
 
 namespace Berth.Text;
 
@@ -12,8 +12,7 @@ public static class DockerRunCommand
     /// "/udp" for a protocol other than TCP), "-v source:destination" per mount (a volume by its name, ":ro" when read-only;
     /// "--tmpfs destination" for a tmpfs), "-e" per environment entry, "--restart" unless the policy is "no", "-w", "-u",
     /// "-t" for a TTY, the image and the command. Each value is written for <paramref name="shell"/> so that pasting the
-    /// command passes it through unchanged: bare when it holds only letters, digits and <c>_ - . / : = @ % +</c> (for
-    /// PowerShell, and does not start with <c>@</c> or <c>-</c>), otherwise in single quotes.
+    /// command passes it through unchanged (<see cref="ShellQuote.Quote"/>).
     /// </summary>
     public static string Build(ContainerDetails details, ShellKind shell)
     {
@@ -92,51 +91,4 @@ public static class DockerRunCommand
         var host = address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? $"[{port.Ip}]" : port.Ip;
         return $"{host}:{mapping}";
     }
-
-    /// <summary>
-    /// A value (every argument but docker's own option names) bare when it is made only of safe characters and, for PowerShell,
-    /// does not start with "@", which would splat, or "-", which PowerShell can take for a parameter ("--%" stops its parsing,
-    /// "-a.b" is split in two); otherwise in single quotes, inside which neither shell acts on anything but the quote itself.
-    /// </summary>
-    private static string Quote(string arg, ShellKind shell)
-    {
-        if (arg.Length > 0 && arg.All(IsSafe) && !(shell == ShellKind.PowerShell && arg[0] is '@' or '-'))
-        {
-            return arg;
-        }
-
-        var text = new StringBuilder("'");
-        foreach (var c in arg)
-        {
-            if (shell == ShellKind.Posix && c == '\'')
-            {
-                text.Append(@"'\''");
-            }
-            else if (shell == ShellKind.PowerShell && IsPowerShellSingleQuote(c))
-            {
-                // PowerShell ends a single-quoted string at any of its single-quote characters; doubling one keeps it.
-                text.Append(c).Append(c);
-            }
-            else
-            {
-                text.Append(c);
-            }
-        }
-
-        return text.Append('\'').ToString();
-    }
-
-    private static bool IsSafe(char c) => char.IsAsciiLetterOrDigit(c) || "_-./:=@%+".Contains(c, StringComparison.Ordinal);
-
-    private static bool IsPowerShellSingleQuote(char c) => c is '\'' or '‘' or '’' or '‚' or '‛';
-}
-
-/// <summary>The shell a copied command is written for.</summary>
-public enum ShellKind
-{
-    /// <summary>PowerShell: a single quote inside single quotes is doubled.</summary>
-    PowerShell,
-
-    /// <summary>A POSIX shell such as bash or zsh: a single quote inside single quotes is written <c>'\''</c>.</summary>
-    Posix,
 }

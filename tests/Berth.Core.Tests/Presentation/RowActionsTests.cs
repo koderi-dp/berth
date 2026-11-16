@@ -26,7 +26,7 @@ public sealed class RowActionsTests
 
         Assert.Equal(
             [
-                [RowActionKind.ViewDetails],
+                [RowActionKind.ViewDetails, RowActionKind.OpenTerminal],
                 [RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Pause],
                 [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
                 [RowActionKind.Delete],
@@ -42,7 +42,7 @@ public sealed class RowActionsTests
 
         Assert.Equal(
             [
-                [RowActionKind.ViewDetails],
+                [RowActionKind.ViewDetails, RowActionKind.OpenTerminal],
                 [RowActionKind.Start, RowActionKind.Restart, RowActionKind.Pause],
                 [RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
                 [RowActionKind.Delete],
@@ -65,7 +65,7 @@ public sealed class RowActionsTests
         var actions = RowActions.ForContainer(Row("web", published: true), connected: true);
 
         Assert.Equal(
-            ["View details", "Stop", "Restart", "Pause", "Open in browser", "Copy name", "Copy ID", "Copy docker run (PowerShell)", "Copy docker run (bash)", "Delete"],
+            ["View details", "Open terminal", "Stop", "Restart", "Pause", "Open in browser", "Copy name", "Copy ID", "Copy docker run (PowerShell)", "Copy docker run (bash)", "Delete"],
             actions.Sections.SelectMany(s => s).Select(a => a.Label));
         Assert.Equal("Resume", Find(RowActions.ForContainer(Row("p", RowState.Paused), connected: true), RowActionKind.Resume).Label);
         Assert.Equal("Start", Find(RowActions.ForContainer(Row("s", RowState.Stopped), connected: true), RowActionKind.Start).Label);
@@ -174,7 +174,7 @@ public sealed class RowActionsTests
         Assert.Equal([RowActionKind.Stop, RowActionKind.Restart, RowActionKind.Pause], actions.Buttons(compact: false).Select(a => a.Kind));
         Assert.Equal(
             [
-                [RowActionKind.ViewDetails],
+                [RowActionKind.ViewDetails, RowActionKind.OpenTerminal],
                 [RowActionKind.OpenInBrowser, RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
             ],
             Kinds(actions.MoreMenu(compact: false)));
@@ -189,7 +189,7 @@ public sealed class RowActionsTests
         Assert.Equal([RowActionKind.Stop], actions.Buttons(compact: true).Select(a => a.Kind));
         Assert.Equal(
             [
-                [RowActionKind.ViewDetails],
+                [RowActionKind.ViewDetails, RowActionKind.OpenTerminal],
                 [RowActionKind.Restart, RowActionKind.Pause],
                 [RowActionKind.CopyName, RowActionKind.CopyId, RowActionKind.CopyRunPowerShell, RowActionKind.CopyRunBash],
             ],
@@ -212,9 +212,9 @@ public sealed class RowActionsTests
         var actions = RowActions.ForContainer(Row("web"), connected: true);
 
         var viewDetails = Find(actions, RowActionKind.ViewDetails);
-        Assert.Same(viewDetails, actions.Sections[0].Single());
-        Assert.Same(viewDetails, actions.MoreMenu(compact: false)[0].Single());
-        Assert.Same(viewDetails, actions.MoreMenu(compact: true)[0].Single());
+        Assert.Same(viewDetails, actions.Sections[0][0]);
+        Assert.Same(viewDetails, actions.MoreMenu(compact: false)[0][0]);
+        Assert.Same(viewDetails, actions.MoreMenu(compact: true)[0][0]);
         Assert.DoesNotContain(viewDetails, actions.Buttons(compact: false));
         Assert.Equal("View details", viewDetails.Label);
         Assert.Null(viewDetails.EngineAction);
@@ -236,9 +236,60 @@ public sealed class RowActionsTests
         var page = RowActions.ForContainer(row, connected: true, viewDetails: false);
 
         static object Shape(RowAction a) => (a.Kind, a.Label, a.IsEnabled, a.Button, a.IsMain, a.EngineAction, string.Join(",", a.Ids), a.Description, a.RunCommandShell);
-        Assert.Equal(list.Sections.Skip(1).Select(s => s.Select(Shape).ToArray()), page.Sections.Select(s => s.Select(Shape).ToArray()));
+        IEnumerable<IReadOnlyList<RowAction>> listWithoutViewDetails =
+            [[.. list.Sections[0].Where(a => a.Kind != RowActionKind.ViewDetails)], .. list.Sections.Skip(1)];
+        Assert.Equal(listWithoutViewDetails.Select(s => s.Select(Shape).ToArray()), page.Sections.Select(s => s.Select(Shape).ToArray()));
         Assert.Equal(list.Buttons(compact: false).Select(Shape), page.Buttons(compact: false).Select(Shape));
         Assert.Equal(list.BrowserUrl, page.BrowserUrl);
+    }
+
+    // Open terminal: after View details, in the menus only; it needs a running container and the connection.
+
+    [Fact]
+    public void A_running_container_can_open_a_terminal()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: true);
+
+        var open = Find(actions, RowActionKind.OpenTerminal);
+        Assert.Equal([RowActionKind.ViewDetails, RowActionKind.OpenTerminal], actions.Sections[0].Select(a => a.Kind));
+        Assert.Equal("Open terminal", open.Label);
+        Assert.True(open.IsEnabled);
+        Assert.Null(open.EngineAction);
+        Assert.Equal<string>(["web"], open.Ids);
+    }
+
+    [Theory]
+    [InlineData(RowState.Stopped)]
+    [InlineData(RowState.Paused)]
+    [InlineData(RowState.Restarting)]
+    public void A_stopped_or_paused_container_cannot(RowState state)
+    {
+        Assert.False(Find(RowActions.ForContainer(Row("web", state), connected: true), RowActionKind.OpenTerminal).IsEnabled);
+    }
+
+    [Fact]
+    public void Open_terminal_is_disabled_while_disconnected()
+    {
+        Assert.False(Find(RowActions.ForContainer(Row("web"), connected: false), RowActionKind.OpenTerminal).IsEnabled);
+    }
+
+    [Fact]
+    public void Open_terminal_is_in_the_menu_not_a_button()
+    {
+        var actions = RowActions.ForContainer(Row("web"), connected: true);
+
+        Assert.Equal(ButtonWhen.Never, Find(actions, RowActionKind.OpenTerminal).Button);
+        Assert.DoesNotContain(actions.Buttons(compact: false), a => a.Kind == RowActionKind.OpenTerminal);
+        Assert.DoesNotContain(actions.Buttons(compact: true), a => a.Kind == RowActionKind.OpenTerminal);
+        Assert.Equal([RowActionKind.ViewDetails, RowActionKind.OpenTerminal], actions.MoreMenu(compact: true)[0].Select(a => a.Kind));
+    }
+
+    [Fact]
+    public void The_detail_page_opens_a_terminal_from_its_first_section()
+    {
+        var page = RowActions.ForContainer(Row("web"), connected: true, viewDetails: false);
+
+        Assert.Equal([RowActionKind.OpenTerminal], page.Sections[0].Select(a => a.Kind));
     }
 
     [Fact]

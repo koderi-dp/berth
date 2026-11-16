@@ -157,9 +157,10 @@ internal static class ContainerParts
         }
     }
 
+    // Open terminal has no handler until Task 7, so the menus leave it out (and a section it leaves empty).
     private static MenuEntry[] MenuEntries(IReadOnlyList<IReadOnlyList<RowAction>> sections, Action<RowAction> run) =>
     [
-        .. sections.SelectMany((section, i) => (MenuEntry[])
+        .. sections.Select(s => s.Where(a => a.Kind != RowActionKind.OpenTerminal).ToArray()).Where(s => s.Length > 0).SelectMany((section, i) => (MenuEntry[])
         [
             .. i > 0 ? (MenuEntry[])[MenuSeparator()] : [],
             .. section.Select(a => MenuItem(a.Label, () => run(a)) with

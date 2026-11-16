@@ -14,7 +14,7 @@ public sealed partial class LayerTests
         { "Connections", [] },
         { "Transport", ["Connections"] },
         { "Engine", ["Connections", "Transport"] },
-        { "Text", ["Engine"] },
+        { "Text", ["Connections", "Engine"] },
         { "State", ["Engine"] },
         { "Session", ["Engine", "State", "Text"] },
         { "Presentation", ["Engine", "State", "Session", "Text"] },
