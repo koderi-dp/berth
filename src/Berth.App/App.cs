@@ -129,7 +129,10 @@ internal sealed class App : EngineStateComponent
                 if (AppRoute.IsDetail(nav.CurrentRoute))
                     setNotice(null);
                 if (nav.CurrentRoute is not AppRoute.ContainerDetail)
+                {
                     AppServices.Current.CloseDetail();
+                    Pages.Detail.DetailTabRequest.Clear();
+                }
             },
             nav.CurrentRoute);
 
