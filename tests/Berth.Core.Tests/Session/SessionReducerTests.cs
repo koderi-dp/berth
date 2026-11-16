@@ -199,7 +199,7 @@ public sealed partial class SessionReducerTests
     [Theory]
     [InlineData("image", "pull")]
     [InlineData("image", "start")]
-    [InlineData("network", "connect")]
+    [InlineData("network", "create")]
     [InlineData("container", "exec_start")]
     [InlineData("container", "exec_create")]
     [InlineData("container", "attach")]

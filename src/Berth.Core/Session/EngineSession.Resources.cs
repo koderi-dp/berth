@@ -149,6 +149,7 @@ public sealed partial class EngineSession
         {
             var api = connection.Api!;
             created = await api.CreateContainerAsync(run.Request, ct).ConfigureAwait(false);
+            Post(new RunCreated(created), connection);
             await api.StartContainerAsync(created, ct).ConfigureAwait(false);
             result = new RunSucceeded(created);
         }

@@ -32,13 +32,13 @@ public static partial class SessionReducer
         {
             case ConnectRequested when state.Status == ConnectionStatus.Disconnected:
                 return (
-                    ForgetUnderWay(state, lostMessage: null) with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false },
+                    ForgetUnderWay(state, startingOver: true) with { Status = ConnectionStatus.Connecting, RetryAttempt = 0, ListLoaded = false },
                     [new ConnectEffect()]);
 
             case ConnectRequested:
                 // Starting over drops in-flight work: action results, the reload timer and the stats streams.
                 return (
-                    ForgetUnderWay(state, lostMessage: null) with
+                    ForgetUnderWay(state, startingOver: true) with
                     {
                         Status = ConnectionStatus.Connecting,
                         Pending = state.Pending.Clear(),
@@ -181,7 +181,7 @@ public static partial class SessionReducer
     /// may be cancelled), ignore any load still in flight, and retry with back-off.
     /// </summary>
     private static (EngineState, ImmutableArray<SessionEffect>) Lose(EngineState state, string message) => (
-        ForgetUnderWay(state, message) with
+        ForgetUnderWay(state, startingOver: false) with
         {
             Status = ConnectionStatus.Disconnected,
             ConnectionError = message,
@@ -227,11 +227,17 @@ public static partial class SessionReducer
     }
 
     /// <summary>
-    /// A container event whose action is in <see cref="ReloadActions"/>. The engine adds detail after a colon to some
-    /// actions ("health_status: healthy"), so only the part before it is compared.
+    /// A container event whose action is in <see cref="ReloadActions"/>, or a container joining or leaving a network. The engine adds
+    /// detail after a colon to some actions ("health_status: healthy"), so only the part before it is compared.
     /// </summary>
     private static bool CausesReload(EngineEventMessage message) =>
-        message.Type == "container" && ReloadActions.Contains(BaseAction(message.Action));
+        message.Type switch
+        {
+            "container" => ReloadActions.Contains(BaseAction(message.Action)),
+            // Which networks a container is attached to comes from the container list.
+            "network" => BaseAction(message.Action) is "connect" or "disconnect",
+            _ => false,
+        };
 
     /// <summary>An event's action without the detail the engine adds after a colon to some ("health_status: healthy").</summary>
     private static string BaseAction(string action)

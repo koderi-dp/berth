@@ -78,7 +78,7 @@ public static class ImageRows
     {
         var term = filter.Search.Trim();
         bool Matches(ImageRow r) =>
-            term.Length == 0 || Contains(r.Name, term) || Contains(r.Tag, term) || Contains(r.ImageId, term);
+            term.Length == 0 || Contains(r.Name, term) || Contains(r.Tag, term) || Contains(Hex(r.ImageId), term);
         bool Keeps(ImageRow r) => filter.Show switch
         {
             ImageShow.InUse => r.InUse,
@@ -151,6 +151,9 @@ public static class ImageRows
         ImageColumn.Size => (a, b) => a.Size.CompareTo(b.Size),
         _ => (a, b) => SortText.Compare(a.Name, b.Name),
     };
+
+    /// <summary>An ID without "sha256:", so searching "sha" or "256" does not match every image.</summary>
+    private static string Hex(string id) => id.StartsWith("sha256:", StringComparison.Ordinal) ? id["sha256:".Length..] : id;
 
     private static bool Contains(string text, string term) => text.Contains(term, StringComparison.OrdinalIgnoreCase);
 }

@@ -44,6 +44,8 @@ public sealed record PullFigure(int LayersDone, int LayersTotal, long? BytesDone
                 return new PullFigure(layers.Length, layers.Length, bytesTotal, bytesTotal, 1, "Pull complete");
             case PullStatus.Failed:
                 return new PullFigure(done, layers.Length, bytesDone, bytesTotal, fraction, pull.Error ?? "");
+            case PullStatus.Interrupted:
+                return new PullFigure(done, layers.Length, bytesDone, bytesTotal, fraction, "Stopped: the connection to the engine changed.");
         }
 
         if (layers.Length == 0)

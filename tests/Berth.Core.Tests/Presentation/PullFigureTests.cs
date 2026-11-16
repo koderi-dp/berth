@@ -97,4 +97,12 @@ public sealed class PullFigureTests
         Assert.Equal("Pull complete", done.Text);
         Assert.Equal("manifest unknown", failed.Text);
     }
+
+    [Fact]
+    public void An_interrupted_pull_says_the_connection_changed()
+    {
+        var figure = PullFigure.Of(Pull(new PullProgress("l1", "Downloading", 5, 10)) with { Status = PullStatus.Interrupted });
+
+        Assert.Equal("Stopped: the connection to the engine changed.", figure.Text);
+    }
 }

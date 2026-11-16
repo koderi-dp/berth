@@ -104,23 +104,26 @@ public static partial class SessionReducer
                 return failure.EngineUnreachable ? Lose(next, failure.Message) : (next with { ActionError = failure.Message }, None);
             }
 
-            case DiskUsageRequested when connected && !state.DiskUsage.Loading:
+            case DiskUsageRequested when connected:
                 return LoadDiskUsage(state);
 
             case DiskUsageLoaded loaded when connected && state.DiskUsage.Loading && loaded.Generation == state.DiskUsage.Generation:
-                return (state with { DiskUsage = state.DiskUsage with { Usage = loaded.Usage, Loading = false } }, None);
+                return ReadEnded(state with { DiskUsage = state.DiskUsage with { Usage = loaded.Usage } });
 
             case DiskUsageFailed failure when connected && state.DiskUsage.Loading && failure.Generation == state.DiskUsage.Generation:
-            {
-                var next = state with { DiskUsage = state.DiskUsage with { Loading = false } };
-                return failure.EngineUnreachable ? Lose(next, failure.Message) : (next with { ActionError = failure.Message }, None);
-            }
+                return failure.EngineUnreachable
+                    ? Lose(state, failure.Message)
+                    : ReadEnded(state with { ActionError = failure.Message });
 
             case PullRequested request when connected:
                 return StartPull(state, request.Reference);
 
             case PullProgressArrived progress when IsRunning(state, progress.Reference, progress.Generation, out var pull):
                 return (state with { Pulls = state.Pulls.SetItem(pull.Reference, pull.With(progress.Lines)) }, None);
+
+            case PullFinished finished when IsRunning(state, finished.Reference, finished.Generation, out var pull) && !state.Images.Status.Wanted:
+                // No image list to wait for: nothing would ever clear the entry.
+                return (state with { Pulls = state.Pulls.Remove(pull.Reference) }, None);
 
             case PullFinished finished when IsRunning(state, finished.Reference, finished.Generation, out var pull):
             {
@@ -144,6 +147,9 @@ public static partial class SessionReducer
 
             case RunContainerRequested request when connected && state.Run?.Status != RunStatus.InProgress:
                 return (state with { Run = new ContainerRun(request.Request.Image, RunStatus.InProgress, null, null) }, [new RunContainerEffect(request.Request)]);
+
+            case RunCreated created when connected && state.Run is { Status: RunStatus.InProgress } run:
+                return (state with { Run = run with { ContainerId = created.ContainerId } }, None);
 
             case RunSucceeded success when connected && state.Run is { Status: RunStatus.InProgress } run:
                 return RequestReload(state with { Run = run with { Status = RunStatus.Started, ContainerId = success.ContainerId } });
@@ -169,11 +175,11 @@ public static partial class SessionReducer
     }
 
     /// <summary>
-    /// What is under way on the connection is over: pending item actions, prunes, reloads and the disk use read are forgotten. With a
-    /// <paramref name="lostMessage"/> (the connection was lost) running pulls and an unfinished run fail with it; without one (the session
-    /// starts over) they are forgotten and every list counts as not loaded until it is read again.
+    /// What is under way on the connection is over, lost or started over: pending item actions, prunes, reloads and the disk use read
+    /// are forgotten, and running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created). When
+    /// the session starts over (<paramref name="startingOver"/>) every list also counts as not loaded until it is read again.
     /// </summary>
-    private static EngineState ForgetUnderWay(EngineState state, string? lostMessage)
+    private static EngineState ForgetUnderWay(EngineState state, bool startingOver)
     {
         var next = state;
         foreach (var kind in Kinds)
@@ -181,22 +187,19 @@ public static partial class SessionReducer
             var status = StatusOf(next, kind);
             next = WithStatus(next, kind, status with
             {
-                Loaded = lostMessage is not null && status.Loaded,
+                Loaded = !startingOver && status.Loaded,
                 ReloadScheduled = false,
                 Pending = status.Pending.Clear(),
                 Pruning = false,
             });
         }
 
-        var running = next.Pulls.Values.Where(p => p.Status == PullStatus.Running).ToList();
-        var pulls = lostMessage is null
-            ? next.Pulls.RemoveRange(running.Select(p => p.Reference))
-            : next.Pulls.SetItems(running.Select(p => KeyValuePair.Create(p.Reference, p with { Status = PullStatus.Failed, Error = lostMessage })));
-        var run = next.Run is { Status: RunStatus.InProgress } inProgress
-            ? lostMessage is null ? null : inProgress with { Status = RunStatus.Failed, Error = lostMessage }
-            : next.Run;
+        var pulls = next.Pulls.SetItems(next.Pulls.Values
+            .Where(p => p.Status == PullStatus.Running)
+            .Select(p => KeyValuePair.Create(p.Reference, p with { Status = PullStatus.Interrupted })));
+        var run = next.Run is { Status: RunStatus.InProgress } inProgress ? inProgress with { Status = RunStatus.Interrupted } : next.Run;
 
-        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false } };
+        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false, Again = false } };
     }
 
     /// <summary>Reads every list whose page has been shown, and the disk use once it has been asked for: the connection is new.</summary>
@@ -287,12 +290,24 @@ public static partial class SessionReducer
             : (WithStatus(state, kind, status with { Pending = pending.ToImmutable() }), effects.ToImmutable());
     }
 
+    /// <summary>Reads the disk use now, or once more after the read that is running (however often it is asked meanwhile).</summary>
     private static (EngineState, ImmutableArray<SessionEffect>) LoadDiskUsage(EngineState state)
     {
+        if (state.DiskUsage.Loading)
+            return state.DiskUsage.Again ? (state, None) : (state with { DiskUsage = state.DiskUsage with { Again = true } }, None);
+
         var ticket = state.Ticket + 1;
         return (
             state with { Ticket = ticket, DiskUsage = state.DiskUsage with { Asked = true, Loading = true, Generation = ticket } },
             [new LoadDiskUsageEffect(ticket)]);
+    }
+
+    /// <summary>The running disk use read ended: starts the one more read it was asked for meanwhile, if any.</summary>
+    private static (EngineState, ImmutableArray<SessionEffect>) ReadEnded(EngineState state)
+    {
+        var again = state.DiskUsage.Again;
+        var ended = state with { DiskUsage = state.DiskUsage with { Loading = false, Again = false } };
+        return again ? LoadDiskUsage(ended) : (ended, None);
     }
 
     /// <summary>After a remove or prune: reads the disk use again if something asked for it before; never otherwise.</summary>

@@ -86,6 +86,9 @@ public sealed record PullFailed(string Reference, int Generation, string Message
 /// <summary>Create a container from <paramref name="Request"/> and start it. Ignored while another run is in progress.</summary>
 public sealed record RunContainerRequested(ContainerCreateRequest Request) : SessionEvent;
 
+/// <summary>The container was created; starting it comes next.</summary>
+public sealed record RunCreated(string ContainerId) : SessionEvent;
+
 /// <summary>The container was created and started.</summary>
 public sealed record RunSucceeded(string ContainerId) : SessionEvent;
 

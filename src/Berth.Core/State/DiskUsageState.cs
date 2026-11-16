@@ -10,7 +10,8 @@ namespace Berth.State;
 /// <param name="Asked">Something has asked for it in this session.</param>
 /// <param name="Loading">A read is running.</param>
 /// <param name="Generation">The latest read; results of older reads are dropped.</param>
-public sealed record DiskUsageState(DiskUsage? Usage, bool Asked, bool Loading, int Generation)
+/// <param name="Again">Asked for again while a read ran: one more read starts when it ends, however often it was asked.</param>
+public sealed record DiskUsageState(DiskUsage? Usage, bool Asked, bool Loading, int Generation, bool Again = false)
 {
     public static readonly DiskUsageState Initial = new(Usage: null, Asked: false, Loading: false, Generation: 0);
 }

@@ -3,8 +3,11 @@ using Berth.Engine.Models;
 
 namespace Berth.State;
 
-/// <summary>Where a pull is: running, finished (until the image list shows the image), or failed (until dismissed or started again).</summary>
-public enum PullStatus { Running, Done, Failed }
+/// <summary>
+/// Where a pull is: running, finished (until the image list shows the image), failed (until dismissed or started again), or interrupted
+/// because the connection to the engine changed (lost or started over) while it ran.
+/// </summary>
+public enum PullStatus { Running, Done, Failed, Interrupted }
 
 /// <summary>
 /// One layer of a pull as its latest progress line left it. <see cref="Total"/> is the layer's size from the last line that carried

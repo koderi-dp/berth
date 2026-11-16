@@ -171,12 +171,31 @@ public sealed partial class SessionReducerTests
 
         var (next, effects) = Reduce(state, new EngineEventReceived(Event(type, action)));
 
-        Assert.Equal([new ScheduleResourceReloadEffect(kind, SessionReducer.ReloadDebounce)], effects);
+        Assert.Contains(new ScheduleResourceReloadEffect(kind, SessionReducer.ReloadDebounce), effects);
+        Assert.DoesNotContain(effects, e => e is ScheduleResourceReloadEffect r && r.Kind != kind);
         Assert.True(StatusOf(next, kind).ReloadScheduled);
 
         var (again, againEffects) = Reduce(next, new EngineEventReceived(Event(type, action)));
         Assert.Same(next, again);
         Assert.Empty(againEffects);
+    }
+
+    [Theory]
+    [InlineData("connect")]
+    [InlineData("disconnect")]
+    public void A_container_joining_or_leaving_a_network_reloads_the_containers_which_say_what_is_in_use(string action)
+    {
+        var state = AllListsLoaded();
+
+        var (next, effects) = Reduce(state, new EngineEventReceived(Event("network", action)));
+
+        Assert.Equal(
+            [
+                new ScheduleReloadEffect(SessionReducer.ReloadDebounce),
+                new ScheduleResourceReloadEffect(ResourceKind.Networks, SessionReducer.ReloadDebounce),
+            ],
+            effects);
+        Assert.True(next.ReloadScheduled);
     }
 
     [Theory]
@@ -433,7 +452,7 @@ public sealed partial class SessionReducerTests
         Assert.False(state.Volumes.Pruning);
         Assert.Same(result, state.Volumes.Status.Pruned);
         Assert.Contains(new ScheduleResourceReloadEffect(ResourceKind.Volumes, SessionReducer.ReloadDebounce), effects);
-        Assert.Contains(new LoadDiskUsageEffect(state.DiskUsage.Generation), effects);
+        Assert.True(state.DiskUsage.Loading && state.DiskUsage.Again);
 
         var (next, _) = Reduce(state, new PruneRequested(ResourceKind.Volumes));
         Assert.Null(next.Volumes.Status.Pruned);
@@ -504,14 +523,37 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
-    public void Disk_use_asked_for_while_it_is_being_read_is_not_read_twice()
+    public void Disk_use_asked_for_while_it_is_being_read_is_read_once_more_when_that_read_ends()
     {
         var (loading, _) = Reduce(Connected(), new DiskUsageRequested());
 
-        var (state, effects) = Reduce(loading, new DiskUsageRequested());
-
-        Assert.Same(loading, state);
+        var (asked, effects) = Reduce(loading, new DiskUsageRequested());
+        var (askedAgain, moreEffects) = Reduce(asked, new DiskUsageRequested());
         Assert.Empty(effects);
+        Assert.Empty(moreEffects);
+        Assert.True(askedAgain.DiskUsage.Again);
+
+        var (rereading, rereadEffects) = Reduce(askedAgain, new DiskUsageLoaded(loading.DiskUsage.Generation, Usage));
+        var reread = Assert.IsType<LoadDiskUsageEffect>(Assert.Single(rereadEffects));
+        Assert.True(rereading.DiskUsage.Loading);
+        Assert.False(rereading.DiskUsage.Again);
+        Assert.Same(Usage, rereading.DiskUsage.Usage);
+
+        var (state, lastEffects) = Reduce(rereading, new DiskUsageLoaded(reread.Generation, Usage));
+        Assert.False(state.DiskUsage.Loading);
+        Assert.Empty(lastEffects);
+    }
+
+    [Fact]
+    public void A_disk_use_read_asked_for_again_starts_once_more_after_a_failed_read_too()
+    {
+        var (loading, _) = Reduce(Connected(), new DiskUsageRequested());
+        var (asked, _) = Reduce(loading, new DiskUsageRequested());
+
+        var (state, effects) = Reduce(asked, new DiskUsageFailed(loading.DiskUsage.Generation, "df broke", EngineUnreachable: false));
+
+        Assert.Single(effects.OfType<LoadDiskUsageEffect>());
+        Assert.True(state.DiskUsage.Loading);
     }
 
     [Fact]
@@ -533,8 +575,10 @@ public sealed partial class SessionReducerTests
     {
         var (loading, _) = Reduce(Connected(), new DiskUsageRequested());
 
-        var (lost, _) = Reduce(loading, new ConnectionLost("connection reset"));
+        var (asked, _) = Reduce(loading, new DiskUsageRequested());
+        var (lost, _) = Reduce(asked, new ConnectionLost("connection reset"));
         Assert.False(lost.DiskUsage.Loading);
+        Assert.False(lost.DiskUsage.Again);
 
         var (retrying, _) = Reduce(lost, new RetryDue());
         var (state, effects) = Reduce(retrying, new ConnectSucceeded(Version, Info));
@@ -636,6 +680,17 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
+    public void A_finished_pull_goes_at_once_when_the_image_list_is_not_shown()
+    {
+        var pulling = Pulling(Connected(), "nginx");
+
+        var (state, effects) = Reduce(pulling, new PullFinished("nginx:latest", pulling.Pulls["nginx:latest"].Generation));
+
+        Assert.Empty(state.Pulls);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
     public void A_failed_pull_keeps_the_engine_message_leaves_the_list_and_can_start_again()
     {
         var loaded = WithImages();
@@ -714,26 +769,31 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
-    public void Losing_the_connection_fails_the_running_pulls_with_its_message()
+    public void Losing_the_connection_interrupts_the_running_pulls()
     {
         var pulling = Pulling(Pulling(WithImages(), "nginx"), "alpine");
         var (done, _) = Reduce(pulling, new PullFinished("alpine:latest", pulling.Pulls["alpine:latest"].Generation));
 
         var (state, _) = Reduce(done, new ConnectionLost("The engine closed the connection."));
 
-        Assert.Equal(PullStatus.Failed, state.Pulls["nginx:latest"].Status);
-        Assert.Equal("The engine closed the connection.", state.Pulls["nginx:latest"].Error);
+        Assert.Equal(PullStatus.Interrupted, state.Pulls["nginx:latest"].Status);
+        Assert.Null(state.Pulls["nginx:latest"].Error);
         Assert.Equal(PullStatus.Done, state.Pulls["alpine:latest"].Status);
     }
 
     [Fact]
-    public void Starting_the_connection_over_forgets_the_running_pulls()
+    public void Starting_the_connection_over_interrupts_the_running_pulls_which_can_be_pulled_again()
     {
         var pulling = Pulling(WithImages(), "nginx");
 
         var (state, _) = Reduce(pulling, new ConnectRequested());
+        Assert.Equal(PullStatus.Interrupted, state.Pulls["nginx:latest"].Status);
 
-        Assert.Empty(state.Pulls);
+        var (connected, _) = Reduce(state, new ConnectSucceeded(Version, Info));
+        var (again, effects) = Reduce(connected, new PullRequested("nginx"));
+        Assert.Equal(PullStatus.Running, again.Pulls["nginx:latest"].Status);
+        Assert.Single(effects.OfType<StartPullEffect>());
+        Assert.Empty(Reduce(state, new PullDismissed("nginx:latest")).State.Pulls);
     }
 
     // Running a container
@@ -804,13 +864,27 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
-    public void Losing_the_connection_during_a_run_fails_it_with_the_message()
+    public void Losing_the_connection_during_a_run_interrupts_it()
     {
         var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
 
         var (state, _) = Reduce(running, new ConnectionLost("connection reset"));
 
-        Assert.Equal(new ContainerRun("alpine", RunStatus.Failed, null, "connection reset"), state.Run);
+        Assert.Equal(new ContainerRun("alpine", RunStatus.Interrupted, null, null), state.Run);
+    }
+
+    [Fact]
+    public void Starting_the_connection_over_during_a_run_interrupts_it_and_keeps_the_created_id()
+    {
+        var (running, _) = Reduce(Connected(), new RunContainerRequested(RunRequest));
+        var (created, effects) = Reduce(running, new RunCreated("c1"));
+        Assert.Equal(new ContainerRun("alpine", RunStatus.InProgress, "c1", null), created.Run);
+        Assert.Empty(effects);
+
+        var (state, _) = Reduce(created, new ConnectRequested());
+
+        Assert.Equal(new ContainerRun("alpine", RunStatus.Interrupted, "c1", null), state.Run);
+        Assert.Null(Reduce(state, new RunDismissed()).State.Run);
     }
 
     [Fact]

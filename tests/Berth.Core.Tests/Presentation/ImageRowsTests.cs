@@ -118,6 +118,8 @@ public sealed class ImageRowsTests
     [InlineData("3.19", new[] { "alpine:3.19" })]
     [InlineData("cafe", new[] { "nginx:latest" })]
     [InlineData("  ", new[] { "alpine:3.19", "nginx:latest" })]
+    [InlineData("sha", new string[0])]
+    [InlineData("256", new string[0])]
     public void The_search_matches_name_tag_or_id_ignoring_case(string search, string[] keys)
     {
         var state = StateWith(images: [Image("sha256:cafe0001", ["nginx:latest"]), Image("sha256:beef0002", ["alpine:3.19"])]);

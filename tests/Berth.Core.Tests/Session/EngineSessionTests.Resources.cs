@@ -151,6 +151,8 @@ public sealed partial class EngineSessionTests
         var stream = api.PullOf("nginx:latest");
         await using var h = Harness.With(api);
         await h.ConnectAsync();
+        h.Session.Dispatch(new ImagesWanted());
+        await h.WaitFor(s => s.Images.Loaded);
 
         h.Session.Dispatch(new PullRequested("nginx"));
         await stream.WhenOpened().WaitAsync(Patience);
@@ -187,6 +189,8 @@ public sealed partial class EngineSessionTests
         var stream = api.PullOf("nope:latest");
         await using var h = Harness.With(api);
         await h.ConnectAsync();
+        h.Session.Dispatch(new ImagesWanted());
+        await h.WaitFor(s => s.Images.Loaded);
 
         h.Session.Dispatch(new PullRequested("nope"));
         await stream.WhenOpened().WaitAsync(Patience);
@@ -228,6 +232,8 @@ public sealed partial class EngineSessionTests
         var alpine = api.PullOf("alpine:latest");
         await using var h = Harness.With(api);
         await h.ConnectAsync();
+        h.Session.Dispatch(new ImagesWanted());
+        await h.WaitFor(s => s.Images.Loaded);
 
         h.Session.Dispatch(new PullRequested("nginx"));
         h.Session.Dispatch(new PullRequested("alpine"));
