@@ -9,7 +9,8 @@ namespace Berth.Tests.Session;
 /// <summary>
 /// An engine stand-in for one connection. A test sets the version, container list and inspect answers, makes calls fail, holds
 /// calls until it releases them, and pushes messages into the event stream, lines into the log stream and samples into the stats
-/// stream.
+/// stream. Images, volumes, networks, disk use and container create answer from properties and the Set* methods; the pull stream
+/// is <see cref="Pulls"/>.
 /// </summary>
 internal sealed class FakeEngineApi : IEngineApi
 {
@@ -19,6 +20,8 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, Exception> _failures = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Gate> _gates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ContainerInspection> _inspections = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ImageDetails> _images = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, NetworkDetails> _networks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _cancelledWaiters = new(StringComparer.Ordinal);
     private readonly Channel<EngineEventMessage> _events = Channel.CreateUnbounded<EngineEventMessage>();
@@ -68,7 +71,11 @@ internal sealed class FakeEngineApi : IEngineApi
         id, [$"/{id}"], "nginx:latest", "sha256:1", "nginx", 1_700_000_000, "running", "Up 1 minute", [],
         new Dictionary<string, string>());
 
-    /// <summary>Makes every later <paramref name="call"/> ("Connect", "GetInfo", "List", "Stop", ...) throw.</summary>
+    /// <summary>
+    /// Makes every later <paramref name="call"/> throw: "Connect", "GetInfo", "List", "Stop", ..., and "ListImages",
+    /// "InspectImage", "RemoveImage", "PruneImages", "Pull", "ListVolumes", "CreateVolume", "RemoveVolume", "PruneVolumes",
+    /// "ListNetworks", "InspectNetwork", "RemoveNetwork", "PruneNetworks", "DiskUsage", "CreateContainer".
+    /// </summary>
     public void Fail(string call, Exception error) => _failures[call] = error;
 
     /// <summary>Makes every later <paramref name="call"/> wait until the returned gate is released.</summary>
@@ -163,6 +170,130 @@ internal sealed class FakeEngineApi : IEngineApi
         var source = _statsOf.TryGetValue(id, out var own) ? own : Stats;
         await foreach (var sample in ReadAsync(source, entry, ct))
             yield return sample;
+    }
+
+    /// <summary>What <see cref="ListImagesAsync"/> answers.</summary>
+    public IReadOnlyList<ImageSummary> Images { get; set; } = [];
+
+    /// <summary>What <see cref="RemoveImageAsync"/> answers.</summary>
+    public IReadOnlyList<ImageDeleteResult> ImageRemoval { get; set; } = [];
+
+    /// <summary>What every prune answers.</summary>
+    public PruneResult Prune { get; set; } = new([], 0);
+
+    /// <summary>The pull stream: push progress lines, end it, or fail it (an error line or a dropped connection).</summary>
+    public ScriptedStream<PullProgress> Pulls { get; } = new();
+
+    public IReadOnlyList<VolumeSummary> Volumes { get; set; } = [];
+
+    public IReadOnlyList<NetworkSummary> Networks { get; set; } = [];
+
+    public DiskUsage DiskUsage { get; set; } = new([], new UsageTotals(0, 0, 0, 0), [], new UsageTotals(0, 0, 0, 0));
+
+    /// <summary>The ID <see cref="CreateContainerAsync"/> answers.</summary>
+    public string CreatedId { get; set; } = "created";
+
+    /// <summary>Every container create request, in order.</summary>
+    public ConcurrentQueue<ContainerCreateRequest> CreateRequests { get; } = new();
+
+    /// <summary>Makes later inspects of <paramref name="idOrName"/> answer with <paramref name="details"/>.</summary>
+    public void SetImage(string idOrName, ImageDetails details) => _images[idOrName] = details;
+
+    /// <summary>Makes later inspects of <paramref name="id"/> answer with <paramref name="details"/>.</summary>
+    public void SetNetwork(string id, NetworkDetails details) => _networks[id] = details;
+
+    public async Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct)
+    {
+        await EnterAsync("ListImages", "ListImages", ct);
+        return Images;
+    }
+
+    /// <summary>Answers with the details set for <paramref name="idOrName"/>, or the engine's 404 when none are.</summary>
+    public async Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct)
+    {
+        await EnterAsync("InspectImage", $"InspectImage {idOrName}", ct);
+        return _images.TryGetValue(idOrName, out var details)
+            ? details
+            : throw new EngineException(404, $"No such image: {idOrName}");
+    }
+
+    public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct)
+    {
+        await EnterAsync("RemoveImage", $"RemoveImage {idOrName} force={force}", ct);
+        return ImageRemoval;
+    }
+
+    public async Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct)
+    {
+        await EnterAsync("PruneImages", $"PruneImages danglingOnly={danglingOnly}", ct);
+        return Prune;
+    }
+
+    /// <summary>Opens after any hold or failure set for "Pull", then yields what the test pushes into <see cref="Pulls"/>.</summary>
+    public async IAsyncEnumerable<PullProgress> PullImageAsync(string reference, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var entry = $"Pull {reference}";
+        await EnterAsync("Pull", entry, ct);
+        await foreach (var line in ReadAsync(Pulls, entry, ct))
+            yield return line;
+    }
+
+    public async Task<IReadOnlyList<VolumeSummary>> ListVolumesAsync(CancellationToken ct)
+    {
+        await EnterAsync("ListVolumes", "ListVolumes", ct);
+        return Volumes;
+    }
+
+    /// <summary>Answers with a local volume of that name.</summary>
+    public async Task<VolumeSummary> CreateVolumeAsync(string name, CancellationToken ct)
+    {
+        await EnterAsync("CreateVolume", $"CreateVolume {name}", ct);
+        return new VolumeSummary(name, "local", $"/var/lib/docker/volumes/{name}/_data", null, new Dictionary<string, string>(), "local");
+    }
+
+    public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) =>
+        EnterAsync("RemoveVolume", $"RemoveVolume {name} force={force}", ct);
+
+    public async Task<PruneResult> PruneVolumesAsync(CancellationToken ct)
+    {
+        await EnterAsync("PruneVolumes", "PruneVolumes", ct);
+        return Prune;
+    }
+
+    public async Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct)
+    {
+        await EnterAsync("ListNetworks", "ListNetworks", ct);
+        return Networks;
+    }
+
+    /// <summary>Answers with the details set for <paramref name="id"/>, or the engine's 404 when none are.</summary>
+    public async Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct)
+    {
+        await EnterAsync("InspectNetwork", $"InspectNetwork {id}", ct);
+        return _networks.TryGetValue(id, out var details)
+            ? details
+            : throw new EngineException(404, $"network {id} not found");
+    }
+
+    public Task RemoveNetworkAsync(string id, CancellationToken ct) => EnterAsync("RemoveNetwork", $"RemoveNetwork {id}", ct);
+
+    public async Task<PruneResult> PruneNetworksAsync(CancellationToken ct)
+    {
+        await EnterAsync("PruneNetworks", "PruneNetworks", ct);
+        return Prune;
+    }
+
+    public async Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct)
+    {
+        await EnterAsync("DiskUsage", "DiskUsage", ct);
+        return DiskUsage;
+    }
+
+    public async Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct)
+    {
+        await EnterAsync("CreateContainer", $"CreateContainer {request.Image} name={request.Name}", ct);
+        CreateRequests.Enqueue(request);
+        return CreatedId;
     }
 
     public ValueTask DisposeAsync()

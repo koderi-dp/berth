@@ -55,6 +55,37 @@ internal sealed class EngineConnection : IEngineApi
 
     public IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct) => _client.StreamEventsAsync(ct);
 
+    public Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct) => _client.ListImagesAsync(ct);
+
+    public Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct) => _client.InspectImageAsync(idOrName, ct);
+
+    public Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct) =>
+        _client.RemoveImageAsync(idOrName, force, ct);
+
+    public Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct) => _client.PruneImagesAsync(danglingOnly, ct);
+
+    public IAsyncEnumerable<PullProgress> PullImageAsync(string reference, CancellationToken ct) => _client.PullImageAsync(reference, ct);
+
+    public Task<IReadOnlyList<VolumeSummary>> ListVolumesAsync(CancellationToken ct) => _client.ListVolumesAsync(ct);
+
+    public Task<VolumeSummary> CreateVolumeAsync(string name, CancellationToken ct) => _client.CreateVolumeAsync(name, ct);
+
+    public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) => _client.RemoveVolumeAsync(name, force, ct);
+
+    public Task<PruneResult> PruneVolumesAsync(CancellationToken ct) => _client.PruneVolumesAsync(ct);
+
+    public Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct) => _client.ListNetworksAsync(ct);
+
+    public Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct) => _client.InspectNetworkAsync(id, ct);
+
+    public Task RemoveNetworkAsync(string id, CancellationToken ct) => _client.RemoveNetworkAsync(id, ct);
+
+    public Task<PruneResult> PruneNetworksAsync(CancellationToken ct) => _client.PruneNetworksAsync(ct);
+
+    public Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct) => _client.GetDiskUsageAsync(ct);
+
+    public Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct) => _client.CreateContainerAsync(request, ct);
+
     public async ValueTask DisposeAsync()
     {
         try

@@ -11,6 +11,9 @@ internal sealed class StubHandler : HttpMessageHandler
 
     public List<(string Method, string PathAndQuery)> Requests { get; } = [];
 
+    /// <summary>Each request's body as text, in the order of <see cref="Requests"/>; empty when it had none.</summary>
+    public List<string> Bodies { get; } = [];
+
     /// <summary>Answers requests for <paramref name="pathAndQuery"/> with this status and body.</summary>
     public StubHandler On(string pathAndQuery, HttpStatusCode status, string body)
     {
@@ -32,20 +35,21 @@ internal sealed class StubHandler : HttpMessageHandler
         "/version",
         $$"""{"Version":"29.9.3","ApiVersion":"{{apiVersion}}","MinAPIVersion":"1.40","Os":"linux","Arch":"amd64"}""");
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var pathAndQuery = request.RequestUri!.PathAndQuery;
         Requests.Add((request.Method.Method, pathAndQuery));
+        Bodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
 
         var (status, content) = _answers.TryGetValue(pathAndQuery, out var answer)
             ? answer
             : (HttpStatusCode.NotFound, () => new StringContent("""{"message":"page not found"}""", Encoding.UTF8, "application/json"));
 
-        return Task.FromResult(new HttpResponseMessage(status)
+        return new HttpResponseMessage(status)
         {
             RequestMessage = request,
             Content = content(),
-        });
+        };
     }
 }
 

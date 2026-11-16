@@ -35,6 +35,14 @@ internal sealed class DockerCli(string engineAddress)
             throw new InvalidOperationException($"docker rm -f {name} failed ({exitCode}): {error}");
     }
 
+    /// <summary>Removes the volume if it exists. Used in <c>finally</c>, so a missing volume is not an error.</summary>
+    public async Task RemoveVolumeAsync(string name)
+    {
+        var (exitCode, _, error) = await ExecuteAsync(["volume", "rm", "-f", name]);
+        if (exitCode != 0)
+            throw new InvalidOperationException($"docker volume rm -f {name} failed ({exitCode}): {error}");
+    }
+
     /// <summary>Runs the CLI and returns its trimmed output; a non-zero exit throws with what the CLI wrote to stderr.</summary>
     public async Task<string> RunAsync(params string[] arguments)
     {

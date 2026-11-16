@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Security.Authentication;
@@ -13,8 +14,9 @@ using Berth.Engine.Models;
 namespace Berth.Engine;
 
 /// <summary>
-/// The typed client for the Docker Engine API. Plain calls time out after 30 seconds, stop and restart after 90; a timeout or an
-/// engine that cannot be reached throws <see cref="EngineException"/> with status 0. Disposing the client disposes the handler.
+/// The typed client for the Docker Engine API. Plain calls time out after 30 seconds, stop and restart after 90; streams, a pull
+/// and disk usage have no deadline. A timeout or an engine that cannot be reached throws <see cref="EngineException"/> with
+/// status 0. Disposing the client disposes the handler.
 /// </summary>
 public sealed class EngineClient : IEngineApi
 {
@@ -128,7 +130,7 @@ public sealed class EngineClient : IEngineApi
         var follow = request.Follow ? "true" : "false";
         var path = ContainerPath(id, $"/logs?stdout=true&stderr=true&timestamps=true&tail={tail}&follow={follow}");
 
-        using var response = await OpenStreamAsync(path, ct).ConfigureAwait(false);
+        using var response = await OpenStreamAsync(HttpMethod.Get, path, ct).ConfigureAwait(false);
         var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var lines = LogLines.ReadAsync(stream, tty, ct).GetAsyncEnumerator();
 
@@ -146,7 +148,7 @@ public sealed class EngineClient : IEngineApi
     /// </summary>
     public async IAsyncEnumerable<StatsSample> StreamStatsAsync(string id, [EnumeratorCancellation] CancellationToken ct)
     {
-        using var response = await OpenStreamAsync(ContainerPath(id, "/stats?stream=true"), ct).ConfigureAwait(false);
+        using var response = await OpenStreamAsync(HttpMethod.Get, ContainerPath(id, "/stats?stream=true"), ct).ConfigureAwait(false);
         var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var lines = JsonLines.ReadAsync(stream, ct).GetAsyncEnumerator();
 
@@ -172,7 +174,7 @@ public sealed class EngineClient : IEngineApi
     /// </summary>
     public async IAsyncEnumerable<EngineEventMessage> StreamEventsAsync([EnumeratorCancellation] CancellationToken ct)
     {
-        using var response = await OpenStreamAsync(Versioned("/events"), ct).ConfigureAwait(false);
+        using var response = await OpenStreamAsync(HttpMethod.Get, Versioned("/events"), ct).ConfigureAwait(false);
         var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var lines = JsonLines.ReadAsync(stream, ct).GetAsyncEnumerator();
 
@@ -183,6 +185,156 @@ public sealed class EngineClient : IEngineApi
                 yield return message;
             }
         }
+    }
+
+    public async Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, Versioned("/images/json"), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.ListWireImage, ct).ConfigureAwait(false);
+        return wire.ConvertAll(i => new ImageSummary(
+            i.Id ?? "", Named(i.RepoTags), Named(i.RepoDigests), i.Created, i.Size, i.Containers is >= 0 ? i.Containers : null));
+    }
+
+    public async Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, ImagePath(idOrName, "/json"), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireImageInspect, ct).ConfigureAwait(false);
+        var config = wire.Config;
+        return new ImageDetails(
+            wire.Id ?? "",
+            Named(wire.RepoTags),
+            Named(wire.RepoDigests),
+            EngineTime.Parse(wire.Created),
+            wire.Size,
+            wire.Architecture ?? "",
+            wire.Os ?? "",
+            config?.ExposedPorts?.Keys.ToList() ?? [],
+            config?.Env ?? [],
+            config?.Cmd ?? [],
+            config?.Entrypoint ?? [],
+            config?.WorkingDir ?? "",
+            config?.Labels ?? new Dictionary<string, string>());
+    }
+
+    public async Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct)
+    {
+        var path = ImagePath(idOrName, force ? "?force=true" : "");
+        using var response = await SendAsync(HttpMethod.Delete, path, PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.ListWireImageDelete, ct).ConfigureAwait(false);
+        return wire.ConvertAll(d => new ImageDeleteResult(d.Untagged, d.Deleted));
+    }
+
+    public async Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct)
+    {
+        var filters = Uri.EscapeDataString($$"""{"dangling":["{{(danglingOnly ? "true" : "false")}}"]}""");
+        var path = Versioned($"/images/prune?filters={filters}");
+        using var response = await SendAsync(HttpMethod.Post, path, PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireImagePrune, ct).ConfigureAwait(false);
+        var deleted = wire.ImagesDeleted?.Select(d => d.Deleted).OfType<string>().ToList() ?? [];
+        return new PruneResult(deleted, wire.SpaceReclaimed);
+    }
+
+    /// <summary>
+    /// Pulls an image with no deadline, one item per progress line. A line that is not progress is skipped. An error line throws
+    /// <see cref="EngineException"/> with its message and the answer's status (200: the engine reports the failure inside a
+    /// successful answer); a dropped connection throws it with status 0.
+    /// </summary>
+    public async IAsyncEnumerable<PullProgress> PullImageAsync(string reference, [EnumeratorCancellation] CancellationToken ct)
+    {
+        var image = ImageReference.Parse(reference);
+        var path = Versioned($"/images/create?fromImage={Uri.EscapeDataString(image.Name)}&tag={Uri.EscapeDataString(image.Tag)}");
+
+        using var response = await OpenStreamAsync(HttpMethod.Post, path, ct).ConfigureAwait(false);
+        var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var lines = JsonLines.ReadAsync(stream, ct).GetAsyncEnumerator();
+
+        while (await NextAsync(lines, ct).ConfigureAwait(false))
+        {
+            if (Parse(lines.Current, EngineJson.Default.WirePullLine) is not { } line)
+            {
+                continue;
+            }
+
+            if (line.Error is not null || line.ErrorDetail is not null)
+            {
+                var message = string.IsNullOrWhiteSpace(line.ErrorDetail?.Message) ? line.Error ?? "" : line.ErrorDetail.Message;
+                throw new EngineException((int)response.StatusCode, message);
+            }
+
+            yield return new PullProgress(line.Id ?? "", line.Status ?? "", line.ProgressDetail?.Current, line.ProgressDetail?.Total);
+        }
+    }
+
+    public async Task<IReadOnlyList<VolumeSummary>> ListVolumesAsync(CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, Versioned("/volumes"), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireVolumeList, ct).ConfigureAwait(false);
+        return wire.Volumes?.ConvertAll(ToVolume) ?? [];
+    }
+
+    public async Task<VolumeSummary> CreateVolumeAsync(string name, CancellationToken ct)
+    {
+        var path = Versioned("/volumes/create");
+        var body = JsonBody(new WireVolumeCreate(name), EngineJson.Default.WireVolumeCreate);
+        using var response = await SendAsync(HttpMethod.Post, path, PlainTimeout, ct, body).ConfigureAwait(false);
+        return ToVolume(await ReadAsync(response, EngineJson.Default.WireVolume, ct).ConfigureAwait(false));
+    }
+
+    public Task RemoveVolumeAsync(string name, bool force, CancellationToken ct) =>
+        ActAsync(HttpMethod.Delete, Versioned($"/volumes/{Uri.EscapeDataString(name)}{(force ? "?force=true" : "")}"), PlainTimeout, ct);
+
+    public async Task<PruneResult> PruneVolumesAsync(CancellationToken ct)
+    {
+        // Without the "all" filter the engine removes only anonymous volumes.
+        var path = Versioned($"/volumes/prune?filters={Uri.EscapeDataString("""{"all":["true"]}""")}");
+        using var response = await SendAsync(HttpMethod.Post, path, PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireVolumePrune, ct).ConfigureAwait(false);
+        return new PruneResult(wire.VolumesDeleted ?? [], wire.SpaceReclaimed);
+    }
+
+    public async Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, Versioned("/networks"), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.ListWireNetwork, ct).ConfigureAwait(false);
+        return wire.ConvertAll(ToNetwork);
+    }
+
+    public async Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, NetworkPath(id), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireNetwork, ct).ConfigureAwait(false);
+        var containers = wire.Containers?.Select(c => new NetworkEndpoint(
+            c.Key, c.Value?.Name ?? "", c.Value?.IPv4Address ?? "", c.Value?.IPv6Address ?? "", c.Value?.MacAddress ?? "")).ToList();
+        return new NetworkDetails(ToNetwork(wire), containers ?? []);
+    }
+
+    public Task RemoveNetworkAsync(string id, CancellationToken ct) => ActAsync(HttpMethod.Delete, NetworkPath(id), PlainTimeout, ct);
+
+    public async Task<PruneResult> PruneNetworksAsync(CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Post, Versioned("/networks/prune"), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireNetworkPrune, ct).ConfigureAwait(false);
+        return new PruneResult(wire.NetworksDeleted ?? [], 0);
+    }
+
+    /// <summary>
+    /// Reads the disk use of images and volumes with no deadline (only those two kinds are asked for: build cache is the slow one).
+    /// An engine from API 1.52 on sends its own totals; for an older one they are computed as the docker CLI does.
+    /// </summary>
+    public async Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct)
+    {
+        using var response = await OpenStreamAsync(HttpMethod.Get, Versioned("/system/df?type=image&type=volume"), ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireDiskUsage, ct).ConfigureAwait(false);
+        return DiskUsageMapping.From(wire);
+    }
+
+    public async Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct)
+    {
+        var path = Versioned(string.IsNullOrEmpty(request.Name) ? "/containers/create" : $"/containers/create?name={Uri.EscapeDataString(request.Name)}");
+        var body = JsonBody(ToWire(request), EngineJson.Default.WireCreateContainer);
+        using var response = await SendAsync(HttpMethod.Post, path, PlainTimeout, ct, body).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireCreated, ct).ConfigureAwait(false);
+        return wire.Id ?? "";
     }
 
     public ValueTask DisposeAsync()
@@ -201,7 +353,14 @@ public sealed class EngineClient : IEngineApi
         c.State ?? "",
         c.Status ?? "",
         c.Ports?.ConvertAll(p => new PortMapping(p.Ip, p.PrivatePort, p.PublicPort, p.Type ?? "")) ?? [],
-        c.Labels ?? new Dictionary<string, string>());
+        c.Labels ?? new Dictionary<string, string>())
+    {
+        Mounts = c.Mounts?.ConvertAll(ToMount) ?? [],
+        Networks = c.NetworkSettings?.Networks?.Keys.ToList() ?? [],
+    };
+
+    private static MountDetails ToMount(WireMount m) =>
+        new(m.Type ?? "", m.Source ?? "", m.Destination ?? "", m.Mode ?? "", m.ReadWrite, string.IsNullOrEmpty(m.Name) ? null : m.Name);
 
     private static ContainerDetails ToDetails(WireInspect c)
     {
@@ -233,8 +392,7 @@ public sealed class EngineClient : IEngineApi
             config?.User ?? "",
             config?.Tty ?? false,
             config?.Labels ?? new Dictionary<string, string>(),
-            c.Mounts?.ConvertAll(m => new MountDetails(
-                m.Type ?? "", m.Source ?? "", m.Destination ?? "", m.Mode ?? "", m.ReadWrite, string.IsNullOrEmpty(m.Name) ? null : m.Name)) ?? [],
+            c.Mounts?.ConvertAll(ToMount) ?? [],
             ToPorts(c.NetworkSettings?.Ports),
             c.NetworkSettings?.Networks?.Select(n => new NetworkAttachment(
                 n.Key, n.Value?.IpAddress ?? "", n.Value?.Gateway ?? "", n.Value?.MacAddress ?? "")).ToList() ?? [],
@@ -296,33 +454,73 @@ public sealed class EngineClient : IEngineApi
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
-    private static StatsSample? ToStats(ReadOnlyMemory<byte> line)
+    /// <summary>Image tags or digests without the "&lt;none&gt;" placeholders older engines report for an untagged image.</summary>
+    private static List<string> Named(List<string>? names) =>
+        names?.Where(n => n is not ("<none>:<none>" or "<none>@<none>")).ToList() ?? [];
+
+    private static VolumeSummary ToVolume(WireVolume v) => new(
+        v.Name ?? "",
+        v.Driver ?? "",
+        v.Mountpoint ?? "",
+        EngineTime.Parse(v.CreatedAt),
+        v.Labels ?? new Dictionary<string, string>(),
+        v.Scope ?? "");
+
+    private static NetworkSummary ToNetwork(WireNetwork n) => new(
+        n.Id ?? "",
+        n.Name ?? "",
+        n.Driver ?? "",
+        n.Scope ?? "",
+        EngineTime.Parse(n.Created),
+        n.Internal,
+        n.Labels ?? new Dictionary<string, string>(),
+        n.Ipam?.Config?.Select(c => c?.Subnet).OfType<string>().Where(s => s.Length > 0).ToList() ?? []);
+
+    /// <summary>The create body: each published port is exposed, and its bindings are grouped under "port/protocol".</summary>
+    private static WireCreateContainer ToWire(ContainerCreateRequest request)
     {
-        WireStats? wire;
+        var exposed = new Dictionary<string, WireEmpty>(StringComparer.Ordinal);
+        var bindings = new Dictionary<string, List<WirePortBinding>>(StringComparer.Ordinal);
+        foreach (var port in request.Ports)
+        {
+            var key = $"{port.ContainerPort.ToString(CultureInfo.InvariantCulture)}/{(string.IsNullOrEmpty(port.Protocol) ? "tcp" : port.Protocol)}";
+            exposed.TryAdd(key, new WireEmpty());
+            if (!bindings.TryGetValue(key, out var list))
+            {
+                bindings[key] = list = [];
+            }
+
+            list.Add(new WirePortBinding(port.HostIp ?? "", port.HostPort?.ToString(CultureInfo.InvariantCulture) ?? ""));
+        }
+
+        return new WireCreateContainer(request.Image, request.Env, request.Cmd, exposed, new WireCreateHostConfig(request.Binds, bindings));
+    }
+
+    private static ByteArrayContent JsonBody<T>(T value, JsonTypeInfo<T> type) => new(JsonSerializer.SerializeToUtf8Bytes(value, type))
+    {
+        Headers = { ContentType = new MediaTypeHeaderValue("application/json") },
+    };
+
+    /// <summary>One line of a stream read as <typeparamref name="T"/>, or null when it is not one.</summary>
+    private static T? Parse<T>(ReadOnlyMemory<byte> line, JsonTypeInfo<T> type)
+        where T : class
+    {
         try
         {
-            wire = JsonSerializer.Deserialize(line.Span, EngineJson.Default.WireStats);
+            return JsonSerializer.Deserialize(line.Span, type);
         }
         catch (JsonException)
         {
             return null;
         }
-
-        return wire is null ? null : StatsMath.ToSample(wire);
     }
+
+    private static StatsSample? ToStats(ReadOnlyMemory<byte> line) =>
+        Parse(line, EngineJson.Default.WireStats) is { } wire ? StatsMath.ToSample(wire) : null;
 
     private static EngineEventMessage? ToEvent(ReadOnlyMemory<byte> line)
     {
-        WireEvent? wire;
-        try
-        {
-            wire = JsonSerializer.Deserialize(line.Span, EngineJson.Default.WireEvent);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-
+        var wire = Parse(line, EngineJson.Default.WireEvent);
         return wire is null
             ? null
             : new EngineEventMessage(
@@ -333,10 +531,10 @@ public sealed class EngineClient : IEngineApi
                 wire.TimeNano);
     }
 
-    /// <summary>Sends a GET whose answer is read as it arrives, with no deadline. A 2xx answer is returned; any other status throws.</summary>
-    private async Task<HttpResponseMessage> OpenStreamAsync(string path, CancellationToken ct)
+    /// <summary>Sends a request whose answer is read as it arrives, with no deadline. A 2xx answer is returned; any other status throws.</summary>
+    private async Task<HttpResponseMessage> OpenStreamAsync(HttpMethod method, string path, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        using var request = new HttpRequestMessage(method, path);
 
         HttpResponseMessage response;
         try
@@ -374,6 +572,10 @@ public sealed class EngineClient : IEngineApi
 
     private string ContainerPath(string id, string rest) => Versioned($"/containers/{Uri.EscapeDataString(id)}{rest}");
 
+    private string ImagePath(string idOrName, string rest) => Versioned($"/images/{Uri.EscapeDataString(idOrName)}{rest}");
+
+    private string NetworkPath(string id) => Versioned($"/networks/{Uri.EscapeDataString(id)}");
+
     private string Versioned(string path) =>
         (_prefix ?? throw new InvalidOperationException("Connect to the engine before making other calls.")) + path;
 
@@ -382,10 +584,14 @@ public sealed class EngineClient : IEngineApi
         using var response = await SendAsync(method, path, timeout, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Sends a request and buffers the answer. A 2xx or 304 answer is returned; any other status throws.</summary>
-    private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, TimeSpan timeout, CancellationToken ct)
+    /// <summary>
+    /// Sends a request, with <paramref name="content"/> as its body when given (disposed with the request), and buffers the answer.
+    /// A 2xx or 304 answer is returned; any other status throws.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendAsync(
+        HttpMethod method, string path, TimeSpan timeout, CancellationToken ct, HttpContent? content = null)
     {
-        using var request = new HttpRequestMessage(method, path);
+        using var request = new HttpRequestMessage(method, path) { Content = content };
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(timeout);
 
@@ -425,6 +631,11 @@ public sealed class EngineClient : IEngineApi
         catch (JsonException ex)
         {
             throw Unreadable(response, ex);
+        }
+        catch (Exception ex) when (IsUnreachable(ex))
+        {
+            // Only an answer read as it arrives (OpenStreamAsync) can fail here.
+            throw Unreachable(ex, ct);
         }
     }
 

@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Berth.Connections;
 using Berth.Engine;
 using Berth.Engine.Models;
@@ -336,6 +337,87 @@ public sealed class EngineIntegrationTests
         finally
         {
             await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    [EngineFact]
+    public async Task Images_volumes_networks_and_disk_usage_are_read()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        await using var client = engine.CreateClient();
+        using var cts = new CancellationTokenSource(Patience);
+        await client.ConnectAsync(cts.Token);
+
+        var images = await client.ListImagesAsync(cts.Token);
+        var alpine = Assert.Single(images, i => i.RepoTags.Contains("alpine:latest"));
+        var details = await client.InspectImageAsync("alpine:latest", cts.Token);
+        await client.ListVolumesAsync(cts.Token);
+        var networks = await client.ListNetworksAsync(cts.Token);
+        var usage = await client.GetDiskUsageAsync(cts.Token);
+
+        Assert.Equal(alpine.Id, details.Id);
+        Assert.Equal("linux", details.Os);
+        Assert.Contains(networks, n => n.Name == "bridge");
+        Assert.Contains(usage.Images, i => i.Id == alpine.Id);
+        Assert.Equal(images.Count, usage.ImageTotals.TotalCount);
+    }
+
+    [EngineFact]
+    public async Task Pulling_an_image_that_is_present_reports_it_up_to_date()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        await using var client = engine.CreateClient();
+        using var cts = new CancellationTokenSource(Patience);
+        await client.ConnectAsync(cts.Token);
+
+        var lines = new List<PullProgress>();
+        await foreach (var line in client.PullImageAsync("alpine", cts.Token))
+            lines.Add(line);
+
+        Assert.Contains("alpine:latest", lines[^1].Status, StringComparison.Ordinal);
+    }
+
+    [EngineFact]
+    public async Task A_container_created_by_Berth_has_its_env_port_and_volume_and_is_listed_with_them()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        var volume = DockerCli.NewContainerName();
+        await using var client = engine.CreateClient();
+        using var cts = new CancellationTokenSource(Patience);
+        await client.ConnectAsync(cts.Token);
+        try
+        {
+            Assert.Equal(volume, (await client.CreateVolumeAsync(volume, cts.Token)).Name);
+            Assert.Contains(await client.ListVolumesAsync(cts.Token), v => v.Name == volume);
+
+            var id = await client.CreateContainerAsync(
+                new ContainerCreateRequest("alpine:latest", name, ["BERTH_IT=1"], [new PortBinding(80, "tcp", "127.0.0.1", null)], [$"{volume}:/data"], ["true"]),
+                cts.Token);
+
+            var inspection = await client.InspectContainerAsync(id, cts.Token);
+            var inspected = inspection.Details;
+            Assert.Equal(name, inspected.Name);
+            Assert.Contains("BERTH_IT=1", inspected.Env);
+            Assert.Equal(["true"], inspected.Cmd);
+            Assert.Contains(inspected.Mounts, m => m.Name == volume && m.Destination == "/data");
+            // A container that never ran has no ports in NetworkSettings yet: read what was asked for.
+            var binding = JsonNode.Parse(inspection.RawJson)!["HostConfig"]!["PortBindings"]!["80/tcp"]![0]!;
+            Assert.Equal("127.0.0.1", (string?)binding["HostIp"]);
+            Assert.Equal("", (string?)binding["HostPort"]);
+
+            var listed = Assert.Single(await client.ListContainersAsync(cts.Token), c => c.Id == id);
+            Assert.Contains(listed.Mounts, m => m.Name == volume);
+            Assert.Equal(["bridge"], listed.Networks);
+
+            await client.RemoveContainerAsync(id, force: true, cts.Token);
+            await client.RemoveVolumeAsync(volume, force: false, cts.Token);
+            Assert.DoesNotContain(await client.ListVolumesAsync(cts.Token), v => v.Name == volume);
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+            await engine.Cli.RemoveVolumeAsync(volume);
         }
     }
 

@@ -177,6 +177,48 @@ public sealed class EngineClientTests
         Assert.Empty(only.Names);
         Assert.Empty(only.Ports);
         Assert.Empty(only.Labels);
+        Assert.Empty(only.Mounts);
+        Assert.Empty(only.Networks);
+    }
+
+    [Fact]
+    public async Task List_parses_mounts_and_network_names()
+    {
+        // The Mounts and NetworkSettings of a 29.9.3 engine's /containers/json entry, with made-up values; the third mount and the
+        // second network carry nulls.
+        const string answer = """
+            [
+              {
+                "Id": "abc", "Names": ["/shop-web-1"], "Image": "nginx:1.29", "State": "running", "Status": "Up 1 minute",
+                "Mounts": [
+                  { "Type": "volume", "Name": "shop_data", "Source": "/var/lib/docker/volumes/shop_data/_data", "Destination": "/data",
+                    "Driver": "local", "Mode": "z", "RW": true, "Propagation": "" },
+                  { "Type": "bind", "Source": "/srv/site", "Destination": "/usr/share/nginx/html", "Mode": "ro", "RW": false,
+                    "Propagation": "rprivate" },
+                  { "Type": "tmpfs", "Name": null, "Source": null, "Destination": "/run", "Mode": null }
+                ],
+                "NetworkSettings": {
+                  "Networks": {
+                    "shop_default": { "NetworkID": "4d3c2b1a", "EndpointID": "3b49a3e1", "Gateway": "172.20.0.1", "IPAddress": "172.20.0.2" },
+                    "monitoring": null
+                  }
+                }
+              }
+            ]
+            """;
+        var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/containers/json?all=true", answer));
+        await using var _client = client;
+
+        var web = Assert.Single(await client.ListContainersAsync(CancellationToken.None));
+
+        Assert.Equal(
+            [
+                new MountDetails("volume", "/var/lib/docker/volumes/shop_data/_data", "/data", "z", true, "shop_data"),
+                new MountDetails("bind", "/srv/site", "/usr/share/nginx/html", "ro", false, null),
+                new MountDetails("tmpfs", "", "/run", "", false, null),
+            ],
+            web.Mounts);
+        Assert.Equal(["shop_default", "monitoring"], web.Networks);
     }
 
     [Theory]

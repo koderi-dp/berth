@@ -13,6 +13,21 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(WireInspect))]
 [JsonSerializable(typeof(WireStats))]
 [JsonSerializable(typeof(WireError))]
+[JsonSerializable(typeof(List<WireImage>))]
+[JsonSerializable(typeof(WireImageInspect))]
+[JsonSerializable(typeof(List<WireImageDelete>))]
+[JsonSerializable(typeof(WireImagePrune))]
+[JsonSerializable(typeof(WirePullLine))]
+[JsonSerializable(typeof(WireVolumeList))]
+[JsonSerializable(typeof(WireVolume))]
+[JsonSerializable(typeof(WireVolumeCreate))]
+[JsonSerializable(typeof(WireVolumePrune))]
+[JsonSerializable(typeof(List<WireNetwork>))]
+[JsonSerializable(typeof(WireNetwork))]
+[JsonSerializable(typeof(WireNetworkPrune))]
+[JsonSerializable(typeof(WireDiskUsage))]
+[JsonSerializable(typeof(WireCreateContainer))]
+[JsonSerializable(typeof(WireCreated))]
 internal sealed partial class EngineJson : JsonSerializerContext;
 
 internal sealed record WireVersion(
@@ -48,7 +63,9 @@ internal sealed record WireContainer(
     [property: JsonPropertyName("State")] string? State,
     [property: JsonPropertyName("Status")] string? Status,
     [property: JsonPropertyName("Ports")] List<WirePort>? Ports,
-    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels);
+    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels,
+    [property: JsonPropertyName("Mounts")] List<WireMount>? Mounts,
+    [property: JsonPropertyName("NetworkSettings")] WireNetworkSettings? NetworkSettings);
 
 internal sealed record WireActor(
     [property: JsonPropertyName("ID")] string? Id,
@@ -89,6 +106,7 @@ internal sealed record WireState(
 
 internal sealed record WireHealth([property: JsonPropertyName("Status")] string? Status);
 
+/// <summary>A container's or an image's configuration; <c>ExposedPorts</c> maps "80/tcp" to an empty object.</summary>
 internal sealed record WireConfig(
     [property: JsonPropertyName("Image")] string? Image,
     [property: JsonPropertyName("Env")] List<string>? Env,
@@ -97,7 +115,8 @@ internal sealed record WireConfig(
     [property: JsonPropertyName("WorkingDir")] string? WorkingDir,
     [property: JsonPropertyName("User")] string? User,
     [property: JsonPropertyName("Tty")] bool Tty,
-    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels);
+    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels,
+    [property: JsonPropertyName("ExposedPorts")] Dictionary<string, WireEmpty?>? ExposedPorts);
 
 internal sealed record WireHostConfig(
     [property: JsonPropertyName("RestartPolicy")] WireRestartPolicy? RestartPolicy,
@@ -115,7 +134,10 @@ internal sealed record WireMount(
     [property: JsonPropertyName("Mode")] string? Mode,
     [property: JsonPropertyName("RW")] bool ReadWrite);
 
-/// <summary><c>Ports</c> maps "80/tcp" to its host bindings, null or empty when the port is exposed but not published.</summary>
+/// <summary>
+/// <c>Ports</c> maps "80/tcp" to its host bindings, null or empty when the port is exposed but not published (inspect only). The
+/// keys of <c>Networks</c> are the names of the networks the container is attached to.
+/// </summary>
 internal sealed record WireNetworkSettings(
     [property: JsonPropertyName("Ports")] Dictionary<string, List<WirePortBinding>?>? Ports,
     [property: JsonPropertyName("Networks")] Dictionary<string, WireEndpoint?>? Networks);
@@ -167,5 +189,133 @@ internal sealed record WireBlockIoEntry(
 
 internal sealed record WirePidsStats([property: JsonPropertyName("current")] ulong? Current);
 
-/// <summary>The body the engine sends with an error status.</summary>
+/// <summary>The body the engine sends with an error status, and the <c>errorDetail</c> of a pull's error line.</summary>
 internal sealed record WireError([property: JsonPropertyName("message")] string? Message);
+
+/// <summary>An empty JSON object, as the values of <c>ExposedPorts</c>.</summary>
+internal sealed record WireEmpty;
+
+/// <summary>
+/// One entry of <c>/images/json</c> and of the images of <c>/system/df</c>. <c>Containers</c> and <c>SharedSize</c> are -1 when
+/// the engine did not compute them.
+/// </summary>
+internal sealed record WireImage(
+    [property: JsonPropertyName("Id")] string? Id,
+    [property: JsonPropertyName("RepoTags")] List<string>? RepoTags,
+    [property: JsonPropertyName("RepoDigests")] List<string>? RepoDigests,
+    [property: JsonPropertyName("Created")] long Created,
+    [property: JsonPropertyName("Size")] long Size,
+    [property: JsonPropertyName("SharedSize")] long? SharedSize,
+    [property: JsonPropertyName("Containers")] int? Containers);
+
+/// <summary>An image's inspect answer (<c>/images/{name}/json</c>), the parts Berth maps.</summary>
+internal sealed record WireImageInspect(
+    [property: JsonPropertyName("Id")] string? Id,
+    [property: JsonPropertyName("RepoTags")] List<string>? RepoTags,
+    [property: JsonPropertyName("RepoDigests")] List<string>? RepoDigests,
+    [property: JsonPropertyName("Created")] string? Created,
+    [property: JsonPropertyName("Size")] long Size,
+    [property: JsonPropertyName("Architecture")] string? Architecture,
+    [property: JsonPropertyName("Os")] string? Os,
+    [property: JsonPropertyName("Config")] WireConfig? Config);
+
+/// <summary>One line of an image removal's answer, and one entry of an image prune's.</summary>
+internal sealed record WireImageDelete(
+    [property: JsonPropertyName("Untagged")] string? Untagged,
+    [property: JsonPropertyName("Deleted")] string? Deleted);
+
+internal sealed record WireImagePrune(
+    [property: JsonPropertyName("ImagesDeleted")] List<WireImageDelete>? ImagesDeleted,
+    [property: JsonPropertyName("SpaceReclaimed")] long SpaceReclaimed);
+
+/// <summary>One line of a pull (<c>/images/create</c>): progress, or a failure in <c>error</c> and <c>errorDetail</c>.</summary>
+internal sealed record WirePullLine(
+    [property: JsonPropertyName("id")] string? Id,
+    [property: JsonPropertyName("status")] string? Status,
+    [property: JsonPropertyName("progressDetail")] WireProgressDetail? ProgressDetail,
+    [property: JsonPropertyName("error")] string? Error,
+    [property: JsonPropertyName("errorDetail")] WireError? ErrorDetail);
+
+internal sealed record WireProgressDetail(
+    [property: JsonPropertyName("current")] long? Current,
+    [property: JsonPropertyName("total")] long? Total);
+
+internal sealed record WireVolumeList([property: JsonPropertyName("Volumes")] List<WireVolume>? Volumes);
+
+/// <summary>A volume, from <c>/volumes</c> or <c>/system/df</c> (which adds <c>UsageData</c>).</summary>
+internal sealed record WireVolume(
+    [property: JsonPropertyName("Name")] string? Name,
+    [property: JsonPropertyName("Driver")] string? Driver,
+    [property: JsonPropertyName("Mountpoint")] string? Mountpoint,
+    [property: JsonPropertyName("CreatedAt")] string? CreatedAt,
+    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels,
+    [property: JsonPropertyName("Scope")] string? Scope,
+    [property: JsonPropertyName("UsageData")] WireVolumeUsage? UsageData);
+
+/// <summary>A volume's size and how many containers use it; either is -1 when the engine could not tell.</summary>
+internal sealed record WireVolumeUsage(
+    [property: JsonPropertyName("Size")] long Size,
+    [property: JsonPropertyName("RefCount")] int RefCount);
+
+/// <summary>The body of <c>/volumes/create</c>.</summary>
+internal sealed record WireVolumeCreate([property: JsonPropertyName("Name")] string Name);
+
+internal sealed record WireVolumePrune(
+    [property: JsonPropertyName("VolumesDeleted")] List<string>? VolumesDeleted,
+    [property: JsonPropertyName("SpaceReclaimed")] long SpaceReclaimed);
+
+/// <summary>A network, from <c>/networks</c> or its inspect answer (which adds <c>Containers</c>, keyed by container ID).</summary>
+internal sealed record WireNetwork(
+    [property: JsonPropertyName("Id")] string? Id,
+    [property: JsonPropertyName("Name")] string? Name,
+    [property: JsonPropertyName("Driver")] string? Driver,
+    [property: JsonPropertyName("Scope")] string? Scope,
+    [property: JsonPropertyName("Created")] string? Created,
+    [property: JsonPropertyName("Internal")] bool Internal,
+    [property: JsonPropertyName("Labels")] Dictionary<string, string>? Labels,
+    [property: JsonPropertyName("IPAM")] WireIpam? Ipam,
+    [property: JsonPropertyName("Containers")] Dictionary<string, WireNetworkContainer?>? Containers);
+
+internal sealed record WireIpam([property: JsonPropertyName("Config")] List<WireIpamConfig?>? Config);
+
+internal sealed record WireIpamConfig([property: JsonPropertyName("Subnet")] string? Subnet);
+
+internal sealed record WireNetworkContainer(
+    [property: JsonPropertyName("Name")] string? Name,
+    [property: JsonPropertyName("MacAddress")] string? MacAddress,
+    [property: JsonPropertyName("IPv4Address")] string? IPv4Address,
+    [property: JsonPropertyName("IPv6Address")] string? IPv6Address);
+
+internal sealed record WireNetworkPrune([property: JsonPropertyName("NetworksDeleted")] List<string>? NetworksDeleted);
+
+/// <summary>
+/// <c>/system/df</c>. Engines before API 1.52 send only <c>LayersSize</c> and the lists; later ones add their own totals with the
+/// same items (and leave the lists out when asked for <c>verbose</c>).
+/// </summary>
+internal sealed record WireDiskUsage(
+    [property: JsonPropertyName("LayersSize")] long LayersSize,
+    [property: JsonPropertyName("Images")] List<WireImage>? Images,
+    [property: JsonPropertyName("Volumes")] List<WireVolume>? Volumes,
+    [property: JsonPropertyName("ImageUsage")] WireUsage<WireImage>? ImageUsage,
+    [property: JsonPropertyName("VolumeUsage")] WireUsage<WireVolume>? VolumeUsage);
+
+internal sealed record WireUsage<T>(
+    [property: JsonPropertyName("TotalCount")] int TotalCount,
+    [property: JsonPropertyName("ActiveCount")] int ActiveCount,
+    [property: JsonPropertyName("TotalSize")] long TotalSize,
+    [property: JsonPropertyName("Reclaimable")] long Reclaimable,
+    [property: JsonPropertyName("Items")] List<T>? Items);
+
+/// <summary>The body of <c>/containers/create</c>. <c>Cmd</c> is left out when null, so the image's command applies.</summary>
+internal sealed record WireCreateContainer(
+    [property: JsonPropertyName("Image")] string Image,
+    [property: JsonPropertyName("Env")] IReadOnlyList<string> Env,
+    [property: JsonPropertyName("Cmd"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Cmd,
+    [property: JsonPropertyName("ExposedPorts")] Dictionary<string, WireEmpty> ExposedPorts,
+    [property: JsonPropertyName("HostConfig")] WireCreateHostConfig HostConfig);
+
+internal sealed record WireCreateHostConfig(
+    [property: JsonPropertyName("Binds")] IReadOnlyList<string> Binds,
+    [property: JsonPropertyName("PortBindings")] Dictionary<string, List<WirePortBinding>> PortBindings);
+
+internal sealed record WireCreated([property: JsonPropertyName("Id")] string? Id);

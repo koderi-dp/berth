@@ -17,4 +17,11 @@ public sealed record ContainerSummary(
     string State,
     string Status,
     IReadOnlyList<PortMapping> Ports,
-    IReadOnlyDictionary<string, string> Labels);
+    IReadOnlyDictionary<string, string> Labels)
+{
+    /// <summary>The container's mounts: volumes (with their names), bind mounts and others.</summary>
+    public IReadOnlyList<MountDetails> Mounts { get; init; } = [];
+
+    /// <summary>The names of the networks the container is attached to.</summary>
+    public IReadOnlyList<string> Networks { get; init; } = [];
+}

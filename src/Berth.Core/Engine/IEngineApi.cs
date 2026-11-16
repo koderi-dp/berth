@@ -46,4 +46,48 @@ public interface IEngineApi : IAsyncDisposable
 
     /// <summary>The engine's event stream, until cancelled.</summary>
     IAsyncEnumerable<EngineEventMessage> StreamEventsAsync(CancellationToken ct);
+
+    /// <summary>Lists the images (not their intermediate layers).</summary>
+    Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct);
+
+    /// <summary>Inspects one image by ID or name. An image that does not exist throws the engine's 404.</summary>
+    Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct);
+
+    /// <summary>Removes an image, or one of its tags when it has several; the answer lists each tag removed and image deleted.</summary>
+    Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct);
+
+    /// <summary>Removes the untagged images no container uses (<paramref name="danglingOnly"/>), or every image no container uses.</summary>
+    Task<PruneResult> PruneImagesAsync(bool danglingOnly, CancellationToken ct);
+
+    /// <summary>
+    /// Pulls an image, read with no deadline: one item per progress line the engine sends. A failure the engine reports in the
+    /// stream throws <see cref="EngineException"/> with its message. <paramref name="reference"/> is split by
+    /// <see cref="ImageReference.Parse"/> ("nginx" pulls nginx:latest).
+    /// </summary>
+    IAsyncEnumerable<PullProgress> PullImageAsync(string reference, CancellationToken ct);
+
+    Task<IReadOnlyList<VolumeSummary>> ListVolumesAsync(CancellationToken ct);
+
+    Task<VolumeSummary> CreateVolumeAsync(string name, CancellationToken ct);
+
+    Task RemoveVolumeAsync(string name, bool force, CancellationToken ct);
+
+    /// <summary>Removes every volume no container uses, named or anonymous.</summary>
+    Task<PruneResult> PruneVolumesAsync(CancellationToken ct);
+
+    Task<IReadOnlyList<NetworkSummary>> ListNetworksAsync(CancellationToken ct);
+
+    /// <summary>Inspects one network with the containers attached to it. A network that does not exist throws the engine's 404.</summary>
+    Task<NetworkDetails> InspectNetworkAsync(string id, CancellationToken ct);
+
+    Task RemoveNetworkAsync(string id, CancellationToken ct);
+
+    /// <summary>Removes every network no container uses (the engine never removes its own bridge, host and none).</summary>
+    Task<PruneResult> PruneNetworksAsync(CancellationToken ct);
+
+    /// <summary>The disk use of images and volumes, read with no deadline (the engine can take long on a large store).</summary>
+    Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct);
+
+    /// <summary>Creates a container (it is not started) and returns its ID.</summary>
+    Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct);
 }
