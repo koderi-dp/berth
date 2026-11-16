@@ -27,7 +27,10 @@ namespace Berth.Pages.Detail;
 /// <summary>What the Logs tab is given.</summary>
 /// <param name="Detail">The container's detail state: its log, and where the log stream stands.</param>
 /// <param name="ClearLogs">Empties the view (the container's log is kept).</param>
-internal sealed record LogsTabProps(DetailState Detail, Action ClearLogs);
+/// <param name="ClaimEscape">
+/// Told whether Escape is the search's (it clears the search box) rather than the page's (back to the list); false once the tab goes.
+/// </param>
+internal sealed record LogsTabProps(DetailState Detail, Action ClearLogs, Action<bool> ClaimEscape);
 
 /// <summary>
 /// The "Logs" tab of a container's detail page: the container's log, followed live, in a virtualized list that fills the tab, with a
@@ -113,6 +116,13 @@ internal sealed class LogsTab : Component<LogsTabProps>
             },
             term);
 
+        // Escape clears the search while its box has the focus and text; otherwise it is the page's (back to the list). Only one of
+        // the two Escape commands is enabled at a time, so which host WinUI asks first does not matter.
+        var escapeClearsSearch = LogView.EscapeClearsSearch(searchFocused, term);
+        var claimEscape = Props.ClaimEscape;
+        UseEffect(() => claimEscape(escapeClearsSearch), escapeClearsSearch);
+        UseEffect(() => () => claimEscape(false), Array.Empty<object>());
+
         void OpenSearch()
         {
             setSearchOpen(true);
@@ -159,14 +169,14 @@ internal sealed class LogsTab : Component<LogsTabProps>
             },
             new()
             {
-                Label = "Close the search",
-                Execute = CloseSearch,
-                CanExecute = searchOpen && searchFocused,
+                Label = "Clear the search",
+                Execute = () => ChangeTerm(""),
+                CanExecute = escapeClearsSearch,
                 Accelerator = Accelerator(VirtualKey.Escape),
             },
         ];
 
-        var emptyText = LogView.EmptyText(detail.LogStatus, logs.Lines.Count, waitedGeneration == generation);
+        var emptyText = LogView.EmptyText(detail.LogStatus, logs.Lines.Count, linesSeen: logs.FirstNumber > 1, waitedGeneration == generation);
         var notes = LogView.Notes(detail.LogStatus, logs.Lines.Count, logs.Dropped);
         var log = emptyText is null
             ? LogList(rows, options, matches, current, dark, scroller)
@@ -333,7 +343,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
                     .Ref(searchBox)
                     .AutomationId("log-search")
                     .AutomationName("Search the log")
-                    .ToolTip("Search the log (Ctrl+F); Enter for the next match, Shift+Enter for the previous one")
+                    .ToolTip("Search the log (Ctrl+F). Enter: next match. Shift+Enter: previous.")
                     .OnGotFocus((_, _) => setFocused(true))
                     .OnLostFocus((_, _) => setFocused(false))
                     .OnKeyDown((_, e) =>
@@ -348,7 +358,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 Body(counter).Foreground(Theme.SecondaryText).AutomationId("log-match-count").Width(120),
                 Widgets.IconButton(Glyphs.ChevronUp, "Previous match (Shift+Enter)", previous).AutomationId("log-previous").IsEnabled(hasMatches),
                 Widgets.IconButton(Glyphs.ChevronDown, "Next match (Enter)", next).AutomationId("log-next").IsEnabled(hasMatches),
-                Widgets.IconButton(Glyphs.Close, "Close the search (Esc)", close).AutomationId("log-search-close"))
+                Widgets.IconButton(Glyphs.Close, "Close the search", close).AutomationId("log-search-close"))
             with
             {
                 AlignItems = FlexAlign.Center,
@@ -381,7 +391,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
                     ToolbarButton(Glyphs.Copy, "Copy all", () => ContainerParts.CopyToClipboard(LogSearch.CopyText(logs.Lines, options.Timestamps)))
                         .AutomationId("log-copy")
                         .IsEnabled(!empty),
-                    ToolbarButton(Glyphs.Erase, "Clear the view (the container's log is kept)", clear)
+                    ToolbarButton(Glyphs.Erase, "Clear the view", clear)
                         .AutomationId("log-clear")
                         .IsEnabled(!empty)))
             .AutomationId("log-toolbar")

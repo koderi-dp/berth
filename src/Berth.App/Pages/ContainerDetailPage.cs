@@ -44,6 +44,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var nav = UseNavigation<AppRoute>();
         var (tab, setTab) = UseState(0);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
+        var (logsClaimEscape, setLogsClaimEscape) = UseState(false);
         var lastName = UseRef<string?>(null);
         var lastRowState = UseRef<(RowState State, ContainerAction? Pending)?>(null);
 
@@ -107,7 +108,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             {
                 Label = "Back to containers",
                 Execute = () => leave(null),
-                CanExecute = !dialogOpen,
+                CanExecute = !dialogOpen && !logsClaimEscape,
                 Accelerator = Accelerator(VirtualKey.Escape),
             },
             new()
@@ -134,7 +135,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 LoadErrorBar(mine?.LoadError),
                 SelectorBar(Tabs, tab, setTab).AutomationId("detail-tabs").Flex(shrink: 0),
-                Content(mine, row is not null, tab).Flex(grow: 1, basis: 0),
+                Content(mine, row is not null, tab, setLogsClaimEscape).Flex(grow: 1, basis: 0),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -159,7 +160,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 .Flex(shrink: 0);
 
     /// <summary>The chosen tab, once the container has been read; a ring until then.</summary>
-    private static Element Content(DetailState? detail, bool listed, int tab)
+    private static Element Content(DetailState? detail, bool listed, int tab, Action<bool> logsClaimEscape)
     {
         if (detail?.Details is null)
         {
@@ -173,7 +174,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             1 => InspectTab.Render(detail),
             2 => BindMountsTab.Render(detail),
             3 => StatsTab.Render(detail),
-            _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs)),
+            _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs, logsClaimEscape)),
         };
     }
 

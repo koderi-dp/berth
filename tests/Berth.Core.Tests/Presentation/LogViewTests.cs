@@ -8,22 +8,39 @@ namespace Berth.Tests.Presentation;
 public sealed class LogViewTests
 {
     [Theory]
-    [InlineData(StreamStatus.Idle, false, "Loading logs…")]
-    [InlineData(StreamStatus.Loading, false, "Loading logs…")]
-    [InlineData(StreamStatus.Idle, true, "No log output yet.")]
-    [InlineData(StreamStatus.Loading, true, "No log output yet.")]
-    [InlineData(StreamStatus.Live, false, "No log output yet.")]
-    [InlineData(StreamStatus.Live, true, "No log output yet.")]
-    [InlineData(StreamStatus.Ended, false, "The container stopped without writing to its log.")]
-    public void An_empty_log_says_why(StreamStatus status, bool waitedLong, string text)
+    [InlineData(StreamStatus.Idle, false, false, "Loading logs…")]
+    [InlineData(StreamStatus.Loading, false, false, "Loading logs…")]
+    [InlineData(StreamStatus.Idle, false, true, "No log output yet.")]
+    [InlineData(StreamStatus.Loading, false, true, "No log output yet.")]
+    [InlineData(StreamStatus.Live, false, false, "No log output yet.")]
+    [InlineData(StreamStatus.Live, false, true, "No log output yet.")]
+    [InlineData(StreamStatus.Ended, false, false, "The container stopped without any log output.")]
+    // Lines were seen and the view was cleared.
+    [InlineData(StreamStatus.Live, true, true, "No log output yet.")]
+    [InlineData(StreamStatus.Ended, true, true, "Log cleared.")]
+    [InlineData(StreamStatus.Ended, true, false, "Log cleared.")]
+    public void An_empty_log_says_why(StreamStatus status, bool linesSeen, bool waitedLong, string text)
     {
-        Assert.Equal(text, LogView.EmptyText(status, lineCount: 0, waitedLong));
+        Assert.Equal(text, LogView.EmptyText(status, lineCount: 0, linesSeen, waitedLong));
     }
 
-    [Fact]
-    public void A_failed_log_shows_no_empty_text_its_error_says_it()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_failed_log_shows_no_empty_text_its_error_says_it(bool linesSeen)
     {
-        Assert.Null(LogView.EmptyText(StreamStatus.Failed, lineCount: 0, waitedLong: true));
+        Assert.Null(LogView.EmptyText(StreamStatus.Failed, lineCount: 0, linesSeen, waitedLong: true));
+    }
+
+    [Theory]
+    [InlineData(true, "port", true)]
+    [InlineData(true, "", false)]
+    [InlineData(true, "  ", true)]
+    [InlineData(false, "port", false)]
+    [InlineData(false, "", false)]
+    public void Escape_clears_the_search_only_while_its_box_has_focus_and_text(bool focused, string term, bool clears)
+    {
+        Assert.Equal(clears, LogView.EscapeClearsSearch(focused, term));
     }
 
     [Theory]
@@ -33,7 +50,7 @@ public sealed class LogViewTests
     [InlineData(StreamStatus.Failed)]
     public void A_log_with_lines_shows_them_instead_of_an_empty_text(StreamStatus status)
     {
-        Assert.Null(LogView.EmptyText(status, lineCount: 3, waitedLong: true));
+        Assert.Null(LogView.EmptyText(status, lineCount: 3, linesSeen: true, waitedLong: true));
     }
 
     [Fact]

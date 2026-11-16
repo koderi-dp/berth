@@ -21,22 +21,28 @@ public static class LogView
 
     /// <summary>
     /// The text shown in place of the lines while there are none: "Loading logs…" for the first moments of a log that is
-    /// starting (until <paramref name="waitedLong"/>), then "No log output yet."; a stopped container's empty log says so. Null
-    /// when there are lines, or when the log failed (its error says why).
+    /// starting (until <paramref name="waitedLong"/>), then "No log output yet."; a stopped container's empty log says it wrote
+    /// nothing, or "Log cleared." when <paramref name="linesSeen"/> (lines came and the view was cleared). Null when there are
+    /// lines, or when the log failed (its error says why).
     /// </summary>
-    public static string? EmptyText(StreamStatus status, int lineCount, bool waitedLong)
+    public static string? EmptyText(StreamStatus status, int lineCount, bool linesSeen, bool waitedLong)
     {
         if (lineCount > 0)
             return null;
 
         return status switch
         {
-            StreamStatus.Idle or StreamStatus.Loading when !waitedLong => "Loading logs…",
-            StreamStatus.Ended => "The container stopped without writing to its log.",
             StreamStatus.Failed => null,
+            StreamStatus.Ended => linesSeen ? "Log cleared." : "The container stopped without any log output.",
+            StreamStatus.Idle or StreamStatus.Loading when !waitedLong => "Loading logs…",
             _ => "No log output yet.",
         };
     }
+
+    /// <summary>
+    /// Whether Escape clears the log search rather than leaving the page: only while the search box has the focus and text in it.
+    /// </summary>
+    public static bool EscapeClearsSearch(bool searchFocused, string term) => searchFocused && term.Length > 0;
 
     /// <summary>The notes shown above the lines: that a stopped container's lines are its last, and that older lines were dropped.</summary>
     public static IReadOnlyList<string> Notes(StreamStatus status, int lineCount, long dropped)
