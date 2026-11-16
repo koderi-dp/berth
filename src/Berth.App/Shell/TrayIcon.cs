@@ -91,11 +91,16 @@ internal static class TrayIcon
     /// <summary>Hides the menu (after a choice in it).</summary>
     public static void HideMenu() => _icon?.HideFlyout();
 
-    /// <summary>Stops or restarts a container from the menu, through the session as the list does.</summary>
-    public static void Act(string containerId, ContainerAction action)
+    /// <summary>
+    /// Stops or restarts a container from the menu, through the session as the list does; nothing when <paramref name="session"/>,
+    /// the one the menu was built from, was replaced since (the container was on another engine).
+    /// </summary>
+    public static void Act(EngineSession session, string containerId, ContainerAction action)
     {
+        if (!ReferenceEquals(session, AppServices.Current.Session))
+            return;
         Asked[containerId] = false;
-        AppServices.Current.Session.Dispatch(new ActionRequested([containerId], action));
+        session.Dispatch(new ActionRequested([containerId], action));
     }
 
     private static void ShowMenu()

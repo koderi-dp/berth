@@ -19,10 +19,11 @@ internal sealed class StatusBar : EngineStateComponent
     public override Element Render()
     {
         var state = UseEngineState();
-        var (confirmStop, setConfirmStop) = UseState(false);
+        // The session the stop question was asked for (AppServices.SessionNumber), or null while it is closed.
+        var (confirmStop, setConfirmStop) = UseState<int?>(null);
         var menu = EngineStatus.Menu(state);
         // Built again only when what it offers changes: the bar renders on every change of the engine state.
-        var items = UseMemo(() => menu is null ? null : MenuEntries(menu, () => setConfirmStop(true)), menu);
+        var items = UseMemo(() => menu is null ? null : MenuEntries(menu, () => setConfirmStop(AppServices.Current.SessionNumber)), menu);
 
         var phase = EngineStatus.Phase(state);
         var text = EngineStatus.Text(phase);
@@ -54,7 +55,8 @@ internal sealed class StatusBar : EngineStateComponent
                 Border(row)
                     .BorderBrush(Theme.DividerStroke)
                     .BorderThickness(0, 1, 0, 0),
-                EngineStopDialog.Render(confirmStop ? state : null, () => setConfirmStop(false)))
+                // A switch of connection closes the question: it was about the other engine.
+                EngineStopDialog.Render(confirmStop == AppServices.Current.SessionNumber ? state : null, confirmStop ?? -1, () => setConfirmStop(null)))
             .Flex(shrink: 0);
     }
 
@@ -82,7 +84,8 @@ internal sealed class StatusBar : EngineStateComponent
 internal static class EngineStopDialog
 {
     /// <param name="state">The engine state while the dialog is open; null while it is closed.</param>
-    public static Element Render(EngineState? state, Action onDone) =>
+    /// <param name="sessionNumber">The session it was asked for: a confirm after a switch of connection sends nothing.</param>
+    public static Element Render(EngineState? state, int sessionNumber, Action onDone) =>
         ContentDialog(EngineStatus.StopTitle, Body(state is null ? "" : EngineStatus.StopConfirmation(state)).TextWrapping().AutomationId("confirm-text"), "Stop engine") with
         {
             IsOpen = state is not null,
@@ -90,7 +93,7 @@ internal static class EngineStopDialog
             DefaultButton = ContentDialogButton.Close,
             OnClosed = result =>
             {
-                if (result == ContentDialogResult.Primary)
+                if (result == ContentDialogResult.Primary && sessionNumber == AppServices.Current.SessionNumber)
                     AppServices.Current.Session.Dispatch(new EngineCommandRequested(EngineCommand.Stop));
                 onDone();
             },

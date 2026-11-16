@@ -46,8 +46,13 @@ internal sealed class TrayFlyout : Component
             .OnMount(TrayFlyoutWindow.Fit);
     }
 
+    /// <summary>
+    /// The items for <paramref name="menu"/>. Every action is for the session the menu was built from: after a switch of connection
+    /// an item still on screen sends nothing (<see cref="TrayIcon.Act"/>, <see cref="StopEngine"/>).
+    /// </summary>
     private static Element[] Items(TrayMenu menu, bool confirmStop, Action<bool> setConfirmStop)
     {
+        var session = AppServices.Current.Session;
         var items = new List<Element>
         {
             Item("Open Berth", Glyphs.OpenInNewWindow, OpenBerth, "tray-open"),
@@ -56,7 +61,7 @@ internal sealed class TrayFlyout : Component
         };
 
         foreach (var container in menu.Containers)
-            items.Add(ContainerRow(container));
+            items.Add(ContainerRow(session, container));
         if (menu.MoreText is { } more)
             items.Add(Item(more, null, OpenBerth, "tray-more"));
 
@@ -64,7 +69,7 @@ internal sealed class TrayFlyout : Component
         {
             items.Add(Divider());
             if (confirmStop && engine.Command == EngineCommand.Stop)
-                items.Add(StopQuestion(setConfirmStop));
+                items.Add(StopQuestion(session, setConfirmStop));
             else if (engine.Command == EngineCommand.Start)
                 items.Add(Item(engine.Label, Glyphs.Play, StartEngine, "tray-start-engine").IsEnabled(engine.Enabled));
             else
@@ -88,33 +93,33 @@ internal sealed class TrayFlyout : Component
             .AutomationId("tray-state")
             .AutomationName(menu.ConnectionName + ": " + menu.StateText);
 
-    private static Element ContainerRow(TrayContainer container) =>
+    private static Element ContainerRow(EngineSession session, TrayContainer container) =>
         Grid(
                 ContainerColumns,
                 OneRow,
                 Widgets.OneLine(Body(container.Name)).ToolTip(container.Name).VAlign(VerticalAlignment.Center).Margin(12, 0, 8, 0),
-                Widgets.IconButton(Glyphs.Stop, "Stop " + container.Name, () => TrayIcon.Act(container.Id, ContainerAction.Stop))
+                Widgets.IconButton(Glyphs.Stop, "Stop " + container.Name, () => TrayIcon.Act(session, container.Id, ContainerAction.Stop))
                     .IsEnabled(!container.Busy)
                     .AutomationId("tray-stop-" + container.Name)
                     .Grid(row: 0, column: 1),
-                Widgets.IconButton(Glyphs.Restart, "Restart " + container.Name, () => TrayIcon.Act(container.Id, ContainerAction.Restart))
+                Widgets.IconButton(Glyphs.Restart, "Restart " + container.Name, () => TrayIcon.Act(session, container.Id, ContainerAction.Restart))
                     .IsEnabled(!container.Busy)
                     .AutomationId("tray-restart-" + container.Name)
                     .Grid(row: 0, column: 2))
             .WithKey(container.Id);
 
     /// <summary>The stop question in the menu itself, naming the containers that will stop; Cancel is first and the main button.</summary>
-    private static Element StopQuestion(Action<bool> setConfirmStop) =>
+    private static Element StopQuestion(EngineSession session, Action<bool> setConfirmStop) =>
         VStack(
                 8,
-                Body(EngineStatus.StopConfirmation(AppServices.Current.Session.State)).TextWrapping().AutomationId("tray-stop-question"),
+                Body(EngineStatus.StopConfirmation(session.State)).TextWrapping().AutomationId("tray-stop-question"),
                 HStack(
                     8,
                     Button("Cancel", () => setConfirmStop(false)).AccentButton().AutomationId("tray-stop-cancel"),
                     Button("Stop engine", () =>
                     {
                         setConfirmStop(false);
-                        AppServices.Current.Session.Dispatch(new EngineCommandRequested(EngineCommand.Stop));
+                        StopEngine(session);
                     }).AutomationId("tray-stop-confirm")))
             .Margin(12, 4, 12, 4);
 
@@ -147,6 +152,12 @@ internal sealed class TrayFlyout : Component
     {
         TrayIcon.HideMenu();
         AppServices.Current.Session.Dispatch(new EngineCommandRequested(EngineCommand.Start));
+    }
+
+    private static void StopEngine(EngineSession session)
+    {
+        if (ReferenceEquals(session, AppServices.Current.Session))
+            session.Dispatch(new EngineCommandRequested(EngineCommand.Stop));
     }
 
     private static void Quit()
