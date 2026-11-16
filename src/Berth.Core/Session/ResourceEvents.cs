@@ -74,6 +74,20 @@ public sealed record PullFinished(string Reference, int Generation) : SessionEve
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
 public sealed record PullFailed(string Reference, int Generation, string Message, bool EngineUnreachable) : SessionEvent;
 
+/// <summary>
+/// Read the image <paramref name="Id"/> (its exposed ports for the run dialog, its whole answer for Inspect), in place of any image being
+/// read or read before. Ignored while not connected.
+/// </summary>
+public sealed record ImageInspectRequested(string Id) : SessionEvent;
+
+public sealed record ImageInspected(int Generation, ImageInspection Inspection) : SessionEvent;
+
+/// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
+public sealed record ImageInspectFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent;
+
+/// <summary>The run dialog or the Inspect dialog closed: forget the image read.</summary>
+public sealed record ImageInspectDismissed : SessionEvent;
+
 /// <summary>Create a container from <paramref name="Request"/> and start it. Ignored while another run is in progress.</summary>
 public sealed record RunContainerRequested(ContainerCreateRequest Request) : SessionEvent;
 

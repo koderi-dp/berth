@@ -32,6 +32,9 @@ public sealed record ImageDetails(
     string WorkingDir,
     IReadOnlyDictionary<string, string> Labels);
 
+/// <summary>An image's inspect answer: the parts Berth reads (<see cref="Details"/>) and the engine's whole answer, indented.</summary>
+public sealed record ImageInspection(ImageDetails Details, string RawJson);
+
 /// <summary>One line of an image removal's answer: a tag that was removed, or an image (layer) that was deleted.</summary>
 public sealed record ImageDeleteResult(string? Untagged, string? Deleted);
 

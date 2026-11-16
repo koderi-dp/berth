@@ -201,10 +201,29 @@ public sealed class EngineClient : IEngineApi
             i.Id ?? "", Named(i.RepoTags), Named(i.RepoDigests), i.Created, i.Size, i.Containers is >= 0 ? i.Containers : null));
     }
 
-    public async Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct)
+    public async Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct)
     {
         using var response = await SendAsync(HttpMethod.Get, ImagePath(idOrName, "/json"), PlainTimeout, ct).ConfigureAwait(false);
-        var wire = await ReadAsync(response, EngineJson.Default.WireImageInspect, ct).ConfigureAwait(false);
+        var body = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+
+        WireImageInspect wire;
+        string raw;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            wire = document.Deserialize(EngineJson.Default.WireImageInspect) ?? throw new JsonException("The answer was empty.");
+            raw = Indented(document);
+        }
+        catch (JsonException ex)
+        {
+            throw Unreadable(response, ex);
+        }
+
+        return new ImageInspection(ToImageDetails(wire), raw);
+    }
+
+    private static ImageDetails ToImageDetails(WireImageInspect wire)
+    {
         var config = wire.Config;
         return new ImageDetails(
             wire.Id ?? "",

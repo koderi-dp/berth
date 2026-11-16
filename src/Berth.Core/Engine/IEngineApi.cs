@@ -50,8 +50,8 @@ public interface IEngineApi : IAsyncDisposable
     /// <summary>Lists the images (not their intermediate layers).</summary>
     Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct);
 
-    /// <summary>Inspects one image by ID or name. An image that does not exist throws the engine's 404.</summary>
-    Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct);
+    /// <summary>Inspects one image by ID or name: its details and the engine's whole answer, indented. An image that does not exist throws the engine's 404.</summary>
+    Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct);
 
     /// <summary>Removes an image, or one of its tags when it has several; the answer lists each tag removed and image deleted.</summary>
     Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct);

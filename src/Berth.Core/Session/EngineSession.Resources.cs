@@ -15,6 +15,7 @@ public sealed partial class EngineSession
     private const string NetworkActionFailedReport = "a network action failed";
     private const string DiskUsageFailedReport = "reading the disk use failed";
     private const string RunFailedReport = "running a container failed";
+    private const string ImageInspectFailedReport = "reading an image failed";
 
     // Touched only by the loop, and by DisposeAsync once the loop has ended.
     private readonly Dictionary<ResourceKind, ITimer> _listReloadTimers = [];
@@ -68,6 +69,15 @@ public sealed partial class EngineSession
 
             case CancelPullEffect cancel:
                 _pulls?.Cancel(cancel.Reference);
+                break;
+
+            case InspectImageEffect inspect when _connection is { } connection:
+                connection.Run(ct => CallAsync(
+                    connection,
+                    ImageInspectFailedReport,
+                    async (api, token) => new ImageInspected(inspect.Generation, await api.InspectImageAsync(inspect.Id, token).ConfigureAwait(false)),
+                    ex => new ImageInspectFailed(inspect.Generation, ex.Message, IsUnreachable(ex)),
+                    ct));
                 break;
 
             case RunContainerEffect run when _connection is { } connection:

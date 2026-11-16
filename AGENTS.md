@@ -23,7 +23,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
   Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list (with each container's mounts and
                             network names), actions, create, event stream, inspect, logs (StreamLogsAsync), stats
-                            (StreamStatsAsync); images (list, inspect, remove, prune, pull as a stream of PullProgress),
+                            (StreamStatsAsync); images (list, inspect with the raw answer, remove, prune, pull as a stream of PullProgress),
                             volumes (list, create, remove, prune of every unused one), networks (list, inspect with attached
                             containers, remove, prune), disk usage (/system/df for images and volumes). Pulls, disk usage,
                             prunes and streams have no deadline; other calls 30 s (stop, restart and image and volume removes 90 s).
@@ -42,10 +42,10 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
                             ResourceList/ListStatus/RemovalBatch (the images, volumes and networks lists and their
                             batches of removes), ImagePull (a pull's layers), DiskUsageState, ContainerRun (the run
-                            dialog's result)
+                            dialog's result), ImageInspect (the image read for the run dialog and Inspect)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
                             stats), with ResourceEvents, ResourceEffects and SessionReducer.Resources for images, volumes,
-                            networks, disk use, pulls and running a container; EngineSession (runs the reducer and its
+                            networks, disk use, pulls, running a container and reading an image; EngineSession (runs the reducer and its
                             effects; reports failures to an optional error sink; opens detail sessions on its current
                             connection), its parts in EngineSession.Connection, .StatsWatch, .Resources and .Pulls (progress
                             batched to ten state changes a second per pull), Backoff;

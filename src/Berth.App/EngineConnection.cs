@@ -57,7 +57,7 @@ internal sealed class EngineConnection : IEngineApi
 
     public Task<IReadOnlyList<ImageSummary>> ListImagesAsync(CancellationToken ct) => _client.ListImagesAsync(ct);
 
-    public Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct) => _client.InspectImageAsync(idOrName, ct);
+    public Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct) => _client.InspectImageAsync(idOrName, ct);
 
     public Task<IReadOnlyList<ImageDeleteResult>> RemoveImageAsync(string idOrName, bool force, CancellationToken ct) =>
         _client.RemoveImageAsync(idOrName, force, ct);

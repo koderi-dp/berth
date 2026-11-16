@@ -29,5 +29,8 @@ public sealed record StartPullEffect(string Reference, int Generation) : Session
 /// <summary>Stop the pull of <see cref="Reference"/>; it sends nothing more.</summary>
 public sealed record CancelPullEffect(string Reference) : SessionEffect;
 
+/// <summary>Inspect the image <see cref="Id"/>; answers with ImageInspected or ImageInspectFailed carrying the same generation.</summary>
+public sealed record InspectImageEffect(string Id, int Generation) : SessionEffect;
+
 /// <summary>Create a container, then start it; answers with RunSucceeded or RunFailed.</summary>
 public sealed record RunContainerEffect(ContainerCreateRequest Request) : SessionEffect;

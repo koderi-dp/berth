@@ -116,7 +116,7 @@ public sealed class EngineImagesTests
         var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/images/nginx%3A1.29/json", NginxInspect));
         await using var _client = client;
 
-        var image = await client.InspectImageAsync("nginx:1.29", CancellationToken.None);
+        var image = (await client.InspectImageAsync("nginx:1.29", CancellationToken.None)).Details;
 
         Assert.Equal(("GET", "/v1.56/images/nginx%3A1.29/json"), stub.Requests[^1]);
         Assert.Equal("sha256:0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9", image.Id);
@@ -132,6 +132,19 @@ public sealed class EngineImagesTests
         Assert.Equal(["/docker-entrypoint.sh"], image.Entrypoint);
         Assert.Equal("/", image.WorkingDir);
         Assert.Equal("someone@example.com", image.Labels["maintainer"]);
+    }
+
+    [Fact]
+    public async Task Inspect_keeps_the_engines_whole_answer_indented()
+    {
+        var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/images/nginx%3A1.29/json", NginxInspect));
+        await using var _client = client;
+
+        var raw = (await client.InspectImageAsync("nginx:1.29", CancellationToken.None)).RawJson;
+
+        Assert.StartsWith("{\n  \"Id\": \"sha256:0a1b2c3d", raw);
+        Assert.Contains("\n    \"StopSignal\": \"SIGQUIT\"", raw);
+        Assert.Contains("\"Metadata\": {\n    \"LastTagTime\": \"2026-11-15T16:54:18.375585919Z\"\n  }", raw);
     }
 
     [Fact]
@@ -153,7 +166,7 @@ public sealed class EngineImagesTests
             """{"Id":"sha256:abc","RepoTags":null,"RepoDigests":null,"Created":null,"Config":null,"Architecture":null,"Os":null}"""));
         await using var _client = client;
 
-        var image = await client.InspectImageAsync("abc", CancellationToken.None);
+        var image = (await client.InspectImageAsync("abc", CancellationToken.None)).Details;
 
         Assert.Equal("sha256:abc", image.Id);
         Assert.Null(image.Created);

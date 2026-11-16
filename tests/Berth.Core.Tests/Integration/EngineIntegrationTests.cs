@@ -350,13 +350,15 @@ public sealed class EngineIntegrationTests
 
         var images = await client.ListImagesAsync(cts.Token);
         var alpine = Assert.Single(images, i => i.RepoTags.Contains("alpine:latest"));
-        var details = await client.InspectImageAsync("alpine:latest", cts.Token);
+        var inspection = await client.InspectImageAsync("alpine:latest", cts.Token);
+        var details = inspection.Details;
         await client.ListVolumesAsync(cts.Token);
         var networks = await client.ListNetworksAsync(cts.Token);
         var usage = await client.GetDiskUsageAsync(cts.Token);
 
         Assert.Equal(alpine.Id, details.Id);
         Assert.Equal("linux", details.Os);
+        Assert.Contains("\"RootFS\"", inspection.RawJson);
         Assert.Contains(networks, n => n.Name == "bridge");
         Assert.Contains(usage.Images, i => i.Id == alpine.Id);
         Assert.Equal(images.Count, usage.ImageTotals.TotalCount);

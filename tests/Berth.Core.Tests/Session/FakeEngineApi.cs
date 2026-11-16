@@ -20,7 +20,7 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, Exception> _failures = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, Gate> _gates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ContainerInspection> _inspections = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, ImageDetails> _images = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ImageInspection> _images = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<PullProgress>> _pullsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NetworkDetails> _networks = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
@@ -203,8 +203,16 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>Every container create request, in order.</summary>
     public ConcurrentQueue<ContainerCreateRequest> CreateRequests { get; } = new();
 
-    /// <summary>Makes later inspects of <paramref name="idOrName"/> answer with <paramref name="details"/>.</summary>
-    public void SetImage(string idOrName, ImageDetails details) => _images[idOrName] = details;
+    /// <summary>
+    /// Makes later inspects of <paramref name="idOrName"/> answer with <paramref name="details"/> and <paramref name="rawJson"/> (by
+    /// default a small object naming the image).
+    /// </summary>
+    public void SetImage(string idOrName, ImageDetails details, string? rawJson = null) =>
+        _images[idOrName] = new ImageInspection(details, rawJson ?? $$"""{"Id":"{{details.Id}}"}""");
+
+    /// <summary>Minimal details of the image <paramref name="id"/> exposing <paramref name="ports"/> ("80/tcp").</summary>
+    public static ImageDetails ImageDetails(string id, params string[] ports) => new(
+        id, [], [], null, 1000, "amd64", "linux", ports, [], [], [], "/", new Dictionary<string, string>());
 
     /// <summary>Makes later inspects of <paramref name="id"/> answer with <paramref name="details"/>.</summary>
     public void SetNetwork(string id, NetworkDetails details) => _networks[id] = details;
@@ -215,12 +223,12 @@ internal sealed class FakeEngineApi : IEngineApi
         return Images;
     }
 
-    /// <summary>Answers with the details set for <paramref name="idOrName"/>, or the engine's 404 when none are.</summary>
-    public async Task<ImageDetails> InspectImageAsync(string idOrName, CancellationToken ct)
+    /// <summary>Answers with the inspection set for <paramref name="idOrName"/>, or the engine's 404 when none is.</summary>
+    public async Task<ImageInspection> InspectImageAsync(string idOrName, CancellationToken ct)
     {
         await EnterAsync("InspectImage", $"InspectImage {idOrName}", ct);
-        return _images.TryGetValue(idOrName, out var details)
-            ? details
+        return _images.TryGetValue(idOrName, out var inspection)
+            ? inspection
             : throw new EngineException(404, $"No such image: {idOrName}");
     }
 

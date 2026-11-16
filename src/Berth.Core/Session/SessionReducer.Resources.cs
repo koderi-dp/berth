@@ -130,6 +130,23 @@ public static partial class SessionReducer
             case PullDismissed dismissed when state.Pulls.TryGetValue(PullKey(dismissed.Reference), out var pull) && pull.Status != PullStatus.Running:
                 return (state with { Pulls = state.Pulls.Remove(pull.Reference) }, None);
 
+            case ImageInspectRequested request when connected:
+            {
+                var ticket = state.Ticket + 1;
+                return (state with { Ticket = ticket, ImageInspect = new ImageInspect(request.Id, ticket, null, null) }, [new InspectImageEffect(request.Id, ticket)]);
+            }
+
+            case ImageInspected read when connected && state.ImageInspect is { IsLoading: true } inspect && read.Generation == inspect.Generation:
+                return (state with { ImageInspect = inspect with { Inspection = read.Inspection } }, None);
+
+            case ImageInspectFailed failure when connected && state.ImageInspect is { IsLoading: true } inspect && failure.Generation == inspect.Generation:
+                return failure.EngineUnreachable
+                    ? Lose(state, failure.Message)
+                    : (state with { ImageInspect = inspect with { Error = failure.Message } }, None);
+
+            case ImageInspectDismissed:
+                return (state with { ImageInspect = null }, None);
+
             case RunContainerRequested request when connected && state.Run?.Status != RunStatus.InProgress:
                 return (state with { Run = new ContainerRun(request.Request.Image, RunStatus.InProgress, null, null) }, [new RunContainerEffect(request.Request)]);
 
@@ -161,7 +178,7 @@ public static partial class SessionReducer
 
     /// <summary>
     /// What is under way on the connection is over, lost or started over: pending item actions, reloads and the disk use read are
-    /// forgotten, a batch of removes ends where it is (keeping its refusals), and running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created). When
+    /// forgotten, a batch of removes ends where it is (keeping its refusals), running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created), and an image read is forgotten. When
     /// the session starts over (<paramref name="startingOver"/>) every list also counts as not loaded until it is read again.
     /// </summary>
     private static EngineState ForgetUnderWay(EngineState state, bool startingOver)
@@ -187,7 +204,7 @@ public static partial class SessionReducer
             .Select(p => KeyValuePair.Create(p.Reference, p with { Status = PullStatus.Interrupted })));
         var run = next.Run is { Status: RunStatus.InProgress } inProgress ? inProgress with { Status = RunStatus.Interrupted } : next.Run;
 
-        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false, Again = false } };
+        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false, Again = false }, ImageInspect = null };
     }
 
     /// <summary>Reads every list whose page has been shown, and the disk use once it has been asked for: the connection is new.</summary>

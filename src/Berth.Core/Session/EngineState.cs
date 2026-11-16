@@ -33,7 +33,8 @@ public enum ContainerAction { Start, Stop, Restart, Pause, Unpause, Remove }
 /// Why the last read of the container list failed, as the engine said it; null once a read starts or succeeds. With
 /// <see cref="ListLoaded"/> false it tells the page the list failed rather than is loading; F5 reads it again.
 /// </param>
-/// <param name="Ticket">The last generation handed to an image, volume, network or disk use read or a pull.</param>
+/// <param name="Ticket">The last generation handed to an image, volume, network or disk use read, a pull or an image inspect.</param>
+/// <param name="ImageInspect">The image read for the run dialog or Inspect, until dismissed; null when none, and after any change of connection.</param>
 public sealed record EngineState(
     ConnectionStatus Status,
     EngineVersion? Version,
@@ -55,7 +56,8 @@ public sealed record EngineState(
     ImmutableDictionary<string, ImagePull> Pulls,
     ContainerRun? Run,
     int Ticket,
-    string? ContainersLoadError = null)
+    string? ContainersLoadError = null,
+    ImageInspect? ImageInspect = null)
 {
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
