@@ -26,6 +26,8 @@ public sealed class TransferViewTests
         Assert.Equal("Uploading notes.txt to /tmp", Line(Upload(TransferStatus.Running)).Title);
         Assert.Equal("Downloaded hosts to C:\\Downloads", Line(Download(TransferStatus.Done, summary: TransferSummary.Empty)).Title);
         Assert.Equal("Uploaded notes.txt to /tmp", Line(Upload(TransferStatus.Done, TransferSummary.Empty)).Title);
+        Assert.Equal("Download of hosts to C:\\Downloads", Line(Download(TransferStatus.Cancelled)).Title);
+        Assert.Equal("Upload of notes.txt to /tmp", Line(Upload(TransferStatus.Failed)).Title);
     }
 
     [Fact]

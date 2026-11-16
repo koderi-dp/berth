@@ -11,19 +11,23 @@ namespace Berth.Presentation;
 /// </summary>
 /// <param name="ShowInFolder">The path a finished download offers to show in Explorer; null otherwise.</param>
 public sealed record TransferLine(
-    int Id, string Title, string Text, string? Notes, double? Fraction, bool IsRunning, bool IsError, bool CanCancel, bool CanDismiss, string? ShowInFolder);
+    int Id, string Title, string Text, string? Notes, double? Fraction, bool IsRunning, bool IsError, bool CanCancel, bool CanDismiss, string? ShowInFolder)
+{
+    /// <summary>A download (the panel draws its glyph); an upload otherwise.</summary>
+    public bool IsDownload { get; init; }
+}
 
 /// <summary>The Files tab's transfer rows.</summary>
 public static class TransferView
 {
     /// <summary>The transfers of <paramref name="containerId"/>, newest first.</summary>
     public static ImmutableArray<TransferLine> Of(ImmutableDictionary<int, FileTransfer> transfers, string containerId) =>
-        [.. transfers.Values.Where(t => t.Request.ContainerId == containerId).OrderByDescending(t => t.Id).Select(Line)];
+        [.. transfers.Values.Where(t => t.Request.ContainerId == containerId).OrderByDescending(t => t.Id).Select(t => Line(t) with { IsDownload = t.IsDownload })];
 
     private static TransferLine Line(FileTransfer transfer)
     {
         var running = transfer.Status == TransferStatus.Running;
-        var title = Title(transfer, running);
+        var title = Title(transfer);
         switch (transfer.Status)
         {
             case TransferStatus.Running:
@@ -58,26 +62,30 @@ public static class TransferView
     private static TransferLine Ended(FileTransfer transfer, string title, string text, bool isError = false) =>
         new(transfer.Id, title, text, null, null, false, isError, false, true, null);
 
-    private static string Title(FileTransfer transfer, bool running)
+    private static string Title(FileTransfer transfer)
     {
         switch (transfer.Request)
         {
             case DownloadRequest download:
             {
                 var what = download.Sources.Length == 1 ? download.Sources[0].Name : $"{download.Sources.Length} items";
-                return $"{(running ? "Downloading" : "Downloaded")} {what} to {download.Destination}";
+                return $"{Verb(transfer.Status, "Downloading", "Downloaded", "Download of")} {what} to {download.Destination}";
             }
 
             case UploadRequest upload:
             {
                 var what = upload.Sources.Length == 1 ? Path.GetFileName(Path.TrimEndingDirectorySeparator(upload.Sources[0])) : $"{upload.Sources.Length} items";
-                return $"{(running ? "Uploading" : "Uploaded")} {what} to {upload.Destination.Value}";
+                return $"{Verb(transfer.Status, "Uploading", "Uploaded", "Upload of")} {what} to {upload.Destination.Value}";
             }
 
             default:
                 return "";
         }
     }
+
+    /// <summary>"Downloading" while it runs, "Downloaded" once done, "Download of" when it was cancelled, failed or interrupted.</summary>
+    private static string Verb(TransferStatus status, string running, string done, string other) =>
+        status == TransferStatus.Running ? running : status == TransferStatus.Done ? done : other;
 
     /// <summary>"3 files and 1 folder, 4 MB."</summary>
     private static string Sum(TransferSummary summary)

@@ -90,6 +90,16 @@ internal sealed class EngineConnection : IEngineApi
 
     public Task<ExecInspection> InspectExecAsync(string execId, CancellationToken ct) => _client.InspectExecAsync(execId, ct);
 
+    public Task<ExecOutput> RunExecForOutputAsync(string containerId, IReadOnlyList<string> command, int limit, CancellationToken ct) =>
+        _client.RunExecForOutputAsync(containerId, command, limit, ct);
+
+    public Task<PathStat> StatPathAsync(string containerId, string path, CancellationToken ct) => _client.StatPathAsync(containerId, path, ct);
+
+    public Task<ArchiveRead> GetArchiveAsync(string containerId, string path, CancellationToken ct) => _client.GetArchiveAsync(containerId, path, ct);
+
+    public Task PutArchiveAsync(string containerId, string path, Func<Stream, CancellationToken, Task> write, CancellationToken ct) =>
+        _client.PutArchiveAsync(containerId, path, write, ct);
+
     public async ValueTask DisposeAsync()
     {
         try

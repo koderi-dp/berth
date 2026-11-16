@@ -1,7 +1,8 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using System.Globalization;
 using Berth.Components;
 using Berth.Engine.Models;
+using Berth.Files;
 using Berth.Hooks;
 using Berth.Pages.Detail;
 using Berth.Presentation;
@@ -19,7 +20,7 @@ namespace Berth.Pages;
 internal sealed record DetailPageProps(AppRoute.ContainerDetail Route, Action<string?> Leave);
 
 /// <summary>
-/// One container: its header with its state and actions, and the Logs, Inspect, Bind mounts, Exec and Stats tabs. While the page is the
+/// One container: its header with its state and actions, and the Logs, Inspect, Bind mounts, Exec, Files and Stats tabs. While the page is the
 /// one shown it keeps a detail session open for its container (<see cref="AppServices.OpenDetail"/>), opens it again on the new
 /// connection when the engine reconnects, and has it read the container again when a list load shows it may have run again. A
 /// container that is removed sends the page back to the list. What to do when is decided in <see cref="DetailPage"/>.
@@ -52,6 +53,9 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
         // What the Logs tab does with Ctrl+F and Escape while it is shown; the page owns the shortcuts.
         var logsKeys = UseMemo(() => new LogsTabKeys(), Array.Empty<object>());
+        // What the Files tab does with Escape while its path is edited, and the folder it showed last (it opens there again).
+        var filesKeys = UseMemo(() => new FilesTabKeys(), Array.Empty<object>());
+        var filesPath = UseRef(ContainerPath.Root);
         var (logSearchRequests, updateLogSearchRequests) = UseReducer(0);
         // The Logs tab's search lives here, so it outlives the tab being mounted again (another tab chosen and back, or a ring shown).
         var (logSearch, updateLogSearch) = UseReducer(LogSearchState.Closed);
@@ -164,7 +168,14 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                     updateLogSearchRequests(n => n + 1);
                     setTab(DetailTab.Logs);
                 },
-                Reload: connected ? () => Reload(id) : null,
+                Reload: connected
+                    ? () =>
+                    {
+                        Reload(id);
+                        if (tab == DetailTab.Files)
+                            AppServices.Current.Detail?.RefreshFiles();
+                    }
+                    : null,
                 Delete: row is not null && RowSelection.CanAct(row, connected) ? () => setDeleteRequest(DeleteRequest.For((ContainerRow[])[row])) : null,
                 Escape: () =>
                 {
@@ -196,6 +207,16 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var execProps = execDetail is null
             ? null
             : new ExecTabProps(id, name, execDetail, waiting, connected, row?.Pending is not null, shellChoice, customCommand, execSetters.Choice, execSetters.Custom);
+        // The Files tab is given its own state, so a batch of log lines does not render it again.
+        var filesState = shown?.Files;
+        if (filesState is { Status: not FilesStatus.Idle })
+            filesPath.Current = filesState.Path;
+        var filesProps = UseMemo(
+            () => filesState is null ? null : new FilesTabProps(id, name, filesState, waiting, connected, filesPath.Current, filesKeys),
+            (object?)filesState ?? "none",
+            waiting,
+            connected,
+            name);
         // One key for the rest of what the header shows: the minute, whether connected, whether compact, and where Back goes.
         var headerKey = string.Concat(((DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMinute * 4) + (connected ? 2 : 0) + (compact ? 1 : 0)).ToString(CultureInfo.InvariantCulture), "|", backLabel);
         var header = UseMemo(
@@ -214,7 +235,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
                 LoadErrorBar(mine?.LoadError, connected ? id : null)?.WithKey("load-error"),
                 tabStrip,
-                Content(shown, waiting, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), execProps, state.Info?.MemoryBytes ?? 0)
+                Content(shown, waiting, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), execProps, filesProps, state.Info?.MemoryBytes ?? 0)
                     .Flex(grow: 1, basis: 0)
                     .WithKey("content"),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null))?.WithKey("delete-dialog"))
@@ -263,7 +284,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     /// Logs and Stats tabs say so instead of what their streams say (see <see cref="DetailPage.Waiting"/>).
     /// </summary>
     private static Element Content(
-        DetailState? detail, bool waiting, bool listed, DetailTab tab, LogsTabHooks logs, ExecTabProps? exec, long machineMemory)
+        DetailState? detail, bool waiting, bool listed, DetailTab tab, LogsTabHooks logs, ExecTabProps? exec, FilesTabProps? files, long machineMemory)
     {
         if (detail?.Details is null)
         {
@@ -278,6 +299,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             DetailTab.BindMounts => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
             // A page left stays in the navigation cache without rendering: the terminal closes its browser itself when it leaves the window.
             DetailTab.Exec when exec is not null => Component<ExecTab, ExecTabProps>(exec),
+            DetailTab.Files when files is not null => Component<FilesTab, FilesTabProps>(files),
             DetailTab.Stats => Component<StatsTab, StatsTabProps>(new(
                 detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, waiting, detail.Details.CpuLimit, machineMemory)),
             _ => Component<LogsTab, LogsTabProps>(new(detail, waiting, ClearLogs, logs.Search, logs.UpdateSearch, logs.Keys, logs.SearchRequests)),

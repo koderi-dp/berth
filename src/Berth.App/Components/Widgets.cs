@@ -44,6 +44,12 @@ internal static class Glyphs
     public const string HardDrive = "";
     public const string Network = "";
     public const string OpenInNewWindow = "";
+    public const string Folder = "\uE8B7";
+    public const string Document = "\uE8A5";
+    public const string Link = "\uE71B";
+    public const string Special = "\uE9CE"; // Unknown: a device, FIFO or socket
+    public const string Up = "\uE74A";
+    public const string Upload = "\uE898";
 }
 
 /// <summary>Small pieces shared by the shell and the pages.</summary>
