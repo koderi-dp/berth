@@ -201,7 +201,9 @@ internal sealed class App : EngineStateComponent
             SetAsideBar(settingsSetAside, () => setSettingsSetAside(false))?.WithKey("set-aside"),
             ErrorBar.Render(state.ActionError, () => AppServices.Current.Session.Dispatch(new ActionErrorDismissed()))?.WithKey("error"),
             NoticeBar(notice is { } shownNotice && nav.CurrentRoute == shownNotice.List ? shownNotice.Text : null, () => setNotice(null))?.WithKey("notice"),
-            (NavigationHost(nav, route => RouteToPage(route, state, LeaveDetail)) with
+            // Each route's page is one RoutePage component, whatever it shows: when a page's root changed type (a list and the
+            // disconnected view in its place, as on every switch of connection), the host kept the old page alive with its whole tree.
+            (NavigationHost(nav, route => Component<RoutePage, RoutePageProps>(new(route, LeaveDetail))) with
                 {
                     // A page left stays mounted, so a list keeps its search, sort and scroll while another page shows. The cache holds
                     // the pages not shown and drops the one used longest ago. There are five fixed pages (four lists and Settings) and
@@ -366,15 +368,16 @@ internal sealed class App : EngineStateComponent
     /// and the disconnected view takes its place (with a list, the page keeps it and shows <see cref="ConnectionBar"/> above it);
     /// the settings page stays reachable to fix the connection. A container's page shows its own connection bar.
     /// </summary>
-    private static Element RouteToPage(AppRoute route, EngineState state, Action<string?> leaveDetail)
+    internal static Element RouteToPage(AppRoute route, EngineState state, Action<string?> leaveDetail)
     {
         if (route is AppRoute.ContainerDetail detail)
             return Component<ContainerDetailPage, DetailPageProps>(new(detail, leaveDetail));
         if (route is AppRoute.VolumeDetail volume)
         {
-            return state.Status != ConnectionStatus.Connected && state.Volumes.Items.IsEmpty
-                ? DisconnectedView.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))
-                : Component<VolumeDetailPage, VolumeDetailProps>(new(volume, leaveDetail));
+            return KeptMounted(
+                Component<VolumeDetailPage, VolumeDetailProps>(new(volume, leaveDetail)),
+                state,
+                state.Status != ConnectionStatus.Connected && state.Volumes.Items.IsEmpty);
         }
         if (route == AppRoute.Settings)
             return Component<SettingsPage>();
@@ -384,12 +387,38 @@ internal sealed class App : EngineStateComponent
             : route == AppRoute.Volumes ? state.Volumes.Items.IsEmpty
             : route == AppRoute.Networks ? state.Networks.Items.IsEmpty
             : state.Containers.IsEmpty;
-        if (state.Status != ConnectionStatus.Connected && listIsEmpty)
-            return DisconnectedView.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()));
-
-        return route == AppRoute.Images ? Component<ImagesPage>()
+        var page = route == AppRoute.Images ? Component<ImagesPage>()
             : route == AppRoute.Volumes ? Component<VolumesPage>()
             : route == AppRoute.Networks ? Component<NetworksPage>()
             : Component<ContainersPage>();
+        return KeptMounted(page, state, state.Status != ConnectionStatus.Connected && listIsEmpty);
     }
+
+    private static readonly GridSize[] OneCell = [GridSize.Star()];
+
+    /// <summary>
+    /// <paramref name="page"/>, hidden under the disconnected view while <paramref name="disconnected"/>, but never unmounted for it: a
+    /// list page taken out of the tree on every switch of connection (the new session starts with no list) was never freed, since the
+    /// components in its virtualized rows stayed registered with Reactor (about 0.7 MB a switch).
+    /// </summary>
+    private static Element KeptMounted(Element page, EngineState state, bool disconnected) =>
+        Grid(
+            OneCell,
+            OneCell,
+            page.IsVisible(!disconnected).WithKey("page"),
+            disconnected ? DisconnectedView.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())).WithKey("disconnected") : null);
+}
+
+/// <param name="Route">The route the navigation host shows.</param>
+/// <param name="LeaveDetail">What a detail page calls to go back to its list, with an optional note for it.</param>
+internal sealed record RoutePageProps(AppRoute Route, Action<string?> LeaveDetail);
+
+/// <summary>
+/// The page of one route (<see cref="App.RouteToPage"/>), so the navigation host's root for a route is always this component. The host
+/// keeps a page whose root element changes type, and every element under it, alive for good: the Containers list and the disconnected
+/// view swapped places on each switch of connection, and each switch kept one more page with its native controls (about 17 MB).
+/// </summary>
+internal sealed class RoutePage : EngineStateComponent<RoutePageProps>
+{
+    public override Element Render() => App.RouteToPage(Props.Route, UseEngineState(), Props.LeaveDetail);
 }
