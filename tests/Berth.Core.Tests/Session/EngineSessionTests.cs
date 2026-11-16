@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Berth.Engine;
 using Berth.Engine.Models;
 using Berth.Session;
+using Berth.Text;
 using Microsoft.Extensions.Time.Testing;
 
 namespace Berth.Tests.Session;

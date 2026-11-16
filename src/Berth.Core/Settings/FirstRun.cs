@@ -1,7 +1,7 @@
 using System.Net;
-using Berth.Settings;
+using Berth.Connections;
 
-namespace Berth.Connections;
+namespace Berth.Settings;
 
 /// <summary>The settings Berth starts with when there are none: one connection, from <c>DOCKER_HOST</c> when it holds an address Berth can use, otherwise the default named pipe.</summary>
 public static class FirstRun

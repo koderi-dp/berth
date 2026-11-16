@@ -3,35 +3,100 @@ using System.Text.RegularExpressions;
 namespace Berth.Tests;
 
 /// <summary>
-/// Core's layers depend one way (see the layout section of <c>AGENTS.md</c>). One assembly gives no compiler check, so these
-/// tests read the source files.
+/// Core's folders depend one way (the table in the layout section of <c>AGENTS.md</c>, row for row with <see cref="Layers"/>). One
+/// assembly gives no compiler check, so these tests read the source files.
 /// </summary>
-public sealed class LayerTests
+public sealed partial class LayerTests
 {
-    [Theory]
-    [InlineData("Engine", "Presentation")]
-    [InlineData("Engine", "Session")]
-    [InlineData("Engine", "State")]
-    [InlineData("Engine", "Settings")]
-    [InlineData("Session", "Presentation")]
-    [InlineData("State", "Presentation")]
-    [InlineData("State", "Session")]
-    public void A_layer_does_not_reference_a_layer_above_it(string folder, string forbidden)
+    /// <summary>Each folder of <c>src/Berth.Core</c> and the folders it may reference; every other folder is out of bounds.</summary>
+    public static TheoryData<string, string[]> Layers => new()
     {
-        // The full name anywhere, or the short name used as a qualifier (code under namespace Berth.X can write Presentation.Y).
-        var reference = new Regex($@"\bBerth\.{forbidden}\b|(?<![\w.]){forbidden}\.[A-Z]");
-        var root = Path.Combine(RepositoryRoot(), "src", "Berth.Core", folder);
+        { "Connections", [] },
+        { "Transport", ["Connections"] },
+        { "Engine", ["Connections", "Transport"] },
+        { "Text", ["Engine"] },
+        { "State", ["Engine"] },
+        { "Session", ["Engine", "State", "Text"] },
+        { "Presentation", ["Engine", "State", "Session", "Text"] },
+        { "Settings", ["Connections", "State", "Storage"] },
+        { "Logging", [] },
+        { "Storage", [] },
+    };
 
-        var offenders = Directory.Exists(root)
-            ? Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
-                .Where(file => reference.IsMatch(File.ReadAllText(file)))
-                .Select(file => Path.GetRelativePath(root, file))
-                .ToList()
-            : [];
+    private static readonly string[] Folders = [.. Layers.Select(row => (string)row[0])];
 
-        Assert.True(Directory.Exists(root), $"src/Berth.Core/{folder} not found");
+    [Theory]
+    [MemberData(nameof(Layers))]
+    public void A_folder_references_only_the_folders_it_may_use(string folder, string[] allowed)
+    {
+        var offenders = new List<string>();
+        foreach (var other in Folders.Except([folder, .. allowed]))
+        {
+            var reference = Reference(other);
+            offenders.AddRange(
+                SourceFiles(folder)
+                    .Where(file => reference.IsMatch(File.ReadAllText(file)))
+                    .Select(file => $"{Path.GetRelativePath(CoreRoot, file)} uses Berth.{other}"));
+        }
+
         Assert.Empty(offenders);
     }
+
+    [Fact]
+    public void Every_folder_of_core_is_in_the_table()
+    {
+        var folders = Directory.EnumerateDirectories(CoreRoot)
+            .Select(Path.GetFileName)
+            .Where(name => name is not ("bin" or "obj"))
+            .Order();
+
+        Assert.Equal(Folders.Order(), folders);
+    }
+
+    [Fact]
+    public void Every_file_is_in_the_namespace_of_its_folder()
+    {
+        var wrong = Folders
+            .SelectMany(SourceFiles)
+            .Where(file =>
+            {
+                var folder = Path.GetRelativePath(CoreRoot, Path.GetDirectoryName(file)!).Replace(Path.DirectorySeparatorChar, '.');
+                return NamespaceLine().Match(File.ReadAllText(file)).Groups[1].Value != "Berth." + folder;
+            })
+            .Select(file => Path.GetRelativePath(CoreRoot, file));
+
+        Assert.Empty(wrong);
+    }
+
+    private static string CoreRoot { get; } = Path.Combine(RepositoryRoot(), "src", "Berth.Core");
+
+    // A folder that does not exist has no files here; Every_folder_of_core_is_in_the_table reports it.
+    private static IEnumerable<string> SourceFiles(string folder) =>
+        Directory.Exists(Path.Combine(CoreRoot, folder))
+            ? Directory.EnumerateFiles(Path.Combine(CoreRoot, folder), "*.cs", SearchOption.AllDirectories)
+            : [];
+
+    /// <summary>
+    /// A reference to namespace <c>Berth.{folder}</c>: its full name, or its short name followed by one of its types or child
+    /// namespaces (code in another <c>Berth.*</c> namespace can write <c>Presentation.LogView</c>). The short name alone is not
+    /// enough: <c>State.Running</c> is an ordinary property access.
+    /// </summary>
+    private static Regex Reference(string folder)
+    {
+        var root = Path.Combine(CoreRoot, folder);
+        var names = SourceFiles(folder)
+            .SelectMany(file => TypeDeclaration().Matches(File.ReadAllText(file)).Select(m => m.Groups[1].Value))
+            .Concat(Directory.Exists(root) ? Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).Select(dir => new DirectoryInfo(dir).Name) : [])
+            .Distinct()
+            .Select(Regex.Escape);
+        return new Regex($@"\bBerth\.{folder}\b|(?<![\w.]){folder}\.(?:{string.Join('|', names)})\b");
+    }
+
+    [GeneratedRegex(@"\b(?:class|record|struct|enum|interface)\s+([A-Z]\w*)")]
+    private static partial Regex TypeDeclaration();
+
+    [GeneratedRegex(@"^namespace\s+([\w.]+)\s*;", RegexOptions.Multiline)]
+    private static partial Regex NamespaceLine();
 
     private static string RepositoryRoot()
     {

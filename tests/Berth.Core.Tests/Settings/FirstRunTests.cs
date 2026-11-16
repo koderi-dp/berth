@@ -1,6 +1,7 @@
 using Berth.Connections;
+using Berth.Settings;
 
-namespace Berth.Tests.Connections;
+namespace Berth.Tests.Settings;
 
 public sealed class FirstRunTests
 {

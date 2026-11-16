@@ -16,25 +16,27 @@ are not built yet.
 ```
 Berth.slnx                  the solution: /src/ (Berth.App, Berth.Core), /tests/
 src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; pure logic, unit-tested (root namespace Berth)
-  Connections/              ConnectionProfile, EngineAddress (tcp:// and npipe:// parsing), FirstRun, ConnectionDraft (editor logic)
-  Settings/                 AppSettings, SettingsStore (atomic save, damaged-file handling, first-run save), SettingsFile (the
-                            tolerant read shape and its checks), SettingsJson, ConnectionEdits
+  Connections/              ConnectionProfile, EngineAddress (tcp:// and npipe:// parsing), ConnectionDraft (editor logic)
+  Settings/                 AppSettings, SettingsStore (atomic save, damaged-file handling, first-run save), FirstRun (the
+                            settings when there are none), SettingsFile (the tolerant read shape and its checks),
+                            SettingsJson, ConnectionEdits
   Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list, actions, event stream, inspect,
                             logs (StreamLogsAsync), stats (StreamStatsAsync); EngineHttp, EngineJson (source-generated),
                             ApiVersion, ConnectionTester, EngineTime, JsonLines (line-delimited JSON streams), LogFrames (the
                             engine's multiplexed log framing), LogLines (frames or TTY text to LogLine), AnsiText (terminal
-                            output to plain text), StatsMath (CPU and memory from a raw stats line), DockerRunCommand (the
-                            `docker run` command of an inspected container, PowerShell or bash quoting; ShellKind),
+                            output to plain text), StatsMath (CPU and memory from a raw stats line),
                             Models/ (ContainerDetails/ContainerInspection, LogLine, StatsSample)
-  State/                    value types that hold what a session gathered and that both Session and Presentation read:
-                            LogBuffer (last 10,000 lines), StatsHistory (last 120 samples, as chart series)
+  Text/                     text made from engine records for the user to paste: DockerRunCommand (the `docker run`
+                            command of an inspected container, PowerShell or bash quoting; ShellKind)
+  State/                    value types that more than one layer holds or reads: LogBuffer (last 10,000 lines),
+                            StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
                             stats), EngineSession (runs the reducer and its effects; reports failures to an optional error
                             sink; opens detail sessions on its current connection), Backoff;
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container)
-  Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSort, ContainerStatus, BulkSelection,
+  Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
                             RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat; detail page: LogView, LogSearch,
                             InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
                             and CPU column texts), DetailPage (the detail page's lifecycle: when it opens, closes, refreshes
@@ -68,19 +70,30 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
 tests/Berth.Core.Tests/     xunit tests for Core; Integration/ holds the tests that need a real engine
 ```
 
-Core's layers depend one way, never back up (one assembly gives no compiler check, so
-`tests/Berth.Core.Tests/LayerTests.cs` reads the source and fails on a reference upward):
+Core's folders depend one way. Each folder may reference only the folders in its row; one
+assembly gives no compiler check, so `tests/Berth.Core.Tests/LayerTests.cs` holds the same
+table, reads the source and fails on any other reference. It also fails when a folder is not in
+the table or a file's namespace is not its folder's.
 
-- `Engine` depends on nothing in Core but `Connections` and `Transport`. Text utilities the engine
-  client needs (`AnsiText`) live in `Engine`.
-- `State` holds value types that both sessions and presentation need (`LogBuffer`,
-  `StatsHistory`). It depends on `Engine` models only, never on `Session` or `Presentation`.
-- `Session` depends on `Engine` and `State`, never on `Presentation`.
-- `Presentation` depends on `Engine`, `State` and `Session`'s state records (`EngineState`,
-  `DetailState` and what they hold), never the reverse.
+| Folder | May reference |
+|---|---|
+| `Connections` | nothing |
+| `Transport` | `Connections` |
+| `Engine` | `Connections`, `Transport` |
+| `Text` | `Engine` (the model records it formats) |
+| `State` | `Engine` |
+| `Session` | `Engine`, `State`, `Text` |
+| `Presentation` | `Engine`, `State`, `Session`, `Text` |
+| `Settings` | `Connections`, `State`, `Storage` |
+| `Logging` | nothing |
+| `Storage` | nothing |
 
-A type that a lower layer needs moves down (to `Engine` or `State`); a lower layer never
-reaches up.
+Text the engine client needs itself (`AnsiText`) lives in `Engine`, since `Engine` may not use
+`Text`. `Presentation` reads only `Session`'s state records (`EngineState`, `DetailState` and
+what they hold); the test cannot tell those from the runtime, so a review must. A type that a
+lower folder needs moves down (to `Engine`, `Text` or `State`), never the reference up: the
+saved sort choice is `State.ContainerSort`, and how the table sorts by it is
+`Presentation.ContainerSorting`.
 
 Pure logic goes in Core and is unit-tested; the app project holds UI, interop and wiring only.
 Where the original plan put logic in the app, it now lives in Core: the connection editor's
@@ -268,7 +281,7 @@ wrong or could be better before they do.
     `control-styles.md`, `code-review-checklist.md`) under the package folder named in the
     next section.
 - **Rules that have already bitten here:**
-  - Every text box is `Widgets.TextField` (or `Widgets.SearchBox`, built on it): uncontrolled,
+  - Every editable text box is `Widgets.TextField` (or `Widgets.SearchBox`, built on it): uncontrolled,
     it starts from its value when it mounts and reports every change. A controlled box dropped
     the first edit twice in phase 2. A box whose value can change from outside it is mounted
     again (a new key) to show the change, as the connection editor's address is when TLS turns on.
