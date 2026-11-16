@@ -309,7 +309,7 @@ never reaches the new screen.
 **Keys.** With the focus in the terminal every key goes to the shell, Escape and Alt+Left
 included (`ShellKeys` never acts while a WebView2 is on the focus path: `ShortcutFocus`). F6
 leaves for the tab strip; Ctrl+C copies when text is selected and interrupts otherwise;
-Ctrl+Shift+C and Ctrl+Insert copy; Ctrl+V and Shift+Insert paste. The page matches `e.code`. Browser accelerator keys (F5,
+Ctrl+Shift+C and Ctrl+Insert copy; Ctrl+V and Shift+Insert paste. The page matches the letter the layout gives (`e.key`) and falls back to the key position (`e.code`) only on a non-Latin layout; AltGr (Ctrl+Alt) never copies or pastes. Browser accelerator keys (F5,
 Ctrl+F, Ctrl+P, Ctrl+R) are off.
 
 **The host component, `TerminalView`.** It builds its `WebView2()` element once per name and

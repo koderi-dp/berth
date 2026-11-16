@@ -255,7 +255,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
         }
 
         // Starting or resuming the container from here opens a terminal once it runs: how the last shell ended is cleared, and the
-        // tab starts a shell by itself again.
+        // tab starts a fixed shell by itself again (a custom command waits for Run).
         void BeforeContainerAction()
         {
             link.Session?.StopExec();

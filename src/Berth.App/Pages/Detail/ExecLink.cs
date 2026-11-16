@@ -128,7 +128,7 @@ internal sealed class ExecLink
     /// <summary>
     /// Attaches the bridge to <paramref name="session"/> when it is this container's, and detaches it from the one before. A new
     /// session numbers its shells from 1 again, so the bridge starts over; and unless the old one lost its connection, the tab
-    /// starts a shell by itself again (<see cref="ExecView.StartedOnceAfterNewSession"/>).
+    /// starts a fixed shell by itself again (<see cref="ExecView.StartedOnceAfterNewSession"/>); a custom command waits for Run.
     /// </summary>
     public void Follow(ContainerDetailSession? session)
     {
