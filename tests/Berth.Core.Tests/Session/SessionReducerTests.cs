@@ -445,6 +445,19 @@ public sealed class SessionReducerTests
         Assert.Empty(effects);
     }
 
+    [Fact]
+    public void A_failed_clipboard_copy_shows_in_the_error_bar_connected_or_not()
+    {
+        foreach (var before in new[] { Connected(), EngineState.Initial })
+        {
+            var (state, effects) = Reduce(before, new ClipboardCopyFailed());
+
+            Assert.Equal("Could not copy to the clipboard. Try again.", state.ActionError);
+            Assert.Equal(before with { ActionError = "Could not copy to the clipboard. Try again." }, state);
+            Assert.Empty(effects);
+        }
+    }
+
     // Copy docker run from the list: the list does not have the container's settings, so the session inspects it first.
 
     [Theory]

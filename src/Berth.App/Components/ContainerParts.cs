@@ -110,11 +110,23 @@ internal static class ContainerParts
             ? HyperlinkButton(port.Text, url).Padding(4, 2).ToolTip(url.ToString())
             : Body(port.Text).TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
 
+    /// <summary>
+    /// Puts <paramref name="text"/> on the clipboard. When that fails (another program holds the clipboard) the failure is logged by its
+    /// exception type, never with the text, and the error bar says so.
+    /// </summary>
     public static void CopyToClipboard(string text)
     {
-        var package = new DataPackage();
-        package.SetText(text);
-        Clipboard.SetContent(package);
+        try
+        {
+            var package = new DataPackage();
+            package.SetText(text);
+            Clipboard.SetContent(package);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("copying to the clipboard failed", ex);
+            AppServices.Current.Session.Dispatch(new ClipboardCopyFailed());
+        }
     }
 
     private static MenuEntry[] MenuEntries(IReadOnlyList<IReadOnlyList<RowAction>> sections, Action<RowAction> run) =>

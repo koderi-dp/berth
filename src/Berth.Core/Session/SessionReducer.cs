@@ -12,6 +12,9 @@ public static class SessionReducer
 {
     public static readonly TimeSpan ReloadDebounce = TimeSpan.FromMilliseconds(150);
 
+    /// <summary>What the error bar says when a copy to the clipboard failed.</summary>
+    public const string ClipboardFailedText = "Could not copy to the clipboard. Try again.";
+
     /// <summary>Container event actions that change what the list shows.</summary>
     private static readonly ImmutableHashSet<string> ReloadActions = ImmutableHashSet.Create(
         StringComparer.Ordinal,
@@ -137,6 +140,9 @@ public static class SessionReducer
                 return failure.EngineUnreachable
                     ? Lose(state, failure.Message)
                     : (state with { ActionError = failure.Message }, None);
+
+            case ClipboardCopyFailed:
+                return (state with { ActionError = ClipboardFailedText }, None);
 
             case ActionErrorDismissed when state.ActionError is not null:
                 return (state with { ActionError = null }, None);

@@ -144,21 +144,13 @@ internal sealed class AppServices
 
     /// <summary>
     /// Puts <paramref name="text"/> on the clipboard on the UI thread, unless <paramref name="session"/> was replaced in the meantime (the
-    /// user switched to another engine). The text is never logged: it may hold environment values.
+    /// user switched to another engine). The text is never logged: it may hold environment values. A failure shows in the error bar.
     /// </summary>
     private void CopyFromSession(EngineSession session, string text) =>
         Microsoft.UI.Reactor.ReactorApp.UIDispatcher?.TryEnqueue(() =>
         {
-            if (!ReferenceEquals(session, Session))
-                return;
-            try
-            {
+            if (ReferenceEquals(session, Session))
                 Components.ContainerParts.CopyToClipboard(text);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Error("copying to the clipboard failed", ex);
-            }
         });
 
     private void ReplaceDetail(ContainerDetailSession? next)

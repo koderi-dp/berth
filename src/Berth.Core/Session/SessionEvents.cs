@@ -53,3 +53,6 @@ public sealed record RunCommandInspected(string Id, ShellKind Shell, ContainerDe
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
 public sealed record RunCommandFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent;
+
+/// <summary>Copying to the clipboard failed (another program held it); the error bar says so.</summary>
+public sealed record ClipboardCopyFailed : SessionEvent;

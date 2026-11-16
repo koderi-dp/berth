@@ -119,10 +119,11 @@ internal sealed class App : EngineStateComponent
             .Tall()
             .Flex(shrink: 0);
 
+        // Keyed, so a bar coming or going (the error bar after a failed copy) does not move the pages to another slot and mount them again.
         var content = FlexColumn(
-            SetAsideBar(settingsSetAside, () => setSettingsSetAside(false)),
-            ErrorBar.Render(state.ActionError, () => AppServices.Current.Session.Dispatch(new ActionErrorDismissed())),
-            NoticeBar(nav.CurrentRoute == AppRoute.Containers ? notice : null, () => setNotice(null)),
+            SetAsideBar(settingsSetAside, () => setSettingsSetAside(false))?.WithKey("set-aside"),
+            ErrorBar.Render(state.ActionError, () => AppServices.Current.Session.Dispatch(new ActionErrorDismissed()))?.WithKey("error"),
+            NoticeBar(nav.CurrentRoute == AppRoute.Containers ? notice : null, () => setNotice(null))?.WithKey("notice"),
             (NavigationHost(nav, route => RouteToPage(route, state, LeaveDetail)) with
                 {
                     // A page left stays mounted, so the list keeps its search, sort and scroll while a detail page is open. The cache
@@ -131,7 +132,8 @@ internal sealed class App : EngineStateComponent
                     CacheMode = NavigationCacheMode.Enabled,
                     CacheSize = 2,
                 })
-                .Flex(grow: 1, basis: 0));
+                .Flex(grow: 1, basis: 0)
+                .WithKey("pages"));
 
         var items = new[] { NavItem("Containers", icon: "Library", tag: ContainersTag) };
         var navView = (NavigationView(items, content) with
