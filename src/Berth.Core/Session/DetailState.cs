@@ -46,6 +46,9 @@ public sealed record DetailState(
     /// <summary>The Exec tab's shell: its status and its command (in memory only), never its bytes.</summary>
     public ExecState Exec { get; init; } = ExecState.None;
 
+    /// <summary>The Files tab: the folder shown and its listing.</summary>
+    public FilesState Files { get; init; } = FilesState.Initial;
+
     /// <summary>A page for <paramref name="containerId"/> that has not opened yet.</summary>
     public static DetailState Initial(string containerId) => new(
         containerId,

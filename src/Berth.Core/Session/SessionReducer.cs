@@ -201,7 +201,7 @@ public static partial class SessionReducer
             }
 
             default:
-                return ReduceEngineControl(state, e) ?? ReduceResources(state, e, connected);
+                return ReduceEngineControl(state, e) ?? ReduceTransfers(state, e, connected) ?? ReduceResources(state, e, connected);
         }
     }
 

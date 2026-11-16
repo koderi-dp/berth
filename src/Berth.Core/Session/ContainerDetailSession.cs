@@ -239,6 +239,10 @@ public sealed partial class ContainerDetailSession : IAsyncDisposable
             case ResizeExecEffect resize:
                 StartResize(resize);
                 break;
+
+            case ListFilesEffect list:
+                StartListing(list);
+                break;
         }
     }
 

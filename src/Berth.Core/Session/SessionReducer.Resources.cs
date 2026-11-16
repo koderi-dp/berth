@@ -225,7 +225,15 @@ public static partial class SessionReducer
             ? creating with { Status = VolumeCreateStatus.Interrupted }
             : next.VolumeCreate;
 
-        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false, Again = false }, ImageInspect = null, VolumeCreate = create };
+        return next with
+        {
+            Pulls = pulls,
+            Run = run,
+            DiskUsage = next.DiskUsage with { Loading = false, Again = false },
+            ImageInspect = null,
+            VolumeCreate = create,
+            Transfers = InterruptTransfers(next.Transfers),
+        };
     }
 
     /// <summary>Reads every list whose page has been shown, and the disk use once it has been asked for: the connection is new.</summary>

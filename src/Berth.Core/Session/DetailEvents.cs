@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
+using Berth.Files;
 
 namespace Berth.Session;
 
@@ -55,6 +56,23 @@ public sealed record ExecEnded(int Generation, int? ExitCode, bool HadInput, boo
 /// <summary>Opening the shell or its stream failed; <see cref="Message"/> is the engine's or the connection's, as-is.</summary>
 public sealed record ExecFailed(int Generation, string Message) : DetailEvent;
 
+/// <summary>Something that happened to the Files tab.</summary>
+public abstract record FilesEvent : DetailEvent;
+
+/// <summary>Show the folder <see cref="Path"/>: read its listing.</summary>
+public sealed record FilesBrowseRequested(ContainerPath Path) : FilesEvent;
+
+/// <summary>Read the folder shown again (the first time: the root).</summary>
+public sealed record FilesRefreshRequested : FilesEvent;
+
+public sealed record FilesListed(int Generation, FileListing Listing) : FilesEvent;
+
+/// <summary>The exec listing gave no listing; the archive listing is tried.</summary>
+public sealed record ExecListingFailed(int Generation, ExecListingFailure Failure) : FilesEvent;
+
+/// <summary>The archive listing failed: <see cref="Message"/> is the engine's or the connection's, as-is.</summary>
+public sealed record FilesListFailed(int Generation, string Message, bool NotAFolder) : FilesEvent;
+
 /// <summary>Work <see cref="DetailReducer"/> asks the detail session runtime to carry out.</summary>
 public abstract record DetailEffect;
 
@@ -89,3 +107,9 @@ public sealed record FollowStatsEffect(int Generation) : DetailEffect;
 
 /// <summary>Stop the log and stats streams started so far; what they still send is ignored.</summary>
 public sealed record StopDetailStreamsEffect : DetailEffect;
+
+/// <summary>
+/// List <see cref="Path"/> the way <see cref="Way"/> says; answers with FilesListed, or ExecListingFailed (exec) or FilesListFailed
+/// (archive), all carrying <see cref="Generation"/>.
+/// </summary>
+public sealed record ListFilesEffect(int Generation, ContainerPath Path, ListingWay Way) : DetailEffect;

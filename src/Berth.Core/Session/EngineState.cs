@@ -64,6 +64,9 @@ public sealed record EngineState(
     /// <summary>Starting and stopping the engine with the connection's commands; <see cref="EngineControlState.None"/> when it has none.</summary>
     public EngineControlState EngineControl { get; init; } = EngineControlState.None;
 
+    /// <summary>The downloads and uploads of the Files tab, by their ID (a <see cref="Ticket"/>), until dismissed.</summary>
+    public ImmutableDictionary<int, FileTransfer> Transfers { get; init; } = ImmutableDictionary<int, FileTransfer>.Empty;
+
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,
         Version: null,

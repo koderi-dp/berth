@@ -72,7 +72,11 @@ public static partial class DetailReducer
                     ConnectionLost = true,
                     InspectGeneration = state.InspectGeneration + 1,
                     Exec = EndExec(state.Exec, stop: false).Exec,
+                    Files = FilesAfterConnectionLost(state.Files),
                 }, None);
+
+            case FilesEvent files:
+                return ReduceFiles(state, files);
 
             default:
                 return ReduceExec(state, e);

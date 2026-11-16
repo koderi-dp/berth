@@ -272,7 +272,8 @@ public sealed partial class EngineSession : IAsyncDisposable
                 break;
 
             default:
-                StartResourceEffect(effect);
+                if (!StartTransferEffect(effect))
+                    StartResourceEffect(effect);
                 break;
         }
     }
@@ -288,6 +289,7 @@ public sealed partial class EngineSession : IAsyncDisposable
         _stats?.Dispose();
         _stats = null;
         RetireResources();
+        RetireTransfers();
         if (_connection is null)
             return;
 

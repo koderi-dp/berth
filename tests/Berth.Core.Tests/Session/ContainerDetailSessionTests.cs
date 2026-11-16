@@ -7,7 +7,7 @@ using Microsoft.Extensions.Time.Testing;
 
 namespace Berth.Tests.Session;
 
-public sealed class ContainerDetailSessionTests
+public sealed partial class ContainerDetailSessionTests
 {
     /// <summary>Only a safety net so a broken runtime fails the test instead of hanging it; tests never wait for time.</summary>
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(10);
