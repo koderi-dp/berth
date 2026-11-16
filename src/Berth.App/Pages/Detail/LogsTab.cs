@@ -52,6 +52,9 @@ internal sealed class LogsTab : Component<LogsTabProps>
 
     private static readonly Dictionary<(string Key, bool Dark), Brush?> ThemeBrushes = [];
 
+    /// <summary>The mark each row not yet in the window still has to apply when it loads; at most one per row, the latest render's.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBlock, RoutedEventHandler> PendingMarks = new();
+
     private static FontFamily? _mono;
 
     /// <summary>Cascadia Mono, or Consolas where it is not installed; one instance for every line.</summary>
@@ -259,19 +262,23 @@ internal sealed class LogsTab : Component<LogsTabProps>
     /// </summary>
     private static void Mark(TextBlock block, IReadOnlyList<LogMatch> matches, int first, int count, int offset, int current, bool appDark)
     {
+        // Only this render's line and matches may mark the block: drop a mark still waiting from an earlier render.
+        if (PendingMarks.TryGetValue(block, out var pending))
+        {
+            block.Loaded -= pending;
+            PendingMarks.Remove(block);
+        }
+
         block.TextHighlighters.Clear();
         if (count == 0)
             return;
 
         if (!block.IsLoaded)
         {
-            void OnLoaded(object sender, RoutedEventArgs e)
-            {
-                block.Loaded -= OnLoaded;
-                Mark(block, matches, first, count, offset, current, appDark);
-            }
+            void OnLoaded(object sender, RoutedEventArgs e) => Mark(block, matches, first, count, offset, current, appDark);
 
             block.Loaded += OnLoaded;
+            PendingMarks.Add(block, OnLoaded);
         }
 
         var dark = block.IsLoaded ? block.ActualTheme == ElementTheme.Dark : appDark;
