@@ -130,8 +130,9 @@ internal sealed class AppServices
         SettingsChanged?.Invoke();
 
         var connection = ActiveConnection(next);
-        if (connection != ActiveConnection(old))
-            ReplaceSession(connection);
+        var previous = ActiveConnection(old);
+        if (connection != previous)
+            ReplaceSession(connection, previous);
         return saved;
     }
 
@@ -183,8 +184,17 @@ internal sealed class AppServices
             _ = Task.Run(() => DisposeAsync(old));
     }
 
-    private void ReplaceSession(ConnectionProfile connection)
+    /// <summary>
+    /// Replaces the session by one for <paramref name="connection"/>, which connects at once; except when it is
+    /// <paramref name="previous"/> edited without a change of address and with engine control still on, and Berth had stopped its
+    /// engine: the stop holds (<see cref="EngineStoppedCarriedOver"/>) and nothing connects until Start engine or Retry. An engine
+    /// command still running in the old session runs to its end; its result is dropped with that session.
+    /// </summary>
+    private void ReplaceSession(ConnectionProfile connection, ConnectionProfile previous)
     {
+        var stoppedByBerth = Session.State.EngineControl.StoppedByBerth;
+        var sameEngine = previous.Id == connection.Id && previous with { Name = connection.Name, EngineControl = connection.EngineControl } == connection;
+
         // The detail session runs on the old connection; the page goes back to the list (App follows SessionChanged).
         CloseDetail();
         var next = CreateSession(connection);
@@ -192,9 +202,19 @@ internal sealed class AppServices
         SessionNumber++;
         AppLog.Write("connection switched");
         SessionChanged?.Invoke();
-        next.Dispatch(new ConnectRequested());
+        if (sameEngine && stoppedByBerth && connection.EngineControl is not null)
+            next.Dispatch(new EngineStoppedCarriedOver());
+        else
+            next.Dispatch(new ConnectRequested());
         _ = Task.Run(() => DisposeAsync(old));
     }
+
+    /// <summary>
+    /// Whether the connection <paramref name="id"/> is the active one and its engine command runs now: an edit of it would replace
+    /// its session, so the editor waits.
+    /// </summary>
+    public bool EngineCommandRunsFor(string? id) =>
+        id is not null && id == ActiveConnectionProfile.Id && Session.State.EngineControl.Running is not null;
 
     private static async Task DisposeAsync(IAsyncDisposable session)
     {

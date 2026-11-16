@@ -1,6 +1,7 @@
 using Berth.Components;
 using Berth.Connections;
 using Berth.Engine;
+using Berth.Hooks;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Reactor.Layout;
@@ -22,7 +23,7 @@ internal sealed record ConnectionEditorProps(ConnectionProfile? Editing, Action<
 /// <see cref="ConnectionDraft"/>; this is the view over it. Its text boxes are uncontrolled (<see cref="Widgets.TextField"/>): each
 /// starts from the draft when it is mounted and reports every change to it.
 /// </summary>
-internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
+internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorProps>
 {
     /// <summary>The outcome of a connection test: running (no message yet), or finished with the tester's message.</summary>
     private sealed record TestState(bool Running, bool Ok, string Message);
@@ -51,6 +52,10 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
                     _ = LoadDistrosAsync(setDistros);
             },
             draft.EngineControlOn);
+
+        // Saving the active connection replaces its session; while its start or stop command runs, that waits.
+        _ = UseEngineState();
+        var commandRuns = AppServices.Current.EngineCommandRunsFor(editing?.Id);
 
         var id = editing?.Id ?? "";
         var canBuild = draft.TryBuild(id, out _, out var buildError);
@@ -82,6 +87,7 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
                     : ToggleSwitch(draft.UseTls, on => Edit(d => d.WithTls(on)), header: "Use TLS").AutomationName("Use TLS").WithKey("tls"),
                 draft.UseTls && !draft.IsNamedPipe ? TlsFields(draft, tlsError, Edit).WithKey("tls-files") : null,
                 TestRow(test, canBuild, StartTest).WithKey("test"),
+                commandRuns ? ErrorText(EngineCommandRuns).WithKey("command-runs") : null,
                 ToggleSwitch(draft.EngineControlOn, on => Edit(d => d with { EngineControlOn = on }), header: "Engine control")
                     .AutomationName("Engine control")
                     .AutomationId("engine-control")
@@ -112,11 +118,11 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
             IsOpen = true,
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
-            IsPrimaryButtonEnabled = canBuild,
+            IsPrimaryButtonEnabled = canBuild && !commandRuns,
             OnClosed = result =>
             {
                 CancelTest(running);
-                if (result == ContentDialogResult.Primary && draft.TryBuild(editing?.Id ?? NewId(), out var profile, out _))
+                if (result == ContentDialogResult.Primary && !AppServices.Current.EngineCommandRunsFor(editing?.Id) && draft.TryBuild(editing?.Id ?? NewId(), out var profile, out _))
                     Props.OnSave(profile);
                 Props.OnDone();
             },
@@ -146,7 +152,10 @@ internal sealed class ConnectionEditor : Component<ConnectionEditorProps>
             });
 
     private const string CommandsNote =
-        "Berth runs these commands on this computer as you, without a shell, to start and stop this connection's engine.";
+        "Berth runs these commands on this computer as you, without a shell, to start and stop this connection's engine. A program " +
+        "named without a folder is looked for in Berth's folder, the Windows folders and PATH. A .bat or .cmd file needs cmd.exe /c.";
+
+    private const string EngineCommandRuns = "Wait for the engine command to finish.";
 
     /// <summary>
     /// The start and stop commands with their errors, the note on how they run, and "Use the WSL default" with the distribution picker.
