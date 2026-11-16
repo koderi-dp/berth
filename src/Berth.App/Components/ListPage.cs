@@ -99,23 +99,29 @@ internal static class ListPage
 
         // A grid, not a flex row: a flex row of buttons takes the whole width it is offered, which left the search box and the filter
         // none. The buttons take what they need at the right end; the search and the filter keep their widths at the left (compact: the
-        // search box gives up width first).
+        // search box gives up width first). Compact: a flex row in the star column holds the search box and the filter beside it, at the left as in the wide form; the box
+        // keeps its usual width while there is room and shrinks to its minimum when not, and the filter keeps its width.
         var searchCell = compact
-            // A flex row in the cell: the box keeps its usual width while there is room, at the left, and shrinks to its minimum when not.
-            ? FlexRow(search.Width(double.NaN).MinWidth(SearchMinWidth).Flex(grow: 0, shrink: 1, basis: SearchWidth))
+            ? (FlexRow(
+                    search.Width(double.NaN).MinWidth(SearchMinWidth).Flex(grow: 0, shrink: 1, basis: SearchWidth),
+                    filter?.Margin(16, 0, 0, 0).Flex(shrink: 0))
+                with
+                {
+                    AlignItems = FlexAlign.Center,
+                })
             : search;
         return Grid(
                 compact ? CompactToolbarColumns : ToolbarColumns,
                 ToolbarRows,
                 searchCell.VAlign(VerticalAlignment.Center).Margin(0, 0, compact ? 16 : 24, 0).Grid(column: 0),
-                filter?.VAlign(VerticalAlignment.Center).Margin(0, 0, compact ? 16 : 24, 0).Grid(column: 1),
+                compact ? null : filter?.VAlign(VerticalAlignment.Center).Margin(0, 0, 24, 0).Grid(column: 1),
                 HStack(8, [.. buttons.OfType<Element>()]).VAlign(VerticalAlignment.Center).Grid(column: 3))
             .Flex(shrink: 0);
     }
 
     private static readonly GridSize[] ToolbarColumns = [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto];
 
-    /// <summary>Compact: the search box's column takes what is left (up to its usual width), so the buttons are never pushed out.</summary>
+    /// <summary>Compact: the search box and filter's column takes what is left, so the buttons are never pushed out.</summary>
     private static readonly GridSize[] CompactToolbarColumns = [GridSize.Star(), GridSize.Auto, GridSize.Px(0), GridSize.Auto];
 
     private static readonly GridSize[] ToolbarRows = [GridSize.Auto];
@@ -188,6 +194,15 @@ internal static class ListPage
             })
             .Flex(shrink: 0);
     }
+
+    /// <summary>
+    /// A line of totals under the title without a refresh button (the networks', which the engine keeps fresh), as tall as
+    /// <see cref="UsageLine"/> so the toolbar sits at the same height on every list page.
+    /// </summary>
+    public static Element SummaryLine(string text, string automationId) =>
+        (FlexRow(Body(text).Foreground(Theme.SecondaryText).AutomationId(automationId)) with { AlignItems = FlexAlign.Center })
+            .MinHeight(24)
+            .Flex(shrink: 0);
 
     /// <summary>
     /// The usage line under the title (<paramref name="text"/>: "67 MB in use of 1.2 GB · 12 images", AutomationId

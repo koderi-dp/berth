@@ -103,7 +103,7 @@ internal sealed class NetworksPage : ListPageComponent
         return ListPage.Render(
             "Networks",
             state,
-            summary: null,
+            ListPage.SummaryLine(NetworkRows.SummaryLine(state), "network-summary"),
             toolbar,
             ListPage.Bars(removalPanel, bulk),
             Table(state, rows, members, filter, checkedKeys, compact, connected, sort, handlers),

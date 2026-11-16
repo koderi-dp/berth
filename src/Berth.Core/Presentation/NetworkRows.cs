@@ -41,6 +41,19 @@ public static class NetworkRows
     /// <summary>The engine's own networks, which it refuses to remove.</summary>
     public static readonly ImmutableHashSet<string> BuiltInNames = ImmutableHashSet.Create(StringComparer.Ordinal, "bridge", "host", "none");
 
+    /// <summary>
+    /// The line under the page's title: how many networks and how many a container of any state is attached to;
+    /// "Reading the networks…" until the first list of the connection arrives with none kept from before.
+    /// </summary>
+    public static string SummaryLine(EngineState state)
+    {
+        var networks = state.Networks.Items;
+        if (!state.Networks.Loaded && networks.IsEmpty)
+            return "Reading the networks…";
+        var inUse = networks.Count(n => InUse.Network(n.Name, state.Containers));
+        return $"{(networks.Length == 1 ? "1 network" : $"{networks.Length} networks")} · {inUse} in use";
+    }
+
     /// <summary>Name, ascending.</summary>
     public static readonly ListSort<NetworkColumn> DefaultSort = new(NetworkColumn.Name, Descending: false);
 

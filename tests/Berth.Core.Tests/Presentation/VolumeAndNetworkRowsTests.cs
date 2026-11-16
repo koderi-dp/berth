@@ -176,4 +176,17 @@ public sealed class VolumeAndNetworkRowsTests
         Assert.True(Assert.Single(VolumeRows.From(state)).IsPending);
         Assert.True(Assert.Single(NetworkRows.From(state)).IsPending);
     }
+
+    [Fact]
+    public void The_networks_summary_counts_them_and_those_in_use()
+    {
+        var state = StateWith(
+            networks: [Network("1", "bridge"), Network("2", "host"), Network("3", "app"), Network("4", "old")],
+            containers: [User("web", networks: ["app", "bridge"])]);
+
+        Assert.Equal("4 networks · 2 in use", NetworkRows.SummaryLine(state));
+        Assert.Equal("1 network · 0 in use", NetworkRows.SummaryLine(StateWith(networks: [Network("1", "old")])));
+        var reading = state with { Networks = state.Networks with { Items = [], Status = state.Networks.Status with { Loaded = false } } };
+        Assert.Equal("Reading the networks…", NetworkRows.SummaryLine(reading));
+    }
 }
