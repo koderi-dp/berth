@@ -56,8 +56,9 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             thread-pool changes into one pending UI-thread callback), SettingsHook.cs (settings as an
                             external store)
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
-                            above a kept list), ErrorBar, Widgets, ContainerParts (action buttons, menus and state mark
-                            shared by a list row and the detail header), DeleteDialog, DetailHeader (breadcrumb, name, ID,
+                            above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
+                            RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
+                            row and the detail header), DeleteDialog, DetailHeader (breadcrumb, name, ID,
                             image, ports, status, actions), StatsStrip (total CPU and memory above the list)
   Pages/                    ContainersPage, ContainerRowView, SettingsPage, ConnectionEditor, ContainerDetailPage (header,
                             tab strip, keeps a detail session open while shown)

@@ -74,17 +74,17 @@ internal sealed class BindMountsTab : Component<BindMountsTabProps>
     {
         var windowsPath = InspectSections.WindowsPath(mount.Source);
         var host = windowsPath is not null && onThisMachine.Contains(windowsPath)
-            ? HyperlinkButton(OneLine(Body(mount.Source)), onClick: () => Open(windowsPath))
+            ? HyperlinkButton(Widgets.OneLine(Body(mount.Source)), onClick: () => Open(windowsPath))
                 .AutomationId($"bind-mount-open-{index}")
                 .AutomationName($"Open {windowsPath} in File Explorer")
                 .ToolTip($"Open {windowsPath} in File Explorer")
                 .Padding(0)
                 .HAlign(HorizontalAlignment.Left)
-            : (Element)OneLine(Body(mount.Source)).Foreground(Theme.PrimaryText).IsTextSelectionEnabled().ToolTip(mount.Source);
+            : (Element)Widgets.OneLine(Body(mount.Source)).Foreground(Theme.PrimaryText).IsTextSelectionEnabled().ToolTip(mount.Source);
 
         return Cells(
             host.Margin(0, 0, 16, 0),
-            OneLine(Body(mount.Destination)).Foreground(Theme.PrimaryText).IsTextSelectionEnabled().ToolTip(mount.Destination).Margin(0, 0, 16, 0),
+            Widgets.OneLine(Body(mount.Destination)).Foreground(Theme.PrimaryText).IsTextSelectionEnabled().ToolTip(mount.Destination).Margin(0, 0, 16, 0),
             Body(InspectSections.Access(mount)).Foreground(Theme.PrimaryText));
     }
 
@@ -110,7 +110,4 @@ internal sealed class BindMountsTab : Component<BindMountsTabProps>
         if (folder is not null)
             _ = Windows.System.Launcher.LaunchFolderPathAsync(folder);
     }
-
-    private static TextBlockElement OneLine(TextBlockElement text) =>
-        text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
 }

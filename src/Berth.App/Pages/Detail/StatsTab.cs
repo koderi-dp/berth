@@ -90,14 +90,7 @@ internal sealed class StatsTab : Component<StatsTabProps>
 
     /// <summary>The engine's message, as it gave it, when the stats could not be read; Retry opens the page's session again.</summary>
     private static Element FailureBar(StatsTabProps props) =>
-        (InfoBar(message: props.Error ?? "") with
-        {
-            IsOpen = true,
-            ActionButtonContent = "Retry",
-            OnActionButtonClick = () => AppServices.Current.OpenDetail(props.ContainerId),
-        })
-            .Error()
-            .IsClosable(false)
+        Widgets.RetryBar(props.Error ?? "", () => AppServices.Current.OpenDetail(props.ContainerId))
             .VAlign(VerticalAlignment.Top)
             .AutomationId("stats-error");
 

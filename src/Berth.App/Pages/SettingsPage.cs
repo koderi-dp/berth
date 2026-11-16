@@ -88,8 +88,8 @@ internal sealed class SettingsPage : Component
         var address = EngineAddress.Format(profile);
 
         var text = (FlexColumn(
-                OneLine(Widgets.StrongText(profile.Name)).ToolTip(profile.Name),
-                OneLine(Caption(address)).Foreground(Theme.SecondaryText).ToolTip(address))
+                Widgets.OneLine(Widgets.StrongText(profile.Name)).ToolTip(profile.Name),
+                Widgets.OneLine(Caption(address)).Foreground(Theme.SecondaryText).ToolTip(address))
             with
             {
                 RowGap = 2,
@@ -122,9 +122,6 @@ internal sealed class SettingsPage : Component
                 }))
             .Padding(16, 8, 8, 8);
     }
-
-    private static TextBlockElement OneLine(TextBlockElement text) =>
-        text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
 
     /// <summary>The confirmation before a connection is deleted; it is always in the tree and opens while there is one to delete.</summary>
     private static Element DeleteDialog(ConnectionProfile? profile, Action<string> onDelete, Action onDone) =>

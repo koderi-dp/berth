@@ -1,6 +1,11 @@
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Text;
 using Microsoft.UI.Reactor.Core;
+using Microsoft.UI.Reactor.Input;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Windows.System;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Components;
@@ -101,4 +106,71 @@ internal static class Widgets
             .SubtleButton()
             .AutomationName(label)
             .ToolTip(label);
+
+    /// <summary>
+    /// A text box for every text field in the app. It is uncontrolled: it owns its text, starts from <paramref name="value"/> when it
+    /// is mounted and reports every change to <paramref name="onChanged"/>; nothing writes over it afterwards. A controlled box, whose
+    /// text Reactor writes, drops the first edit after it mounts and after its page comes back from the navigation cache: Reactor
+    /// takes that change for the echo of its own write and puts the old text back. Setting the text on mount reports the same value
+    /// back, which changes nothing.
+    /// </summary>
+    public static TextBoxElement TextField(string value, Action<string> onChanged, string? placeholder = null, string? header = null) =>
+        TextBox(onChanged: onChanged, placeholderText: placeholder, header: header)
+            .OnMount(control => StartFrom(control, value));
+
+    /// <summary>
+    /// A search box: a <see cref="TextField"/> that tells <paramref name="onFocusChanged"/> when it gets and loses the focus and is
+    /// reached through <paramref name="box"/> (to focus it, or to empty it). With <paramref name="clearOnEscape"/>, Escape in a box
+    /// that has text empties it (which reports the empty text). Every other key goes to <paramref name="onKeyDown"/>.
+    /// </summary>
+    public static TextBoxElement SearchBox(
+        string value,
+        Action<string> onChanged,
+        string placeholder,
+        ElementRef<TextBox> box,
+        Action<bool> onFocusChanged,
+        bool clearOnEscape = false,
+        Action<KeyRoutedEventArgs>? onKeyDown = null)
+    {
+        var field = TextField(value, onChanged, placeholder)
+            .Ref(box)
+            .OnGotFocus((_, _) => onFocusChanged(true))
+            .OnLostFocus((_, _) => onFocusChanged(false));
+        if (!clearOnEscape && onKeyDown is null)
+            return field;
+
+        return field.OnKeyDown((sender, e) =>
+        {
+            if (clearOnEscape && e.Key == VirtualKey.Escape && sender is TextBox { Text.Length: > 0 } text)
+            {
+                text.Text = "";
+                e.Handled = true;
+                return;
+            }
+
+            onKeyDown?.Invoke(e);
+        });
+    }
+
+    /// <summary>One line of text that ends in an ellipsis when it does not fit (the body styles wrap by default).</summary>
+    public static TextBlockElement OneLine(TextBlockElement text) =>
+        text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
+
+    /// <summary>
+    /// An error bar that cannot be closed: <paramref name="message"/> as the engine or the socket gave it, and a Retry button that
+    /// calls <paramref name="onRetry"/> (none when it is null).
+    /// </summary>
+    public static InfoBarElement RetryBar(string message, Action? onRetry)
+    {
+        var bar = InfoBar(message: message) with { IsOpen = true };
+        if (onRetry is not null)
+            bar = bar with { ActionButtonContent = "Retry", OnActionButtonClick = onRetry };
+        return bar.Error().IsClosable(false);
+    }
+
+    private static void StartFrom(FrameworkElement control, string value)
+    {
+        if (control is TextBox box && box.Text != value)
+            box.Text = value;
+    }
 }

@@ -383,17 +383,9 @@ internal sealed class LogsTab : Component<LogsTabProps>
         ElementRef<TextBox> searchBox,
         Action<bool> setFocused) =>
         (FlexRow(
-                // Uncontrolled: a controlled box that has just mounted drops its first edit (Reactor takes it for the echo of its own
-                // first write). The box starts from the term when it mounts and reports every change; it is never written over.
-                TextBox(onChanged: setTerm, placeholderText: "Search the log")
-                    .OnMount(control => StartFrom(control, term))
-                    .Ref(searchBox)
-                    .AutomationId("log-search")
-                    .AutomationName("Search the log")
-                    .ToolTip("Search the log (Ctrl+F). Enter: next match. Shift+Enter: previous.")
-                    .OnGotFocus((_, _) => setFocused(true))
-                    .OnLostFocus((_, _) => setFocused(false))
-                    .OnKeyDown((_, e) =>
+                // Uncontrolled (see Widgets.SearchBox): it starts from the term when it mounts and reports every change. Escape is the
+                // tab's command (it empties the box, then closes the search), not the box's own.
+                Widgets.SearchBox(term, setTerm, "Search the log", searchBox, setFocused, onKeyDown: e =>
                     {
                         if (e.Key != VirtualKey.Enter)
                             return;
@@ -401,6 +393,9 @@ internal sealed class LogsTab : Component<LogsTabProps>
                         (shift ? previous : next)();
                         e.Handled = true;
                     })
+                    .AutomationId("log-search")
+                    .AutomationName("Search the log")
+                    .ToolTip("Search the log (Ctrl+F). Enter: next match. Shift+Enter: previous.")
                     .Width(320),
                 Body(counter).Foreground(Theme.SecondaryText).AutomationId("log-match-count").Width(120),
                 Widgets.IconButton(Glyphs.ChevronUp, "Previous match (Shift+Enter)", previous).AutomationId("log-previous").IsEnabled(hasMatches),
@@ -412,13 +407,6 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 ColumnGap = 4,
             });
 
-    /// <summary>A newly mounted search box shows the term in use (setting it reports the same text back, which changes nothing).</summary>
-    private static void StartFrom(FrameworkElement control, string term)
-    {
-        if (control is TextBox box && box.Text != term)
-            box.Text = term;
-    }
-
     /// <summary>
     /// The engine's message, as it gave it, when the log could not be read; Retry opens the page's session again. Not while the page
     /// waits for the engine, when Retry could not work.
@@ -426,15 +414,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
     private static Element? FailureBar(DetailState detail, bool waiting) =>
         !LogView.ShowsError(detail.LogStatus, waiting)
             ? null
-            : (InfoBar(message: detail.LogError ?? "") with
-            {
-                IsOpen = true,
-                ActionButtonContent = "Retry",
-                OnActionButtonClick = () => AppServices.Current.OpenDetail(detail.ContainerId),
-            })
-                .Error()
-                .IsClosable(false)
-                .AutomationId("log-error");
+            : Widgets.RetryBar(detail.LogError ?? "", () => AppServices.Current.OpenDetail(detail.ContainerId)).AutomationId("log-error");
 
     /// <summary>The narrow toolbar at the right edge: Search, Timestamps and Wrap (kept in the settings), Copy all and Clear.</summary>
     private static Element Toolbar(LogViewOptions options, LogBuffer logs, Action<bool> setSearchShown, bool searchOpen, Action clear)

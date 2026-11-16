@@ -109,7 +109,21 @@ internal static class ContainerParts
     public static Element PortLink(PortLink port) =>
         port.Url is { } url
             ? HyperlinkButton(port.Text, url).Padding(4, 2).ToolTip(url.ToString())
-            : Body(port.Text).TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
+            : Widgets.OneLine(Body(port.Text));
+
+    /// <summary>The first <paramref name="shown"/> ports (see <see cref="PortLink(Presentation.PortLink)"/>), then "+n" for the rest, listed in its tooltip.</summary>
+    public static FlexElement PortList(IReadOnlyList<PortLink> ports, int shown)
+    {
+        var rest = ports.Count > shown
+            ? Caption("+" + (ports.Count - shown)).Foreground(Theme.SecondaryText).ToolTip(string.Join(", ", ports.Skip(shown).Select(p => p.Text)))
+            : null;
+
+        return FlexRow([.. ports.Take(shown).Select(PortLink), rest]) with
+        {
+            AlignItems = FlexAlign.Center,
+            ColumnGap = 4,
+        };
+    }
 
     /// <summary>
     /// Puts <paramref name="text"/> on the clipboard. When that fails (another program holds the clipboard) the failure is logged by its

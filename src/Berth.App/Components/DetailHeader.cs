@@ -2,7 +2,6 @@ using Berth.Engine.Models;
 using Berth.Presentation;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
-using Microsoft.UI.Reactor.Layout;
 using Microsoft.UI.Xaml;
 using static Microsoft.UI.Reactor.Factories;
 
@@ -56,7 +55,7 @@ internal static class DetailHeader
             .Margin(4, 0, 12, 0);
 
         var identity = (FlexColumn(
-                OneLine(Widgets.SectionTitle(row.Name)).ToolTip(row.Name),
+                Widgets.OneLine(Widgets.SectionTitle(row.Name)).ToolTip(row.Name),
                 IdAndImage(row),
                 Ports(row.Ports))
             with
@@ -129,27 +128,12 @@ internal static class DetailHeader
                     .MinHeight(24)
                     .Margin(2, 0, 12, 0)
                     .Grid(column: 1),
-                OneLine(Caption(row.Image)).Foreground(Theme.SecondaryText).ToolTip(row.Image).VAlign(VerticalAlignment.Center).Grid(column: 2),
+                Widgets.OneLine(Caption(row.Image)).Foreground(Theme.SecondaryText).ToolTip(row.Image).VAlign(VerticalAlignment.Center).Grid(column: 2),
             ]);
 
     /// <summary>The published ports as links, then "+n" for the rest (listed in its tooltip); nothing when there is no port.</summary>
-    private static Element? Ports(IReadOnlyList<PortLink> ports)
-    {
-        if (ports.Count == 0)
-            return null;
-
-        var rest = ports.Count > ShownPorts
-            ? Caption("+" + (ports.Count - ShownPorts)).Foreground(Theme.SecondaryText).ToolTip(string.Join(", ", ports.Skip(ShownPorts).Select(p => p.Text)))
-            : null;
-
-        return (FlexRow([.. ports.Take(ShownPorts).Select(ContainerParts.PortLink), rest]) with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 4,
-            })
-            .Margin(-4, 0, 0, 0); // the link's own padding: its text lines up with the ID above
-    }
-
-    private static TextBlockElement OneLine(TextBlockElement text) =>
-        text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
+    private static Element? Ports(IReadOnlyList<PortLink> ports) =>
+        ports.Count == 0
+            ? null
+            : ContainerParts.PortList(ports, ShownPorts).Margin(-4, 0, 0, 0); // the link's own padding: its text lines up with the ID above
 }

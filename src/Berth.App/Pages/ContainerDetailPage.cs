@@ -183,10 +183,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         if (error is null)
             return null;
 
-        var bar = InfoBar(message: error) with { IsOpen = true };
-        if (retryId is not null)
-            bar = bar with { ActionButtonContent = "Retry", OnActionButtonClick = () => Refresh(retryId) };
-        return bar.Error().IsClosable(false).AutomationId("detail-error").Flex(shrink: 0);
+        return Widgets.RetryBar(error, retryId is null ? null : () => Refresh(retryId)).AutomationId("detail-error").Flex(shrink: 0);
     }
 
     /// <summary>Has the open detail session read the container again, when it is this container's.</summary>

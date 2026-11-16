@@ -123,7 +123,7 @@ internal static class ContainerRowView
         ThemeRef? statusColor = ContainerStatus.IsFailedExit(row.Status) ? Theme.SystemCritical : stopped ? Theme.SecondaryText : null;
 
         // The name opens the container's page; the button is as wide as the name, so a click beside it does not open the page.
-        var nameLink = HyperlinkButton(OneLine(Body(shownName)), onClick: () => callbacks.ViewDetails(row))
+        var nameLink = HyperlinkButton(Widgets.OneLine(Body(shownName)), onClick: () => callbacks.ViewDetails(row))
             .AutomationId("open-" + row.Name)
             .AutomationName(row.Name)
             .ToolTip(row.Name)
@@ -157,7 +157,7 @@ internal static class ContainerRowView
             name.Grid(column: 3),
             CellText(row.Image).Grid(column: 4),
             CellText(row.Status, statusColor).Grid(column: 5),
-            Ports(row.Ports).Grid(column: 6),
+            ContainerParts.PortList(row.Ports, ShownPorts).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0).Grid(column: 6),
             compact ? Empty() : Component<CpuCell, CpuCellProps>(new(cpu)).Grid(column: 7),
             CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 8),
             ContainerParts.ActionButtons(actions, compact, row.Name, Run).Grid(column: 9))
@@ -185,7 +185,7 @@ internal static class ContainerRowView
             .MinWidth(0)
             .MinHeight(0);
 
-        var name = OneLine(BodyStrong(project)).ToolTip(project).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0);
+        var name = Widgets.OneLine(BodyStrong(project)).ToolTip(project).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0);
 
         var actions = RowActions.ForProject(rows, connected);
         void Run(RowAction action) => RunEngineAction(action, rows, callbacks);
@@ -251,32 +251,11 @@ internal static class ContainerRowView
             : button.Margin(-8, 0, 0, 0).HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Center);
     }
 
-    /// <summary>One line of text that ends in an ellipsis when it does not fit (the body style wraps by default, which would make rows uneven).</summary>
-    private static TextBlockElement OneLine(TextBlockElement text) =>
-        text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
-
     private static Element CellText(string text, ThemeRef? color = null) =>
-        (color is { } drawn ? OneLine(Body(text)).Foreground(drawn) : OneLine(Body(text)))
+        (color is { } drawn ? Widgets.OneLine(Body(text)).Foreground(drawn) : Widgets.OneLine(Body(text)))
             .ToolTip(text)
             .VAlign(VerticalAlignment.Center)
             .Margin(0, 0, 12, 0);
-
-    /// <summary>The first ports, each a link when it has a URL to open, then "+n" for the rest (listed in its tooltip).</summary>
-    private static Element Ports(IReadOnlyList<PortLink> ports)
-    {
-        var shown = ports.Take(ShownPorts).Select(ContainerParts.PortLink);
-        var rest = ports.Count > ShownPorts
-            ? Caption("+" + (ports.Count - ShownPorts)).Foreground(Theme.SecondaryText).ToolTip(string.Join(", ", ports.Skip(ShownPorts).Select(p => p.Text)))
-            : null;
-
-        return (FlexRow([.. shown, rest]) with
-            {
-                AlignItems = FlexAlign.Center,
-                ColumnGap = 4,
-            })
-            .VAlign(VerticalAlignment.Center)
-            .Margin(0, 0, 12, 0);
-    }
 }
 
 /// <summary>A row's CPU figure: "12.4%", or empty.</summary>

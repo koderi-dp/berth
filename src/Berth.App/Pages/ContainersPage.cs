@@ -78,8 +78,8 @@ internal sealed class ContainersPage : EngineStateComponent
         var shownIds = visibleRows.Select(r => r.Id).ToArray();
         var deleteRows = DeleteRows(visibleRows, checkedIds, connected);
 
-        // Keyboard shortcuts while the focus is on the page. None of them acts while the delete confirmation is open; Delete and
-        // Escape leave the search box's own keys alone (Delete there deletes text), and Escape only clears it.
+        // Keyboard shortcuts while the focus is on the page. None of them acts while the delete confirmation is open; Delete leaves
+        // the search box's own key alone (Delete there deletes text). Escape in the search box empties it (the box's own key).
         var dialogOpen = deleteRequest is not null;
         Command[] shortcuts =
         [
@@ -103,13 +103,6 @@ internal sealed class ContainersPage : EngineStateComponent
                 Execute = () => callbacks.RequestDelete(deleteRows),
                 CanExecute = !dialogOpen && !searchFocused && deleteRows.Length > 0,
                 Accelerator = Accelerator(VirtualKey.Delete),
-            },
-            new()
-            {
-                Label = "Clear search",
-                Execute = () => ClearSearch(searchBox.Current),
-                CanExecute = !dialogOpen && searchFocused && search.Length > 0,
-                Accelerator = Accelerator(VirtualKey.Escape),
             },
         ];
 
@@ -146,20 +139,6 @@ internal sealed class ContainersPage : EngineStateComponent
     {
         var ids = BulkSelection.DeleteIds(visibleRows, checkedIds, connected);
         return [.. visibleRows.Where(r => ids.Contains(r.Id))];
-    }
-
-    /// <summary>A newly mounted search box shows the search in use (setting it reports the same text back, which changes nothing).</summary>
-    private static void StartFrom(FrameworkElement control, string search)
-    {
-        if (control is TextBox box && box.Text != search)
-            box.Text = search;
-    }
-
-    /// <summary>Escape in the search box: empties it, which reports the empty search.</summary>
-    private static void ClearSearch(TextBox? box)
-    {
-        if (box is not null)
-            box.Text = "";
     }
 
     /// <summary>Ctrl+F: the focus goes to the search box with its text selected, so typing replaces it.</summary>
@@ -213,21 +192,16 @@ internal sealed class ContainersPage : EngineStateComponent
     }
 
     /// <summary>
-    /// The search box is uncontrolled: it owns its text and reports each change. A controlled box, whose text Reactor writes, drops
-    /// the first edit after the page comes back from the navigation cache (Reactor waits for the echo of a write it made while the
-    /// page was out of the window), and the page is kept in that cache while a container's page or Settings shows. A box that is
-    /// mounted starts from <paramref name="search"/>, so the box and the filter cannot disagree.
+    /// The search box and the "running only" switch. The box is uncontrolled (<see cref="Widgets.SearchBox"/>): this page stays in the
+    /// navigation cache while a container's page or Settings shows, and a box that is mounted starts from <paramref name="search"/>,
+    /// so the box and the filter cannot disagree.
     /// </summary>
     private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
         (FlexRow(
-                TextBox(onChanged: setSearch, placeholderText: "Search")
-                    .OnMount(control => StartFrom(control, search))
-                    .Ref(searchBox)
+                Widgets.SearchBox(search, setSearch, "Search", searchBox, setSearchFocused, clearOnEscape: true)
                     .AutomationId("search")
                     .AutomationName("Search")
                     .ToolTip("Search by name, image or ID (Ctrl+F)")
-                    .OnGotFocus((_, _) => setSearchFocused(true))
-                    .OnLostFocus((_, _) => setSearchFocused(false))
                     .Width(320),
                 ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
                     .AutomationName("Only show running containers"))

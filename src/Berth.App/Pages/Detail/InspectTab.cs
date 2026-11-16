@@ -142,8 +142,8 @@ internal sealed class InspectTab : Component<InspectTabProps>
     private static Element Row(RowItem item)
     {
         var (name, value) = item.Row;
-        var nameText = OneLine(Body(name)).Foreground(Theme.SecondaryText).ToolTip(name).VAlign(VerticalAlignment.Center).Margin(0, 0, 16, 0);
-        var valueText = OneLine(Body(value))
+        var nameText = Widgets.OneLine(Body(name)).Foreground(Theme.SecondaryText).ToolTip(name).VAlign(VerticalAlignment.Center).Margin(0, 0, 16, 0);
+        var valueText = Widgets.OneLine(Body(value))
             .Foreground(Theme.PrimaryText)
             .IsTextSelectionEnabled()
             .VAlign(VerticalAlignment.Center);
@@ -187,9 +187,6 @@ internal sealed class InspectTab : Component<InspectTabProps>
             })
             .AutomationId("inspect-raw-json")
             .AutomationName("Raw JSON");
-
-    private static TextBlockElement OneLine(TextBlockElement text) =>
-        text.TextWrapping(TextWrapping.NoWrap).TextTrimming(TextTrimming.CharacterEllipsis);
 
     /// <summary>One line of the tables: a section's title or one of its rows.</summary>
     private abstract record Item(string Key);
