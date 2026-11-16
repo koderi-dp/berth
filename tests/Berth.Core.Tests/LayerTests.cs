@@ -21,6 +21,7 @@ public sealed partial class LayerTests
         { "Settings", ["Connections", "State", "Storage"] },
         { "Logging", [] },
         { "Storage", [] },
+        { "Processes", [] },
     };
 
     private static readonly string[] Folders = [.. Layers.Select(row => (string)row[0])];
