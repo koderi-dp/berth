@@ -50,7 +50,9 @@ public static partial class DetailReducer
             case ExecStopRequested when exec.IsActive:
                 return (
                     state with { Exec = ResetExec(exec) },
-                    ShellNeedsCleanUp(state) ? [new StopExecEffect(), new CleanUpExecEffect(exec.Generation)] : [new StopExecEffect()]);
+                    ShellNeedsCleanUp(state)
+                        ? [new StopExecEffect(), new CleanUpExecEffect(exec.Generation, AfterStart: exec.Status == ExecStatus.Starting)]
+                        : [new StopExecEffect()]);
 
             case ExecStopRequested when exec.Status is ExecStatus.Ended or ExecStatus.Failed:
                 return (state with { Exec = Cleared(exec) }, None);

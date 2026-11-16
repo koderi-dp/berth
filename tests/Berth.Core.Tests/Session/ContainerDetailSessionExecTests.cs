@@ -310,6 +310,48 @@ public sealed class ContainerDetailSessionExecTests
     }
 
     [Fact]
+    public async Task A_shell_ended_while_starting_is_cleaned_up_once_its_start_has_returned()
+    {
+        // A slow engine goes on with the start after Berth cancelled it, so the shell may exist only after the stop.
+        var api = new FakeEngineApi();
+        api.SetInspection(FakeEngineApi.Inspection("c"));
+        var start = api.HoldPastCancellation("StartExec");
+        await using var h = new Harness(api);
+        await h.OpenAsync();
+        h.Session.StartExec(Sh, Size);
+        await start.Entered.WaitAsync(Patience);
+
+        h.Session.StopExec();
+        await h.WaitFor(s => s.Exec is { Status: ExecStatus.NotStarted, Generation: 2 });
+        await Task.Delay(50);
+        Assert.Empty(h.Api.DetachedExecs);
+
+        start.Release();
+        var run = await h.NextCleanUpAsync();
+        Assert.Equal(ExecCleanUp.Command(h.MarkerOf(0)), run.Command);
+        // The hang-up ends the shell the late start opened.
+        (await api.NextShellAsync()).End();
+    }
+
+    [Fact]
+    public async Task A_shell_ended_before_its_exec_was_created_needs_no_clean_up()
+    {
+        var api = new FakeEngineApi();
+        api.SetInspection(FakeEngineApi.Inspection("c"));
+        var create = api.Hold("CreateExec");
+        var h = new Harness(api);
+        await h.OpenAsync();
+        h.Session.StartExec(Sh, Size);
+        await create.Entered.WaitAsync(Patience);
+
+        h.Session.StopExec();
+        await api.WhenCancelled("CreateExec c").WaitAsync(Patience);
+        await h.DisposeAsync();
+
+        Assert.DoesNotContain(h.Api.Calls, c => c.StartsWith("RunDetachedExec", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Dispose_closes_the_stream()
     {
         var h = new Harness();

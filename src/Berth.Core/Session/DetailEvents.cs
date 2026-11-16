@@ -63,9 +63,11 @@ public sealed record StopExecEffect : DetailEffect;
 
 /// <summary>
 /// End what the shell of <see cref="Generation"/> left in the container (see <see cref="ExecCleanUp"/>): best effort, bounded, silent
-/// to the user. Follows the <see cref="StopExecEffect"/> of that shell, or its failure once it ran.
+/// to the user. Follows the <see cref="StopExecEffect"/> of that shell, or its failure once it ran. With
+/// <paramref name="AfterStart"/> (the shell was still starting) it runs once the shell's create and start have returned or been
+/// cancelled, and only when the create returned an exec: before that the engine may still start the shell after the clean-up looked.
 /// </summary>
-public sealed record CleanUpExecEffect(int Generation) : DetailEffect;
+public sealed record CleanUpExecEffect(int Generation, bool AfterStart = false) : DetailEffect;
 
 /// <summary>Resize the running shell's terminal.</summary>
 public sealed record ResizeExecEffect(string ExecId, TerminalSize Size) : DetailEffect;

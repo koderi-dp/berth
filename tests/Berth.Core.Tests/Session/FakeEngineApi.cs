@@ -88,6 +88,9 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>Makes every later <paramref name="call"/> wait until the returned gate is released.</summary>
     public Gate Hold(string call) => _gates[call] = new Gate();
 
+    /// <summary>As <see cref="Hold"/>, but the call carries on when the caller cancels it, as a slow engine might.</summary>
+    public Gate HoldPastCancellation(string call) => _gates[call] = new Gate { IgnoresCancellation = true };
+
     /// <summary>A minimal inspection of <paramref name="id"/> (named after it), running or stopped.</summary>
     public static ContainerInspection Inspection(string id, bool running = true, bool tty = false) => new(
         new ContainerDetails(
@@ -402,7 +405,7 @@ internal sealed class FakeEngineApi : IEngineApi
             gate.MarkEntered();
             try
             {
-                await gate.Released.WaitAsync(IgnoreCancellation ? CancellationToken.None : ct);
+                await gate.Released.WaitAsync(IgnoreCancellation || gate.IgnoresCancellation ? CancellationToken.None : ct);
             }
             catch (OperationCanceledException)
             {
@@ -514,6 +517,8 @@ internal sealed class FakeEngineApi : IEngineApi
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task Entered => _entered.Task;
+
+        internal bool IgnoresCancellation { get; init; }
 
         internal Task Released => _released.Task;
 

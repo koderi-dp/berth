@@ -250,12 +250,12 @@ public sealed class DetailReducerExecTests
     }
 
     [Fact]
-    public void Stopping_a_starting_shell_cleans_up_after_it_too()
+    public void Stopping_a_starting_shell_cleans_up_after_it_once_its_start_has_returned()
     {
-        // The create or start may already have reached the engine when the stop cancels it.
+        // The create or start may already have reached the engine when the stop cancels it; the shell may exist only once it returns.
         var (_, effects) = Reduce(Starting(), new ExecStopRequested());
 
-        Assert.Equal([new StopExecEffect(), new CleanUpExecEffect(1)], effects);
+        Assert.Equal([new StopExecEffect(), new CleanUpExecEffect(1, AfterStart: true)], effects);
     }
 
     [Fact]

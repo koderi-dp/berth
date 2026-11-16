@@ -99,18 +99,21 @@ public sealed partial class ContainerDetailSession
         Run(ct => RunExecAsync(run, start, ct), _calls.Token);
     }
 
-    /// <summary>Starts the clean-up after the shell of <paramref name="generation"/>, once, when it is still the latest one.</summary>
-    private void StartCleanUp(int generation)
+    /// <summary>
+    /// Starts the clean-up after the shell of <paramref name="generation"/>, once, when it is still the latest one. After a start
+    /// (<see cref="CleanUpExecEffect.AfterStart"/>) it first waits, within the same limit, for the shell's create and start to return,
+    /// and runs only when the create gave an exec.
+    /// </summary>
+    private void StartCleanUp(int generation, bool afterStart)
     {
         if (Volatile.Read(ref _exec) is not { } run || run.Generation != generation || !run.TakeCleanUp())
             return;
 
-        var marker = run.Marker;
         var containerId = State.ContainerId;
         lock (_cleanUpsLock)
         {
             _cleanUps.RemoveAll(t => t.IsCompleted);
-            _cleanUps.Add(Task.Run(() => CleanUpAsync(containerId, marker)));
+            _cleanUps.Add(Task.Run(() => CleanUpAsync(containerId, run, afterStart)));
         }
     }
 
@@ -122,7 +125,7 @@ public sealed partial class ContainerDetailSession
     {
         var state = State;
         if (DetailReducer.ShellNeedsCleanUp(state))
-            StartCleanUp(state.Exec.Generation);
+            StartCleanUp(state.Exec.Generation, afterStart: state.Exec.Status == ExecStatus.Starting);
     }
 
     /// <summary>Waits for the clean-ups under way; each one ends within <see cref="ExecCleanUpLimit"/>.</summary>
@@ -139,12 +142,14 @@ public sealed partial class ContainerDetailSession
     /// and still wants it). A failure (no <c>sh</c> or <c>/proc</c> in the image, the engine refusing, the connection gone) is only
     /// reported, in fixed words: the shell was already ended as far as the page is concerned.
     /// </summary>
-    private async Task CleanUpAsync(string containerId, string marker)
+    private async Task CleanUpAsync(string containerId, ExecRun run, bool afterStart)
     {
         using var limit = new CancellationTokenSource(ExecCleanUpLimit, _time);
         try
         {
-            await _api.RunDetachedExecAsync(containerId, ExecCleanUp.Command(marker), limit.Token).ConfigureAwait(false);
+            if (afterStart && !await run.Created.WaitAsync(limit.Token).ConfigureAwait(false))
+                return;
+            await _api.RunDetachedExecAsync(containerId, ExecCleanUp.Command(run.Marker), limit.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -208,18 +213,30 @@ public sealed partial class ContainerDetailSession
         using var scope = CancellationTokenSource.CreateLinkedTokenSource(calls);
         using var inputScope = CancellationTokenSource.CreateLinkedTokenSource(scope.Token);
         if (!run.Open(scope))
+        {
+            run.Settle(created: false);
             return;
+        }
 
         var ct = scope.Token;
         ExecStream? stream = null;
         var output = Task.CompletedTask;
         var input = Task.CompletedTask;
         var closeTried = false;
+        string? execId = null;
         try
         {
-            var execId = await _api.CreateExecAsync(
+            execId = await _api.CreateExecAsync(
                 State.ContainerId, start.Command, start.Size, [ExecCleanUp.Variable(run.Marker)], ct).ConfigureAwait(false);
-            stream = await _api.StartExecAsync(execId, start.Size, ct).ConfigureAwait(false);
+            try
+            {
+                stream = await _api.StartExecAsync(execId, start.Size, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                run.Settle(created: true);
+            }
+
             run.MarkStarted();
             Post(new ExecStarted(run.Generation, execId));
 
@@ -263,6 +280,7 @@ public sealed partial class ContainerDetailSession
         }
         finally
         {
+            run.Settle(created: execId is not null);
             run.Finish();
             await StopInputAsync(inputScope, input).ConfigureAwait(false);
             if (stream is not null)
@@ -395,6 +413,7 @@ public sealed partial class ContainerDetailSession
         private readonly Lock _lock = new();
         private readonly Channel<byte[]> _input = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
         private readonly TaskCompletionSource _stop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _created = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly CancellationTokenSource _stopping = new();
         private CancellationTokenSource? _scope;
         private bool _started;
@@ -410,6 +429,15 @@ public sealed partial class ContainerDetailSession
 
         /// <summary>True the first time only: the clean-up after this shell runs once, whoever asks for it.</summary>
         public bool TakeCleanUp() => Interlocked.Exchange(ref _cleanUpTaken, 1) == 0;
+
+        /// <summary>
+        /// Completes once the create and start have returned or failed: true when the create gave an exec (the engine may have started
+        /// the shell even when the start was cancelled), false when there is none.
+        /// </summary>
+        public Task<bool> Created => _created.Task;
+
+        /// <summary>Settles <see cref="Created"/>; the first call wins.</summary>
+        public void Settle(bool created) => _created.TrySetResult(created);
 
         /// <summary>Completes when the shell is asked to end on purpose.</summary>
         public Task StopRequested => _stop.Task;

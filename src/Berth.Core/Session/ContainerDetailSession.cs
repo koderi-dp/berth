@@ -233,7 +233,7 @@ public sealed partial class ContainerDetailSession : IAsyncDisposable
                 break;
 
             case CleanUpExecEffect cleanUp:
-                StartCleanUp(cleanUp.Generation);
+                StartCleanUp(cleanUp.Generation, cleanUp.AfterStart);
                 break;
 
             case ResizeExecEffect resize:
