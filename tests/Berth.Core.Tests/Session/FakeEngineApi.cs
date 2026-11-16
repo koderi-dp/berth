@@ -290,8 +290,11 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>The ID <see cref="CreateExecAsync"/> answers.</summary>
     public string ExecId { get; set; } = "exec-1";
 
-    /// <summary>Every exec create, in order: the container, the command and the size.</summary>
-    public ConcurrentQueue<(string ContainerId, IReadOnlyList<string> Command, TerminalSize Size)> ExecCreates { get; } = new();
+    /// <summary>Every exec create, in order: the container, the command, the size and the environment.</summary>
+    public ConcurrentQueue<(string ContainerId, IReadOnlyList<string> Command, TerminalSize Size, IReadOnlyList<string> Environment)> ExecCreates { get; } = new();
+
+    /// <summary>Every detached exec run, in order: the container and the command (recorded once the call is past any hold or failure).</summary>
+    public ConcurrentQueue<(string ContainerId, IReadOnlyList<string> Command)> DetachedExecs { get; } = new();
 
     /// <summary>Every exec resize, in order.</summary>
     public ConcurrentQueue<(string ExecId, TerminalSize Size)> Resizes { get; } = new();
@@ -309,11 +312,19 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>The shells exec starts handed out, one per call, in the order of the starts.</summary>
     public async Task<FakeShell> NextShellAsync(CancellationToken ct = default) => await _shells.Reader.ReadAsync(ct);
 
-    public async Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct)
+    public async Task<string> CreateExecAsync(
+        string containerId, IReadOnlyList<string> command, TerminalSize size, IReadOnlyList<string> environment, CancellationToken ct)
     {
         await EnterAsync("CreateExec", $"CreateExec {containerId}", ct);
-        ExecCreates.Enqueue((containerId, command, size));
+        ExecCreates.Enqueue((containerId, command, size, environment));
         return ExecId;
+    }
+
+    /// <summary>Opens after any hold or failure set for "RunDetachedExec", then records the run in <see cref="DetachedExecs"/>.</summary>
+    public async Task RunDetachedExecAsync(string containerId, IReadOnlyList<string> command, CancellationToken ct)
+    {
+        await EnterAsync("RunDetachedExec", $"RunDetachedExec {containerId}", ct);
+        DetachedExecs.Enqueue((containerId, command));
     }
 
     /// <summary>Whether the shells' streams can close their write side (TCP and TLS) or not (Docker Desktop's pipe). True by default.</summary>

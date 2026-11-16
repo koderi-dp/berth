@@ -77,8 +77,12 @@ internal sealed class EngineConnection : IEngineApi
 
     public Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct) => _client.CreateContainerAsync(request, ct);
 
-    public Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct) =>
-        _client.CreateExecAsync(containerId, command, size, ct);
+    public Task<string> CreateExecAsync(
+        string containerId, IReadOnlyList<string> command, TerminalSize size, IReadOnlyList<string> environment, CancellationToken ct) =>
+        _client.CreateExecAsync(containerId, command, size, environment, ct);
+
+    public Task RunDetachedExecAsync(string containerId, IReadOnlyList<string> command, CancellationToken ct) =>
+        _client.RunDetachedExecAsync(containerId, command, ct);
 
     public Task<ExecStream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct) => _client.StartExecAsync(execId, size, ct);
 

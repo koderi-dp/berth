@@ -84,10 +84,19 @@ public interface IEngineApi : IAsyncDisposable
 
     /// <summary>
     /// Creates a TTY exec of <paramref name="command"/> in a running container, attached to stdin, stdout and stderr and sized to
-    /// <paramref name="size"/>, and returns its ID. 30 s deadline. A paused or stopped container throws the engine's 409, a missing
-    /// one its 404. An invalid <paramref name="size"/> throws <see cref="ArgumentOutOfRangeException"/>.
+    /// <paramref name="size"/>, with <paramref name="environment"/> (<c>NAME=value</c> entries; none sent when empty) added to the
+    /// container's, and returns its ID. 30 s deadline. A paused or stopped container throws the engine's 409, a missing one its 404.
+    /// An invalid <paramref name="size"/> throws <see cref="ArgumentOutOfRangeException"/>.
     /// </summary>
-    Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct);
+    Task<string> CreateExecAsync(
+        string containerId, IReadOnlyList<string> command, TerminalSize size, IReadOnlyList<string> environment, CancellationToken ct);
+
+    /// <summary>
+    /// Runs <paramref name="command"/> in a running container without a terminal and without waiting for it: an exec attached to
+    /// nothing, started detached. Returns once the engine has started it; what it prints and how it ends are not read. 30 s deadline
+    /// per call. Errors as <see cref="CreateExecAsync"/>.
+    /// </summary>
+    Task RunDetachedExecAsync(string containerId, IReadOnlyList<string> command, CancellationToken ct);
 
     /// <summary>
     /// Starts an exec on a connection the engine switches to a two-way raw stream, and returns that stream: what is written to it is

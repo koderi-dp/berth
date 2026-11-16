@@ -39,6 +39,14 @@ public sealed partial class ContainerDetailSession
     private const string TerminalFailedReport = "the terminal failed";
     private const string ResizeFailedReport = "resizing the terminal failed";
     private const string ExitCodeFailedReport = "reading the shell's exit code failed";
+    private const string CleanUpFailedReport = "ending a shell left in the container failed";
+
+    /// <summary>How long the clean-up after a shell (<see cref="ExecCleanUp"/>) may take before it is given up.</summary>
+    public static readonly TimeSpan ExecCleanUpLimit = TimeSpan.FromSeconds(3);
+
+    // The clean-ups under way; a dispose or cut-off waits for them, so the engine client is not disposed under one.
+    private readonly Lock _cleanUpsLock = new();
+    private readonly List<Task> _cleanUps = [];
 
     private IExecOutput? _execOutput;
 
@@ -86,9 +94,62 @@ public sealed partial class ContainerDetailSession
 
     private void StartShell(StartExecEffect start)
     {
-        var run = new ExecRun(start.Generation);
+        var run = new ExecRun(start.Generation, ExecCleanUp.NewMarker());
         Volatile.Write(ref _exec, run);
         Run(ct => RunExecAsync(run, start, ct), _calls.Token);
+    }
+
+    /// <summary>Starts the clean-up after the shell of <paramref name="generation"/>, once, when it is still the latest one.</summary>
+    private void StartCleanUp(int generation)
+    {
+        if (Volatile.Read(ref _exec) is not { } run || run.Generation != generation || !run.TakeCleanUp())
+            return;
+
+        var marker = run.Marker;
+        var containerId = State.ContainerId;
+        lock (_cleanUpsLock)
+        {
+            _cleanUps.RemoveAll(t => t.IsCompleted);
+            _cleanUps.Add(Task.Run(() => CleanUpAsync(containerId, marker)));
+        }
+    }
+
+    /// <summary>
+    /// The page or the connection is going away with a shell still asked for (the tab's own stop may not have been handled): the
+    /// same decision as a stop (<see cref="DetailReducer.ShellNeedsCleanUp"/>) on the state as it is now.
+    /// </summary>
+    private void CleanUpLeftShell()
+    {
+        var state = State;
+        if (DetailReducer.ShellNeedsCleanUp(state))
+            StartCleanUp(state.Exec.Generation);
+    }
+
+    /// <summary>Waits for the clean-ups under way; each one ends within <see cref="ExecCleanUpLimit"/>.</summary>
+    private Task WaitForCleanUpsAsync()
+    {
+        Task[] cleanUps;
+        lock (_cleanUpsLock)
+            cleanUps = [.. _cleanUps];
+        return Task.WhenAll(cleanUps);
+    }
+
+    /// <summary>
+    /// Runs the clean-up as a detached exec, under its own limit rather than the session's calls (a dispose or cut-off stops those
+    /// and still wants it). A failure (no <c>sh</c> or <c>/proc</c> in the image, the engine refusing, the connection gone) is only
+    /// reported, in fixed words: the shell was already ended as far as the page is concerned.
+    /// </summary>
+    private async Task CleanUpAsync(string containerId, string marker)
+    {
+        using var limit = new CancellationTokenSource(ExecCleanUpLimit, _time);
+        try
+        {
+            await _api.RunDetachedExecAsync(containerId, ExecCleanUp.Command(marker), limit.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Report(CleanUpFailedReport, ex);
+        }
     }
 
     /// <summary>
@@ -156,7 +217,8 @@ public sealed partial class ContainerDetailSession
         var closeTried = false;
         try
         {
-            var execId = await _api.CreateExecAsync(State.ContainerId, start.Command, start.Size, ct).ConfigureAwait(false);
+            var execId = await _api.CreateExecAsync(
+                State.ContainerId, start.Command, start.Size, [ExecCleanUp.Variable(run.Marker)], ct).ConfigureAwait(false);
             stream = await _api.StartExecAsync(execId, start.Size, ct).ConfigureAwait(false);
             run.MarkStarted();
             Post(new ExecStarted(run.Generation, execId));
@@ -328,7 +390,7 @@ public sealed partial class ContainerDetailSession
     }
 
     /// <summary>One shell asked for: its generation, its input queue, and whether it has been asked to stop.</summary>
-    private sealed class ExecRun(int generation)
+    private sealed class ExecRun(int generation, string marker)
     {
         private readonly Lock _lock = new();
         private readonly Channel<byte[]> _input = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
@@ -339,8 +401,15 @@ public sealed partial class ContainerDetailSession
         private bool _finished;
         private long _queued;
         private volatile bool _hadInput;
+        private int _cleanUpTaken;
 
         public int Generation => generation;
+
+        /// <summary>The shell's <see cref="ExecCleanUp"/> marker. Never logged.</summary>
+        public string Marker => marker;
+
+        /// <summary>True the first time only: the clean-up after this shell runs once, whoever asks for it.</summary>
+        public bool TakeCleanUp() => Interlocked.Exchange(ref _cleanUpTaken, 1) == 0;
 
         /// <summary>Completes when the shell is asked to end on purpose.</summary>
         public Task StopRequested => _stop.Task;

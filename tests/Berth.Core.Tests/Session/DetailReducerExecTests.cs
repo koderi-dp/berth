@@ -202,7 +202,7 @@ public sealed class DetailReducerExecTests
 
         Assert.Equal(ExecStatus.NotStarted, stopped.Exec.Status);
         Assert.Equal(2, stopped.Exec.Generation);
-        Assert.Equal([new StopExecEffect()], effects);
+        Assert.Equal([new StopExecEffect(), new CleanUpExecEffect(1)], effects);
 
         foreach (var late in new DetailEvent[] { new ExecEnded(1, 0, false), new ExecFailed(1, "gone"), new ExecStarted(1, "exec-1") })
         {
@@ -210,6 +210,55 @@ public sealed class DetailReducerExecTests
             Assert.Same(stopped, state);
             Assert.Empty(more);
         }
+    }
+
+    [Fact]
+    public void Stopping_a_starting_shell_cleans_up_after_it_too()
+    {
+        // The create or start may already have reached the engine when the stop cancels it.
+        var (_, effects) = Reduce(Starting(), new ExecStopRequested());
+
+        Assert.Equal([new StopExecEffect(), new CleanUpExecEffect(1)], effects);
+    }
+
+    [Fact]
+    public void A_shell_is_cleaned_up_only_while_the_container_runs_on_a_live_connection()
+    {
+        var running = Running();
+        Assert.True(DetailReducer.ShellNeedsCleanUp(running));
+        Assert.True(DetailReducer.ShellNeedsCleanUp(Starting()));
+
+        var details = running.Details!;
+        DetailState WithState(bool run, bool paused, bool restarting) =>
+            running with { Details = details with { State = details.State with { Running = run, Paused = paused, Restarting = restarting } } };
+
+        Assert.False(DetailReducer.ShellNeedsCleanUp(WithState(run: false, paused: false, restarting: false)));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(WithState(run: true, paused: true, restarting: false)));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(WithState(run: true, paused: false, restarting: true)));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(running with { ConnectionLost = true }));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(running with { Removed = true }));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(running with { Details = null }));
+    }
+
+    [Fact]
+    public void A_shell_that_ended_or_failed_by_itself_or_never_started_needs_no_clean_up()
+    {
+        Assert.False(DetailReducer.ShellNeedsCleanUp(Loaded()));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(Reduce(Running(), new ExecEnded(1, 0, false)).State));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(Reduce(Running(), new ExecFailed(1, "broke")).State));
+        Assert.False(DetailReducer.ShellNeedsCleanUp(Reduce(Running(), new ExecStopRequested()).State));
+    }
+
+    [Fact]
+    public void Stopping_a_shell_in_a_container_that_no_longer_runs_only_stops_it()
+    {
+        var running = Running();
+        var refreshed = Reduce(running, new DetailRefreshRequested()).State;
+        var paused = Reduce(refreshed, new InspectLoaded(refreshed.InspectGeneration, Inspection(paused: true))).State;
+
+        var (_, effects) = Reduce(paused, new ExecStopRequested());
+
+        Assert.Equal([new StopExecEffect()], effects);
     }
 
     [Fact]

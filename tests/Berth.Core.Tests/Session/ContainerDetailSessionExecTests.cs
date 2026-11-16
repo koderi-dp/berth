@@ -340,6 +340,134 @@ public sealed class ContainerDetailSessionExecTests
     }
 
     [Fact]
+    public async Task Each_shell_carries_a_marker_of_its_own()
+    {
+        await using var h = new Harness();
+        await h.RunningAsync();
+        h.Session.StopExec();
+        await h.WaitFor(s => s.Exec is { Status: ExecStatus.NotStarted, Generation: 2 });
+        h.Session.StartExec(Sh, Size);
+        await h.WaitFor(s => s.Exec is { Status: ExecStatus.Running, Generation: 3 });
+
+        var environments = h.Api.ExecCreates.Select(c => c.Environment).ToArray();
+
+        Assert.Equal(2, environments.Length);
+        Assert.All(environments, env => Assert.Matches("^BERTH_EXEC=[0-9a-f]{16}$", Assert.Single(env)));
+        Assert.NotEqual(environments[0][0], environments[1][0]);
+    }
+
+    [Fact]
+    public async Task Stopping_a_running_shell_cleans_up_by_its_marker_in_the_same_container()
+    {
+        await using var h = new Harness();
+        await h.RunningAsync();
+
+        h.Session.StopExec();
+        var run = await h.NextCleanUpAsync();
+
+        Assert.Equal("c", run.ContainerId);
+        Assert.Equal(ExecCleanUp.Command(h.MarkerOf(0)), run.Command);
+        Assert.Empty(h.Errors);
+    }
+
+    [Fact]
+    public async Task A_shell_that_ended_by_itself_is_not_cleaned_up()
+    {
+        var h = new Harness();
+        var shell = await h.RunningAsync();
+        shell.End();
+        await h.WaitFor(s => s.Exec.Status == ExecStatus.Ended);
+
+        h.Session.StopExec();
+        await h.WaitFor(s => s.Exec.Status == ExecStatus.NotStarted);
+        await h.DisposeAsync();
+
+        Assert.Empty(h.Api.DetachedExecs);
+        Assert.DoesNotContain(h.Api.Calls, c => c.StartsWith("RunDetachedExec", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Disposing_with_a_shell_running_cleans_it_up_before_returning()
+    {
+        var h = new Harness();
+        await h.RunningAsync();
+
+        await h.DisposeAsync();
+
+        var run = Assert.Single(h.Api.DetachedExecs);
+        Assert.Equal(ExecCleanUp.Command(h.MarkerOf(0)), run.Command);
+        Assert.Empty(h.Errors);
+    }
+
+    [Fact]
+    public async Task A_stop_then_a_dispose_cleans_up_once_and_the_dispose_waits_for_it()
+    {
+        var h = new Harness();
+        await h.RunningAsync();
+        var gate = h.Api.Hold("RunDetachedExec");
+
+        h.Session.StopExec();
+        await gate.Entered.WaitAsync(Patience);
+        var dispose = h.DisposeAsync().AsTask();
+        await Task.Delay(50);
+        Assert.False(dispose.IsCompleted);
+
+        gate.Release();
+        await dispose.WaitAsync(Patience);
+        Assert.Single(h.Api.DetachedExecs);
+        Assert.Single(h.Api.Calls, c => c.StartsWith("RunDetachedExec", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_cut_off_cleans_up_before_it_returns_so_the_client_is_still_there()
+    {
+        await using var h = new Harness();
+        await h.RunningAsync();
+
+        await h.Session.CutOffAsync();
+
+        var run = Assert.Single(h.Api.DetachedExecs);
+        Assert.Equal(ExecCleanUp.Command(h.MarkerOf(0)), run.Command);
+    }
+
+    [Fact]
+    public async Task A_clean_up_that_fails_is_reported_in_fixed_words_and_shown_nowhere()
+    {
+        await using var h = new Harness();
+        await h.RunningAsync();
+        h.Api.Fail("RunDetachedExec", new EngineException(409, "Container c is paused"));
+
+        h.Session.StopExec();
+        var (what, ex) = await h.WaitForError();
+
+        Assert.Equal("ending a shell left in the container failed", what);
+        Assert.IsType<EngineException>(ex);
+        var state = h.Session.State;
+        Assert.Equal(ExecStatus.NotStarted, state.Exec.Status);
+        Assert.Null(state.Exec.Error);
+        Assert.Null(state.LoadError);
+    }
+
+    [Fact]
+    public async Task A_clean_up_the_engine_does_not_answer_is_given_up_after_its_limit()
+    {
+        var h = new Harness();
+        await h.RunningAsync();
+        var gate = h.Api.Hold("RunDetachedExec");
+
+        var dispose = h.DisposeAsync().AsTask();
+        await gate.Entered.WaitAsync(Patience);
+        h.Time.Advance(ContainerDetailSession.ExecCleanUpLimit - TimeSpan.FromMilliseconds(1));
+        await Task.Delay(50);
+        Assert.False(dispose.IsCompleted);
+        h.Time.Advance(TimeSpan.FromMilliseconds(1));
+
+        await dispose.WaitAsync(Patience);
+        Assert.Contains("RunDetachedExec c", h.Api.Cancelled);
+        Assert.Empty(h.Api.DetachedExecs);
+    }
+
+    [Fact]
     public async Task Bytes_with_no_sink_attached_are_dropped_and_the_pump_goes_on()
     {
         await using var h = new Harness();
@@ -639,6 +767,19 @@ public sealed class ContainerDetailSessionExecTests
         }
 
         public Task<DetailState> WaitFor(Func<DetailState, bool> match) => ContainerDetailSessionTests.WaitFor(Session, match);
+
+        /// <summary>The marker the <paramref name="index"/>th exec create carried.</summary>
+        public string MarkerOf(int index) => Assert.Single(Api.ExecCreates.ElementAt(index).Environment)["BERTH_EXEC=".Length..];
+
+        /// <summary>Completes with the first detached exec run (the clean-up), polling: the run is recorded on a thread-pool thread.</summary>
+        public async Task<(string ContainerId, IReadOnlyList<string> Command)> NextCleanUpAsync()
+        {
+            using var patience = new CancellationTokenSource(Patience);
+            while (!Api.DetachedExecs.TryPeek(out _))
+                await Task.Delay(10, patience.Token);
+            Api.DetachedExecs.TryPeek(out var run);
+            return run;
+        }
 
         /// <summary>Completes once the session has started waiting on the clock <paramref name="count"/> times in all.</summary>
         public Task WhenWaiting(int count)

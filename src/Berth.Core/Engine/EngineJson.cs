@@ -305,8 +305,9 @@ internal sealed record WireCreateHostConfig(
 internal sealed record WireCreated([property: JsonPropertyName("Id")] string? Id);
 
 /// <summary>
-/// The body of <c>/containers/{id}/exec</c>: a TTY exec attached to stdin, stdout and stderr. <c>ConsoleSize</c> is rows, then
-/// columns. No <c>Env</c>, <c>User</c> or <c>WorkingDir</c>: the shell runs as the container's user in its working directory.
+/// The body of <c>/containers/{id}/exec</c>: a TTY exec attached to stdin, stdout and stderr, or (for a detached run) one attached
+/// to nothing with no terminal and no size. <c>ConsoleSize</c> is rows, then columns. <c>Env</c> only when given; no <c>User</c> or
+/// <c>WorkingDir</c>: the exec runs as the container's user in its working directory.
 /// </summary>
 internal sealed record WireExecCreate(
     [property: JsonPropertyName("AttachStdin")] bool AttachStdin,
@@ -314,13 +315,18 @@ internal sealed record WireExecCreate(
     [property: JsonPropertyName("AttachStderr")] bool AttachStderr,
     [property: JsonPropertyName("Tty")] bool Tty,
     [property: JsonPropertyName("Cmd")] IReadOnlyList<string> Cmd,
-    [property: JsonPropertyName("ConsoleSize")] int[] ConsoleSize);
+    [property: JsonPropertyName("ConsoleSize"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int[]? ConsoleSize)
+{
+    [JsonPropertyName("Env")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Env { get; init; }
+}
 
-/// <summary>The body of <c>/exec/{id}/start</c>. <c>ConsoleSize</c> is rows, then columns.</summary>
+/// <summary>The body of <c>/exec/{id}/start</c>. <c>ConsoleSize</c> is rows, then columns; none for a detached run.</summary>
 internal sealed record WireExecStart(
     [property: JsonPropertyName("Detach")] bool Detach,
     [property: JsonPropertyName("Tty")] bool Tty,
-    [property: JsonPropertyName("ConsoleSize")] int[] ConsoleSize);
+    [property: JsonPropertyName("ConsoleSize"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int[]? ConsoleSize);
 
 /// <summary>An exec's inspect answer (<c>/exec/{id}/json</c>), the parts Berth reads.</summary>
 internal sealed record WireExecInspect(

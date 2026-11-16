@@ -89,7 +89,7 @@ public sealed class FakeEngineApiTests
         var api = new FakeEngineApi { ExecId = "e7" };
         var size = new TerminalSize(80, 24);
 
-        var execId = await api.CreateExecAsync("a", ["sh"], size, CancellationToken.None);
+        var execId = await api.CreateExecAsync("a", ["sh"], size, [], CancellationToken.None);
         var stream = await api.StartExecAsync(execId, size, CancellationToken.None);
         var shell = await api.NextShellAsync();
         await stream.WriteAsync(new byte[] { 0x03, 0xFF });

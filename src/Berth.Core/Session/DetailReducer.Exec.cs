@@ -46,7 +46,9 @@ public static partial class DetailReducer
                 return (state with { Exec = exec with { Status = ExecStatus.Failed, ExecId = null, Error = failed.Message } }, None);
 
             case ExecStopRequested when exec.IsActive:
-                return (state with { Exec = ResetExec(exec) }, [new StopExecEffect()]);
+                return (
+                    state with { Exec = ResetExec(exec) },
+                    ShellNeedsCleanUp(state) ? [new StopExecEffect(), new CleanUpExecEffect(exec.Generation)] : [new StopExecEffect()]);
 
             case ExecStopRequested when exec.Status is ExecStatus.Ended or ExecStatus.Failed:
                 return (state with { Exec = Cleared(exec) }, None);
@@ -67,6 +69,19 @@ public static partial class DetailReducer
         && !start.Command.IsDefaultOrEmpty
         && start.Size.IsValid
         && !state.Exec.IsActive;
+
+    /// <summary>
+    /// Whether ending the shell now on purpose needs <see cref="ExecCleanUp"/> after it, because the engine keeps a TTY shell after
+    /// its stream closes: a shell was asked for and has not ended or failed by itself (a starting one counts: its create or start may
+    /// already have reached the engine), and the clean-up can run, in a container the last read saw running (not paused, not
+    /// restarting, not removed) on a connection that is still there. A stopped or restarting container has no processes left; a
+    /// paused one refuses an exec.
+    /// </summary>
+    public static bool ShellNeedsCleanUp(DetailState state) =>
+        state.Exec.IsActive
+        && !state.ConnectionLost
+        && !state.Removed
+        && state.Details?.State is { Running: true, Paused: false, Restarting: false };
 
     /// <summary>No shell: what the old one still sends is dropped (its generation is passed).</summary>
     private static ExecState ResetExec(ExecState exec) => Cleared(exec) with { Generation = exec.Generation + 1 };

@@ -34,7 +34,7 @@ public sealed class EngineExecTests : IDisposable
         var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Created, """{"Id":"e1"}"""));
         await using var _client = client;
 
-        await client.CreateExecAsync("abc", ["sh"], Size, CancellationToken.None);
+        await client.CreateExecAsync("abc", ["sh"], Size, [], CancellationToken.None);
 
         Assert.Equal(("POST", "/v1.56/containers/abc/exec"), stub.Requests[^1]);
         var body = stub.Bodies[^1];
@@ -50,12 +50,62 @@ public sealed class EngineExecTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_with_an_environment_posts_it()
+    {
+        var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Created, """{"Id":"e1"}"""));
+        await using var _client = client;
+
+        await client.CreateExecAsync("abc", ["sh"], Size, ["BERTH_EXEC=0123456789abcdef"], CancellationToken.None);
+
+        Assert.Contains("\"Env\":[\"BERTH_EXEC=0123456789abcdef\"]", stub.Bodies[^1]);
+    }
+
+    [Fact]
+    public async Task A_detached_exec_is_created_without_a_terminal_then_started_detached()
+    {
+        var (client, stub) = await ConnectedAsync(stub => stub
+            .On("/v1.56/containers/abc/exec", HttpStatusCode.Created, """{"Id":"e9"}""")
+            .On("/v1.56/exec/e9/start", HttpStatusCode.OK, ""));
+        await using var _client = client;
+
+        await client.RunDetachedExecAsync("abc", ["sh", "-c", "exit 0"], CancellationToken.None);
+
+        Assert.Equal([("POST", "/v1.56/containers/abc/exec"), ("POST", "/v1.56/exec/e9/start")], stub.Requests[^2..]);
+        var create = stub.Bodies[^2];
+        Assert.Contains("\"Tty\":false", create);
+        Assert.Contains("\"AttachStdin\":false", create);
+        Assert.Contains("\"AttachStdout\":false", create);
+        Assert.Contains("\"AttachStderr\":false", create);
+        Assert.Contains("\"Cmd\":[\"sh\",\"-c\",\"exit 0\"]", create);
+        Assert.DoesNotContain("\"ConsoleSize\"", create);
+        Assert.DoesNotContain("\"Env\"", create);
+        var start = stub.Bodies[^1];
+        Assert.Contains("\"Detach\":true", start);
+        Assert.Contains("\"Tty\":false", start);
+        Assert.DoesNotContain("\"ConsoleSize\"", start);
+    }
+
+    [Fact]
+    public async Task A_detached_exec_in_a_paused_container_throws_the_engines_409_and_starts_nothing()
+    {
+        const string Message = "Container abc is paused, unpause the container before exec";
+        var (client, stub) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Conflict, $$"""{"message":"{{Message}}"}"""));
+        await using var _client = client;
+
+        var error = await Assert.ThrowsAsync<EngineException>(() => client.RunDetachedExecAsync("abc", ["sh"], CancellationToken.None));
+
+        Assert.Equal(409, error.StatusCode);
+        Assert.Equal(Message, error.Message);
+        Assert.DoesNotContain(stub.Requests, r => r.PathAndQuery.Contains("/start", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Create_returns_the_exec_id()
     {
         var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Created, """{"Id":"e1"}"""));
         await using var _client = client;
 
-        Assert.Equal("e1", await client.CreateExecAsync("abc", ["bash", "-l"], Size, CancellationToken.None));
+        Assert.Equal("e1", await client.CreateExecAsync("abc", ["bash", "-l"], Size, [], CancellationToken.None));
     }
 
     [Fact]
@@ -65,7 +115,7 @@ public sealed class EngineExecTests : IDisposable
         var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.Conflict, $$"""{"message":"{{Message}}"}"""));
         await using var _client = client;
 
-        var error = await Assert.ThrowsAsync<EngineException>(() => client.CreateExecAsync("abc", ["sh"], Size, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<EngineException>(() => client.CreateExecAsync("abc", ["sh"], Size, [], CancellationToken.None));
 
         Assert.Equal(409, error.StatusCode);
         Assert.Equal(Message, error.Message);
@@ -77,7 +127,7 @@ public sealed class EngineExecTests : IDisposable
         var (client, _) = await ConnectedAsync(stub => stub.On("/v1.56/containers/abc/exec", HttpStatusCode.NotFound, """{"message":"No such container: abc"}"""));
         await using var _client = client;
 
-        var error = await Assert.ThrowsAsync<EngineException>(() => client.CreateExecAsync("abc", ["sh"], Size, CancellationToken.None));
+        var error = await Assert.ThrowsAsync<EngineException>(() => client.CreateExecAsync("abc", ["sh"], Size, [], CancellationToken.None));
 
         Assert.Equal(404, error.StatusCode);
         Assert.Equal("No such container: abc", error.Message);
@@ -89,7 +139,7 @@ public sealed class EngineExecTests : IDisposable
         var (client, stub) = await ConnectedAsync(_ => { });
         await using var _client = client;
 
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.CreateExecAsync("abc", ["sh"], new TerminalSize(0, 0), CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => client.CreateExecAsync("abc", ["sh"], new TerminalSize(0, 0), [], CancellationToken.None));
 
         Assert.Single(stub.Requests);
     }

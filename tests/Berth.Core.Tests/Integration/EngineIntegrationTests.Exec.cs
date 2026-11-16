@@ -24,7 +24,7 @@ public sealed partial class EngineIntegrationTests
             using var cts = new CancellationTokenSource(Patience);
             await client.ConnectAsync(cts.Token);
 
-            var execId = await client.CreateExecAsync(id, ["sh", "-c", "echo berth"], ExecSize, cts.Token);
+            var execId = await client.CreateExecAsync(id, ["sh", "-c", "echo berth"], ExecSize, [], cts.Token);
             string output;
             await using (var stream = await client.StartExecAsync(execId, ExecSize, cts.Token))
                 output = await ReadToEndAsync(stream, cts.Token);
@@ -50,7 +50,7 @@ public sealed partial class EngineIntegrationTests
             using var cts = new CancellationTokenSource(Patience);
             await client.ConnectAsync(cts.Token);
 
-            var execId = await client.CreateExecAsync(id, ["sh"], ExecSize, cts.Token);
+            var execId = await client.CreateExecAsync(id, ["sh"], ExecSize, [], cts.Token);
             await using var stream = await client.StartExecAsync(execId, ExecSize, cts.Token);
             await client.ResizeExecAsync(execId, new TerminalSize(120, 30), cts.Token);
             await stream.WriteAsync("stty size; exit 3\n"u8.ToArray(), cts.Token);
@@ -77,7 +77,7 @@ public sealed partial class EngineIntegrationTests
             using var cts = new CancellationTokenSource(Patience);
             await client.ConnectAsync(cts.Token);
 
-            var execId = await client.CreateExecAsync(id, ["cat"], ExecSize, cts.Token);
+            var execId = await client.CreateExecAsync(id, ["cat"], ExecSize, [], cts.Token);
             await using var stream = await client.StartExecAsync(execId, ExecSize, cts.Token);
             await stream.WriteAsync("berth\n"u8.ToArray(), cts.Token);
             await stream.FlushAsync(cts.Token);
@@ -93,6 +93,48 @@ public sealed partial class EngineIntegrationTests
         {
             await engine.Cli.RemoveAsync(name);
         }
+    }
+
+    [EngineFact]
+    public async Task The_clean_up_ends_a_marked_shell_and_what_it_started_but_not_another_shell()
+    {
+        await using var engine = TestEngine.FromEnvironment();
+        var name = DockerCli.NewContainerName();
+        try
+        {
+            var id = await engine.Cli.RunAsync(name);
+            await using var client = engine.CreateClient();
+            using var cts = new CancellationTokenSource(Patience);
+            await client.ConnectAsync(cts.Token);
+            var marker = Berth.Session.ExecCleanUp.NewMarker();
+            var other = Berth.Session.ExecCleanUp.NewMarker();
+
+            // The engine keeps a TTY shell after its connection closes; only the clean-up ends it.
+            var marked = await client.CreateExecAsync(id, ["sh"], ExecSize, [Berth.Session.ExecCleanUp.Variable(marker)], cts.Token);
+            var spared = await client.CreateExecAsync(id, ["sh"], ExecSize, [Berth.Session.ExecCleanUp.Variable(other)], cts.Token);
+            await using var markedStream = await client.StartExecAsync(marked, ExecSize, cts.Token);
+            await using var sparedStream = await client.StartExecAsync(spared, ExecSize, cts.Token);
+            await markedStream.WriteAsync("trap '' HUP; sleep 600 & echo started\n"u8.ToArray(), cts.Token);
+            await markedStream.FlushAsync(cts.Token);
+            await ReadUntilAsync(markedStream, "started", cts.Token);
+
+            await client.RunDetachedExecAsync(id, Berth.Session.ExecCleanUp.Command(marker), cts.Token);
+
+            Assert.False((await EndedAsync(client, marked, cts.Token)).Running);
+            // The sleep ignored the hang-up; the kill a second later ends it.
+            await WaitUntilAsync(async () => !(await engine.Cli.TopAsync(name)).Contains("sleep 600", StringComparison.Ordinal), cts.Token);
+            Assert.True((await client.InspectExecAsync(spared, cts.Token)).Running);
+        }
+        finally
+        {
+            await engine.Cli.RemoveAsync(name);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> done, CancellationToken ct)
+    {
+        while (!await done())
+            await Task.Delay(100, ct);
     }
 
     /// <summary>Inspects the exec until it no longer runs (the engine can report the end a moment after the stream closes).</summary>

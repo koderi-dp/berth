@@ -22,6 +22,9 @@ internal sealed class DockerCli(string engineAddress)
     /// <summary>The container's <c>State.Status</c>, such as "running", "paused" or "exited".</summary>
     public Task<string> StatusAsync(string name) => RunAsync("inspect", "--format", "{{.State.Status}}", name);
 
+    /// <summary>The processes running in the container, as <c>docker top</c> lists them.</summary>
+    public Task<string> TopAsync(string name) => RunAsync("top", name);
+
     public Task<string> StartedAtAsync(string name) => RunAsync("inspect", "--format", "{{.State.StartedAt}}", name);
 
     /// <summary>True when a container with this id, running or not, exists.</summary>

@@ -61,6 +61,12 @@ public sealed record StartExecEffect(int Generation, ImmutableArray<string> Comm
 /// <summary>End the current shell on purpose; nothing it still sends is shown.</summary>
 public sealed record StopExecEffect : DetailEffect;
 
+/// <summary>
+/// End what the shell of <see cref="Generation"/> left in the container (see <see cref="ExecCleanUp"/>): best effort, bounded, silent
+/// to the user. Follows the <see cref="StopExecEffect"/> of that shell.
+/// </summary>
+public sealed record CleanUpExecEffect(int Generation) : DetailEffect;
+
 /// <summary>Resize the running shell's terminal.</summary>
 public sealed record ResizeExecEffect(string ExecId, TerminalSize Size) : DetailEffect;
 

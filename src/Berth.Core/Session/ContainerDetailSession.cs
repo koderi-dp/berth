@@ -82,17 +82,25 @@ public sealed partial class ContainerDetailSession : IAsyncDisposable
     /// <summary>Empties the log view; lines that arrive later are shown.</summary>
     public void ClearLogs() => Post(new LogsClearRequested());
 
-    /// <summary>Cancels every call and stream. No <see cref="StateChanged"/> is raised after this returns.</summary>
+    /// <summary>
+    /// Cancels every call and stream, and ends a shell still asked for in the container (<see cref="ExecCleanUp"/>), waiting at most
+    /// <see cref="ExecCleanUpLimit"/> for that. No <see cref="StateChanged"/> is raised after this returns.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        Interlocked.Exchange(ref _release, null)?.Invoke();
         _events.Writer.TryComplete();
         _lifetime.Cancel();
         await _loop.ConfigureAwait(false);
         StopExecRun();
+        CleanUpLeftShell();
+
+        // Still tracked by the connection until the clean-ups end, so a connection retired meanwhile waits for them before it
+        // disposes the engine client.
+        await WaitForCleanUpsAsync().ConfigureAwait(false);
+        Interlocked.Exchange(ref _release, null)?.Invoke();
         await StopCallsAsync().ConfigureAwait(false);
 
         foreach (var scope in _spentStreams)
@@ -115,6 +123,8 @@ public sealed partial class ContainerDetailSession : IAsyncDisposable
     internal async Task CutOffAsync()
     {
         StopExecRun();
+        CleanUpLeftShell();
+        await WaitForCleanUpsAsync().ConfigureAwait(false);
         await StopCallsAsync().ConfigureAwait(false);
         Post(new DetailConnectionLost());
     }
@@ -220,6 +230,10 @@ public sealed partial class ContainerDetailSession : IAsyncDisposable
 
             case StopExecEffect:
                 StopExecRun();
+                break;
+
+            case CleanUpExecEffect cleanUp:
+                StartCleanUp(cleanUp.Generation);
                 break;
 
             case ResizeExecEffect resize:

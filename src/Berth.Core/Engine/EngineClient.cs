@@ -332,10 +332,24 @@ public sealed class EngineClient : IEngineApi
         return wire.Id ?? "";
     }
 
-    public async Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct)
+    public Task<string> CreateExecAsync(
+        string containerId, IReadOnlyList<string> command, TerminalSize size, IReadOnlyList<string> environment, CancellationToken ct)
     {
         var consoleSize = ConsoleSize(size);
-        var body = JsonBody(new WireExecCreate(true, true, true, true, command, consoleSize), EngineJson.Default.WireExecCreate);
+        var env = environment.Count == 0 ? null : environment;
+        return CreateExecAsync(containerId, new WireExecCreate(true, true, true, true, command, consoleSize) { Env = env }, ct);
+    }
+
+    public async Task RunDetachedExecAsync(string containerId, IReadOnlyList<string> command, CancellationToken ct)
+    {
+        var execId = await CreateExecAsync(containerId, new WireExecCreate(false, false, false, false, command, null), ct).ConfigureAwait(false);
+        var body = JsonBody(new WireExecStart(Detach: true, Tty: false, ConsoleSize: null), EngineJson.Default.WireExecStart);
+        using var response = await SendAsync(HttpMethod.Post, ExecPath(execId, "/start"), PlainTimeout, ct, body).ConfigureAwait(false);
+    }
+
+    private async Task<string> CreateExecAsync(string containerId, WireExecCreate create, CancellationToken ct)
+    {
+        var body = JsonBody(create, EngineJson.Default.WireExecCreate);
         using var response = await SendAsync(HttpMethod.Post, ContainerPath(containerId, "/exec"), PlainTimeout, ct, body).ConfigureAwait(false);
         var wire = await ReadAsync(response, EngineJson.Default.WireCreated, ct).ConfigureAwait(false);
         return wire.Id ?? "";
