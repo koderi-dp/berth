@@ -59,6 +59,9 @@ internal sealed class ListColumns<TSort> where TSort : struct, Enum
 
     public ImmutableArray<ListColumn<TSort>> All { get; }
 
+    /// <summary>Whether the column at <paramref name="index"/> is there in the wide layout only.</summary>
+    public bool IsWideOnly(int index) => index >= 0 && index < All.Length && All[index].WideOnly;
+
     /// <summary>The column widths of the compact or the wide layout.</summary>
     public GridSize[] Widths(bool isCompact) => isCompact ? compact : wide;
 }
@@ -106,7 +109,7 @@ internal static class ListTable
             Element? cell =
                 column.IsSelect ? SelectBox(checkedState, onCheckAll, "Select all").IsEnabled(connected)
                 : column is { Title: { } title, SortBy: { } by } ? SortTitle(title, by, column.AlignRight, sort)
-                : column.Title is { } plain ? ColumnTitle(plain)
+                : column.Title is { } plain ? ColumnTitle(plain, column.AlignRight)
                 : null;
             if (cell is not null)
                 cells.Add(cell.Grid(column: i));
@@ -117,12 +120,16 @@ internal static class ListTable
 
     /// <summary>
     /// One row of the table: <paramref name="cells"/> (each placed with <c>.Grid(column: n)</c>) in the table's columns, at least
-    /// <paramref name="minHeight"/> tall, with a divider under it.
+    /// <paramref name="minHeight"/> tall, with a divider under it. In the compact layout a cell in a wide-only column is left out, as
+    /// the header leaves out its title, so a page can pass the same cells in both layouts.
     /// </summary>
-    public static Element Row<TSort>(ListColumns<TSort> columns, bool compact, double minHeight, params Element[] cells) where TSort : struct, Enum =>
-        Border(Grid(columns.Widths(compact), OneRow, cells).MinHeight(minHeight).Padding(12, 0, 8, 0))
+    public static Element Row<TSort>(ListColumns<TSort> columns, bool compact, double minHeight, params Element[] cells) where TSort : struct, Enum
+    {
+        var shown = compact ? Array.FindAll(cells, cell => !columns.IsWideOnly(ColumnOf(cell))) : cells;
+        return Border(Grid(columns.Widths(compact), OneRow, shown).MinHeight(minHeight).Padding(12, 0, 8, 0))
             .BorderBrush(Theme.DividerStroke)
             .BorderThickness(0, 0, 0, 1);
+    }
 
     /// <summary>
     /// The table: <paramref name="header"/> above the virtualized rows. <paramref name="items"/> is the flat list of what the table
@@ -191,8 +198,16 @@ internal static class ListTable
 
     private static readonly GridSize[] OneRow = [GridSize.Star()];
 
-    private static Element ColumnTitle(string text) =>
-        Caption(text).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center);
+    /// <summary>A title that does not sort; a number column's ends where its cells' text ends.</summary>
+    private static Element ColumnTitle(string text, bool alignRight)
+    {
+        var title = Caption(text).Foreground(Theme.SecondaryText).VAlign(VerticalAlignment.Center);
+        return alignRight ? title.HAlign(HorizontalAlignment.Right).Margin(0, 0, NumberCellEndMargin, 0) : title;
+    }
+
+    /// <summary>The grid column a cell was placed in with <c>.Grid(column: n)</c>; 0 when it was not placed.</summary>
+    private static int ColumnOf(Element cell) =>
+        cell.Attached is { } attached && attached.TryGetValue(typeof(GridAttached), out var placed) && placed is GridAttached grid ? grid.Column : 0;
 
     /// <summary>
     /// A column title as a borderless button: its text, and an arrow while the table is sorted by it (up ascending, down

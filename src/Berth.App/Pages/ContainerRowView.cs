@@ -134,7 +134,7 @@ internal static class ContainerRowView
             ListTable.CellText(row.Image).Grid(column: 4),
             ListTable.CellText(row.Status, statusColor).Grid(column: 5),
             ContainerParts.PortList(row.Ports, ShownPorts).VAlign(VerticalAlignment.Center).Margin(0, 0, 12, 0).Grid(column: 6),
-            compact ? Empty() : Component<CpuCell, CpuCellProps>(new(cpu)).Grid(column: 7),
+            Component<CpuCell, CpuCellProps>(new(cpu)).Grid(column: 7), // left out in the compact layout, which has no CPU column
             ListTable.CellText(AgeFormat.Ago(DateTimeOffset.UtcNow, row.Created)).Grid(column: 8),
             ContainerParts.ActionButtons(actions, compact, row.Name, Run).Grid(column: 9))
             .WithContextFlyout(ContainerParts.ContextMenu(actions, Run));
