@@ -15,6 +15,9 @@ public sealed record UsageFilter(string Search, UsageShow Show)
 {
     public static readonly UsageFilter All = new("", UsageShow.All);
 
+    /// <summary>The search or filter may hide an unused row, so "Remove unused …" covers more than the rows shown.</summary>
+    public bool MayHideUnused => Search.Trim().Length > 0 || Show == UsageShow.InUse;
+
     internal bool Keeps(bool inUse) => Show switch
     {
         UsageShow.InUse => inUse,

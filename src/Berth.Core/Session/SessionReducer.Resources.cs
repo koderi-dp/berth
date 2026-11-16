@@ -271,12 +271,15 @@ public static partial class SessionReducer
         return connected ? Load(wanted, kind) : (wanted, None);
     }
 
-    /// <summary>Reads the list now with a new generation, which supersedes any read still in flight.</summary>
+    /// <summary>
+    /// Reads the list now with a new generation, which supersedes any read still in flight. A failed read's error stays until a read
+    /// succeeds: what is unused is not known meanwhile.
+    /// </summary>
     private static (EngineState, ImmutableArray<SessionEffect>) Load(EngineState state, ResourceKind kind)
     {
         var ticket = state.Ticket + 1;
         return (
-            WithStatus(state with { Ticket = ticket }, kind, StatusOf(state, kind) with { Generation = ticket, LoadError = null }),
+            WithStatus(state with { Ticket = ticket }, kind, StatusOf(state, kind) with { Generation = ticket }),
             [new LoadResourceEffect(kind, ticket)]);
     }
 

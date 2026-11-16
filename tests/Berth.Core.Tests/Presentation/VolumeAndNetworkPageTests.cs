@@ -191,4 +191,18 @@ public sealed class VolumeAndNetworkPageTests
         Assert.Equal([new NetworkMember("job", "job"), new NetworkMember("web", "web")], NetworkRows.Members(state, "bridge"));
         Assert.Empty(NetworkRows.Members(state, "other"));
     }
+
+    [Fact]
+    public void A_search_or_a_filter_that_can_hide_unused_rows_is_known()
+    {
+        Assert.False(UsageFilter.All.MayHideUnused);
+        Assert.False(new UsageFilter("  ", UsageShow.Unused).MayHideUnused);
+        Assert.True(new UsageFilter("data", UsageShow.All).MayHideUnused);
+        Assert.True(new UsageFilter("", UsageShow.InUse).MayHideUnused);
+        Assert.False(ImageFilter.All.MayHideUnused);
+        Assert.False(new ImageFilter("", ImageShow.Unused).MayHideUnused);
+        Assert.True(new ImageFilter("", ImageShow.Dangling).MayHideUnused);
+        Assert.True(new ImageFilter("", ImageShow.InUse).MayHideUnused);
+        Assert.True(new ImageFilter("nginx", ImageShow.All).MayHideUnused);
+    }
 }

@@ -52,7 +52,6 @@ internal sealed class VolumesPage : ListPageComponent
         // A delete plans from the rows shown (the filter and search), when asked and again at confirm.
         var remove = UseRemoveDialogs(state, (now, keys) =>
             Confirmations.RemoveVolumes(VolumeRows.Shown(VolumeRows.From(now), view.Filter, view.Sort), keys, now.Status == ConnectionStatus.Connected));
-        var unusedNotKnown = Confirmations.UnusedNotKnown(state);
 
         handlers.SetChecked = setChecked;
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });
@@ -86,9 +85,9 @@ internal sealed class VolumesPage : ListPageComponent
             new ToolbarAction(
                 "Remove unused volumes…",
                 "remove-unused-volumes",
-                () => remove.AskUnused(Confirmations.PruneVolumes(state)),
-                connected && removal is not { IsRunning: true } && unusedNotKnown is null,
-                unusedNotKnown ?? "Remove every volume no container uses, and the data in it"));
+                () => remove.AskUnused(Confirmations.PruneVolumes(state, listNarrowed: filter.MayHideUnused)),
+                connected && removal is not { IsRunning: true },
+                "Remove every volume no container uses, and the data in it"));
 
         var bulk = ListPage.BulkBar(
             RowSelection.SelectedCount(rows, checkedKeys),

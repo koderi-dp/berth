@@ -15,6 +15,9 @@ public enum ImageColumn { Name, Tag, Created, Size }
 public sealed record ImageFilter(string Search, ImageShow Show)
 {
     public static readonly ImageFilter All = new("", ImageShow.All);
+
+    /// <summary>The search or filter may hide an unused image, so "Remove unused images" covers more than the rows shown.</summary>
+    public bool MayHideUnused => Search.Trim().Length > 0 || Show is ImageShow.InUse or ImageShow.Dangling;
 }
 
 /// <summary>

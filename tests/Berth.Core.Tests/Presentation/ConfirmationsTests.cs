@@ -102,7 +102,51 @@ public sealed class ConfirmationsTests
 
         // b keeps its tag b:2, so only a is deleted.
         Assert.Equal<RemovalItem>([new RemovalItem("sha256:a"), new RemovalItem("sha256:b", ["b:1"])], plan.Items);
-        Assert.Equal("These will be removed:\na:1\nb:1\nImages that keep other tags lose only the tag.\n3 KB will be freed.", plan.Text);
+        Assert.Equal(
+            "These will be removed:\na:1\nb:1\nImages that keep other tags lose only the tag.\n3 KB will be freed; 1 KB is shared with other images and stays.",
+            plan.Text);
+    }
+
+    [Fact]
+    public void Deleting_several_images_says_at_least_their_own_sizes_are_freed()
+    {
+        var rows = ImageRowsOf(Image("sha256:a", ["a:1"]), Image("sha256:b", ["b:1"]));
+        var usage = Usage(images: [new ImageDiskUsage("sha256:a", 4096, 1024, 3072, 0), new ImageDiskUsage("sha256:b", 2048, 1024, 1024, 0)]);
+
+        var plan = Confirmations.RemoveImages(rows, rows, ["a:1", "b:1"], connected: true, usage);
+
+        Assert.Equal("These will be removed:\na:1\nb:1\nAt least 4 KB will be freed.", plan.Text);
+    }
+
+    [Fact]
+    public void Deleting_one_image_with_nothing_shared_says_only_what_is_freed()
+    {
+        var rows = ImageRowsOf(Image("sha256:a", ["a:1"]));
+        var usage = Usage(images: [new ImageDiskUsage("sha256:a", 4096, 0, 4096, 0)]);
+
+        var plan = Confirmations.RemoveImages(rows, rows, ["a:1"], connected: true, usage);
+
+        Assert.Equal("a:1 will be deleted from this engine.\n4 KB will be freed.", plan.Text);
+    }
+
+    [Fact]
+    public void Deleting_an_image_a_container_uses_names_the_containers_and_says_the_engine_will_refuse()
+    {
+        var state = StateWith(
+            images: [Image("sha256:a", ["a:1"], containers: 1), Image("sha256:b", ["b:1", "b:2"], containers: 1), Image("sha256:c", ["c:1"])],
+            containers: [User("web", imageId: "sha256:a"), User("job", imageId: "sha256:b")]);
+        var rows = ImageRows.From(state);
+
+        var one = RemoveImages(rows, "a:1");
+        var untag = RemoveImages(rows, "b:1");
+        var several = RemoveImages(rows, "a:1", "c:1");
+
+        Assert.Equal("a:1 will be deleted from this engine.\nUsed by web. The engine will refuse while a container uses it.", one.Text);
+        // Removing one of several tags only untags: the engine allows it while the image is in use.
+        Assert.Equal("The tag b:1 will be removed. The image keeps its other tags.", untag.Text);
+        Assert.Equal(
+            "These will be removed:\na:1\nc:1\nIn use, so the engine will refuse them while a container uses them:\na:1 (used by web)",
+            several.Text);
     }
 
     [Fact]
@@ -165,6 +209,28 @@ public sealed class ConfirmationsTests
     }
 
     [Fact]
+    public void Removing_a_volume_a_container_uses_names_the_containers_and_says_the_engine_will_refuse()
+    {
+        var state = StateWith(
+            volumes: [Volume("berth-ref-vol"), Volume("logs")],
+            containers: [User("berth-ref-voluser", volumes: ["berth-ref-vol"]), User("backup", volumes: ["berth-ref-vol"])]);
+        var rows = VolumeRows.From(state);
+
+        var one = Confirmations.RemoveVolumes(rows, ["berth-ref-vol"], connected: true);
+        var both = Confirmations.RemoveVolumes(rows, ["berth-ref-vol", "logs"], connected: true);
+        var unused = Confirmations.RemoveVolumes(rows, ["logs"], connected: true);
+
+        Assert.Equal(
+            "berth-ref-vol will be removed. The data in it is lost for good.\nUsed by backup, berth-ref-voluser. The engine will refuse while a container uses it.",
+            one.Text);
+        Assert.Equal(
+            "2 volumes will be removed:\nberth-ref-vol\nlogs\nThe data in them is lost for good.\n"
+            + "In use, so the engine will refuse them while a container uses them:\nberth-ref-vol (used by backup, berth-ref-voluser)",
+            both.Text);
+        Assert.Equal("logs will be removed. The data in it is lost for good.", unused.Text);
+    }
+
+    [Fact]
     public void A_volume_the_filter_no_longer_shows_is_not_removed()
     {
         var state = StateWith(volumes: [Volume("data"), Volume("logs")], containers: [User("web", volumes: ["data"])]);
@@ -180,7 +246,7 @@ public sealed class ConfirmationsTests
     {
         var rows = NetworkRows.From(StateWith(networks: [Network("id-bridge", "bridge"), Network("id-app", "app")]));
 
-        var plan = Confirmations.RemoveNetworks(rows, ["id-bridge", "id-app"], connected: true);
+        var plan = Confirmations.RemoveNetworks(rows, ["id-bridge", "id-app"], connected: true, containersKnown: true);
 
         Assert.Equal<RemovalItem>([new RemovalItem("id-app")], plan.Items);
         Assert.Equal("app will be removed.", plan.Text);
@@ -193,8 +259,8 @@ public sealed class ConfirmationsTests
         var containers = Enumerable.Range(1, 12).Select(i => User($"c{i:00}", networks: ["app"])).Append(User("db", networks: ["data"]));
         var rows = NetworkRows.From(StateWith(networks: [Network("id-app", "app"), Network("id-data", "data")], containers: containers));
 
-        var one = Confirmations.RemoveNetworks(rows, ["id-data"], connected: true);
-        var both = Confirmations.RemoveNetworks(rows, ["id-app", "id-data"], connected: true);
+        var one = Confirmations.RemoveNetworks(rows, ["id-data"], connected: true, containersKnown: true);
+        var both = Confirmations.RemoveNetworks(rows, ["id-app", "id-data"], connected: true, containersKnown: true);
 
         Assert.Equal("data will be removed.\nThese containers are attached and will lose this network:\ndb", one.Text);
         var lines = both.Text.Split('\n');
@@ -203,7 +269,50 @@ public sealed class ConfirmationsTests
         Assert.Equal("and 3 more", lines[14]);
     }
 
+    [Fact]
+    public void Removing_a_network_while_the_container_list_is_not_known_says_the_attached_containers_are_not_known()
+    {
+        var rows = NetworkRows.From(StateWith(networks: [Network("id-app", "app")]));
+
+        var plan = Confirmations.RemoveNetworks(rows, ["id-app"], connected: true, containersKnown: false);
+
+        Assert.Equal("app will be removed.\nThe container list has not been read, so the containers attached are not known.", plan.Text);
+        Assert.Equal<RemovalItem>([new RemovalItem("id-app")], plan.Items);
+    }
+
     // Remove unused
+
+    [Fact]
+    public void Removing_unused_names_every_item_however_many()
+    {
+        var state = StateWith(volumes: [.. Enumerable.Range(1, 40).Select(i => Volume($"v{i:00}"))]);
+
+        var plan = Confirmations.PruneVolumes(state);
+
+        var lines = plan.Text.Split('\n');
+        Assert.Equal("40 volumes that no container uses will be removed:", lines[0]);
+        Assert.Equal([.. Enumerable.Range(1, 40).Select(i => $"v{i:00}")], lines[1..41]);
+        Assert.Equal("The data in them is lost for good.", lines[41]);
+        Assert.DoesNotContain(lines, l => l.EndsWith(" more", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Removing_unused_while_the_list_is_narrowed_says_it_is_engine_wide()
+    {
+        var state = StateWith(
+            images: [Image("sha256:b", ["b:1"])], volumes: [Volume("old")], networks: [Network("4", "old")]);
+
+        Assert.Equal(
+            "1 volume that no container uses will be removed:\nold\nThis is every unused volume on the engine, not only the rows shown.\nThe data in it is lost for good.",
+            Confirmations.PruneVolumes(state, listNarrowed: true).Text);
+        Assert.Equal(
+            "1 image that no container uses will be removed:\nb:1\nThis is every unused image on the engine, not only the rows shown.",
+            Confirmations.PruneImages(state, danglingOnly: false, listNarrowed: true).Text);
+        Assert.Equal(
+            "1 network that no container uses will be removed:\nold\nThis is every unused network on the engine, not only the rows shown.",
+            Confirmations.PruneNetworks(state, listNarrowed: true).Text);
+        Assert.Equal("1 network that no container uses will be removed:\nold", Confirmations.PruneNetworks(state).Text);
+    }
 
     [Fact]
     public void Removing_unused_images_sends_a_multi_tag_image_as_its_tags_in_order_and_any_other_by_id()
@@ -323,6 +432,48 @@ public sealed class ConfirmationsTests
         Assert.Equal("The container list could not be read, so what is in use is not known.", Confirmations.UnusedNotKnown(failed));
         Assert.Equal(Confirmations.UnusedNotKnown(failed), Confirmations.UnusedNotKnown(failed with { ListLoaded = false }));
     }
+
+    [Theory]
+    [InlineData(ResourceKind.Images, "image")]
+    [InlineData(ResourceKind.Volumes, "volume")]
+    [InlineData(ResourceKind.Networks, "network")]
+    public void What_is_unused_is_known_only_once_the_kinds_own_list_has_been_read_on_this_connection(ResourceKind kind, string noun)
+    {
+        var loaded = StateWith(volumes: [Volume("data")], networks: [Network("1", "app")], images: [Image("sha256:a", ["a:1"])]);
+        Assert.Null(Confirmations.UnusedNotKnown(loaded, kind));
+
+        var notLoaded = WithListStatus(loaded, kind, s => s with { Loaded = false });
+        var failed = WithListStatus(loaded, kind, s => s with { LoadError = "list broke" });
+        var failedBeforeAny = WithListStatus(loaded, kind, s => s with { Loaded = false, LoadError = "list broke" });
+
+        Assert.Equal($"Waiting for the {noun} list.", Confirmations.UnusedNotKnown(notLoaded, kind));
+        Assert.Equal($"The {noun} list could not be read, so what is unused is not known.", Confirmations.UnusedNotKnown(failed, kind));
+        Assert.Equal(Confirmations.UnusedNotKnown(failed, kind), Confirmations.UnusedNotKnown(failedBeforeAny, kind));
+        // The container list comes first: without it nothing is known.
+        Assert.Equal(Confirmations.UnusedNotKnown(loaded with { ListLoaded = false }), Confirmations.UnusedNotKnown(notLoaded with { ListLoaded = false }, kind));
+
+        PrunePlan Plan(EngineState s) => kind switch
+        {
+            ResourceKind.Images => Confirmations.PruneImages(s, danglingOnly: false),
+            ResourceKind.Volumes => Confirmations.PruneVolumes(s),
+            _ => Confirmations.PruneNetworks(s),
+        };
+
+        Assert.False(Plan(loaded).IsEmpty);
+        foreach (var unknown in new[] { notLoaded, failed })
+        {
+            Assert.True(Plan(unknown).IsEmpty);
+            Assert.Equal(Confirmations.UnusedNotKnown(unknown, kind), Plan(unknown).Text);
+            Assert.True(Confirmations.ConfirmPrune(Plan(loaded), unknown).IsEmpty);
+        }
+    }
+
+    private static EngineState WithListStatus(EngineState state, ResourceKind kind, Func<ListStatus, ListStatus> change) => kind switch
+    {
+        ResourceKind.Images => state with { Images = state.Images with { Status = change(state.Images.Status) } },
+        ResourceKind.Volumes => state with { Volumes = state.Volumes with { Status = change(state.Volumes.Status) } },
+        _ => state with { Networks = state.Networks with { Status = change(state.Networks.Status) } },
+    };
 
     [Theory]
     [InlineData(false)]

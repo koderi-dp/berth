@@ -50,8 +50,11 @@ internal sealed class NetworksPage : ListPageComponent
         var removalPanel = UseMemo(() => RemovalPanel.Render(removal, ResourceKind.Networks, NameOf(state)), removal ?? NoBatch, state.Networks.Items);
         // A delete plans from the rows shown (the filter and search), when asked and again at confirm; never a built-in network.
         var remove = UseRemoveDialogs(state, (now, keys) =>
-            Confirmations.RemoveNetworks(NetworkRows.Shown(NetworkRows.From(now), view.Filter, view.Sort), keys, now.Status == ConnectionStatus.Connected));
-        var unusedNotKnown = Confirmations.UnusedNotKnown(state);
+            Confirmations.RemoveNetworks(
+                NetworkRows.Shown(NetworkRows.From(now), view.Filter, view.Sort),
+                keys,
+                now.Status == ConnectionStatus.Connected,
+                containersKnown: Confirmations.UnusedNotKnown(now) is null));
 
         handlers.SetChecked = setChecked;
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });
@@ -86,9 +89,9 @@ internal sealed class NetworksPage : ListPageComponent
             new ToolbarAction(
                 "Remove unused networks…",
                 "remove-unused-networks",
-                () => remove.AskUnused(Confirmations.PruneNetworks(state)),
-                connected && removal is not { IsRunning: true } && unusedNotKnown is null,
-                unusedNotKnown ?? "Remove every network, other than the built-in ones, that no container is attached to"));
+                () => remove.AskUnused(Confirmations.PruneNetworks(state, listNarrowed: filter.MayHideUnused)),
+                connected && removal is not { IsRunning: true },
+                "Remove every network, other than the built-in ones, that no container is attached to"));
 
         var bulk = ListPage.BulkBar(
             RowSelection.SelectedCount(rows, checkedKeys),

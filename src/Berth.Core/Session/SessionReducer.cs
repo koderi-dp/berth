@@ -115,14 +115,15 @@ public static partial class SessionReducer
                 if (!connected)
                     return (cleared, None);
                 var generation = state.LoadGeneration + 1;
-                return (cleared with { LoadGeneration = generation, ContainersLoadError = null }, [new LoadContainersEffect(generation)]);
+                return (cleared with { LoadGeneration = generation }, [new LoadContainersEffect(generation)]);
             }
 
             case ReloadRequested when connected:
             {
                 // At once, not debounced: the user is waiting. A load still in flight is superseded by the new generation.
                 var generation = state.LoadGeneration + 1;
-                return (state with { LoadGeneration = generation, ContainersLoadError = null }, ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation)))
+                // A failed read's error stays until a read succeeds: what is unused is not known meanwhile.
+                return (state with { LoadGeneration = generation }, ImmutableArray.Create<SessionEffect>(new LoadContainersEffect(generation)))
                     .Then(ReloadWantedLists);
             }
 

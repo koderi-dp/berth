@@ -595,7 +595,7 @@ public sealed partial class SessionReducerTests
     // Load errors
 
     [Fact]
-    public void A_failed_list_read_is_kept_on_the_list_until_a_read_starts_again()
+    public void A_failed_list_read_is_kept_on_the_list_until_a_read_succeeds()
     {
         var (wanted, effects) = Reduce(Connected(), new VolumesWanted());
         var load = Assert.IsType<LoadResourceEffect>(Assert.Single(effects));
@@ -606,11 +606,12 @@ public sealed partial class SessionReducerTests
 
         var (retrying, retryEffects) = Reduce(failed, new VolumesWanted());
         var retry = Assert.IsType<LoadResourceEffect>(Assert.Single(retryEffects));
-        Assert.Null(retrying.Volumes.LoadError);
+        // Kept while the read runs: "Remove unused" must not plan from a list whose last read failed.
+        Assert.Equal("volumes broke", retrying.Volumes.LoadError);
 
         var (failedAgain, _) = Reduce(retrying, new ResourceLoadFailed(ResourceKind.Volumes, retry.Generation, "still broken", EngineUnreachable: false));
         var (reloading, reloadEffects) = Reduce(failedAgain, new ReloadRequested());
-        Assert.Null(reloading.Volumes.LoadError);
+        Assert.Equal("still broken", reloading.Volumes.LoadError);
         var again = reloadEffects.OfType<LoadResourceEffect>().Single();
 
         var (loaded, _) = Reduce(reloading, new VolumesLoaded(again.Generation, [Volume("data")]));
@@ -619,7 +620,7 @@ public sealed partial class SessionReducerTests
     }
 
     [Fact]
-    public void A_failed_container_list_read_is_kept_until_a_read_starts_again()
+    public void A_failed_container_list_read_is_kept_until_a_read_succeeds()
     {
         var (connecting, _) = Reduce(EngineState.Initial, new ConnectRequested());
         var (connected, _) = Reduce(connecting, new ConnectSucceeded(Version, Info));
@@ -629,11 +630,15 @@ public sealed partial class SessionReducerTests
         Assert.False(failed.ListLoaded);
 
         var (reloading, effects) = Reduce(failed, new ReloadRequested());
-        Assert.Null(reloading.ContainersLoadError);
+        Assert.Equal("list broke", reloading.ContainersLoadError);
         var load = effects.OfType<LoadContainersEffect>().Single();
 
-        var (failedAgain, _) = Reduce(reloading, new LoadFailed(load.Generation, "list broke", EngineUnreachable: false));
-        var (loaded, _) = Reduce(failedAgain, new ContainersLoaded(load.Generation, [Container("a")], Info));
+        var (failedAgain, _) = Reduce(reloading, new LoadFailed(load.Generation, "list broke again", EngineUnreachable: false));
+        var (due, dueEffects) = Reduce(failedAgain with { ReloadScheduled = true }, new ReloadDue());
+        Assert.Equal("list broke again", due.ContainersLoadError);
+        var dueLoad = dueEffects.OfType<LoadContainersEffect>().Single();
+
+        var (loaded, _) = Reduce(due, new ContainersLoaded(dueLoad.Generation, [Container("a")], Info));
         Assert.Null(loaded.ContainersLoadError);
     }
 

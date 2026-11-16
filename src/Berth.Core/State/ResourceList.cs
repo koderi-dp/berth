@@ -97,7 +97,7 @@ public sealed record RemovalBatch(int Total, int Finished, int Running, Immutabl
 /// </param>
 /// <param name="Removal">The last batch of removes of this list, running or ended; null when none or dismissed.</param>
 /// <param name="LoadError">
-/// Why the last read of the list failed, as the engine said it; null once a read starts or succeeds. With <see cref="Loaded"/> false it
+/// Why the last read of the list failed, as the engine said it; null once a read succeeds (and on a new connection). With <see cref="Loaded"/> false it
 /// tells a page the list failed rather than is loading; showing the page again (its "wanted" event) or F5 reads it again.
 /// </param>
 public sealed record ListStatus(

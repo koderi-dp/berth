@@ -71,7 +71,6 @@ internal sealed class ImagesPage : ListPageComponent
             var nowAll = ImageRows.From(now);
             return Confirmations.RemoveImages(ImageRows.Shown(nowAll, view.Filter, view.Sort), nowAll, keys, now.Status == ConnectionStatus.Connected, now.DiskUsage.Usage);
         });
-        var unusedNotKnown = Confirmations.UnusedNotKnown(state);
 
         void FocusPull(string key) => setPullFocus(new PullRowsProps(key, pullFocus.FocusRequest + 1));
 
@@ -132,9 +131,9 @@ internal sealed class ImagesPage : ListPageComponent
             new ToolbarAction(
                 "Remove unused images…",
                 "remove-unused-images",
-                () => remove.AskUnused(Confirmations.PruneImages(state, danglingOnly: false)),
-                connected && removal is not { IsRunning: true } && unusedNotKnown is null,
-                unusedNotKnown ?? "Remove every image no container uses"));
+                () => remove.AskUnused(Confirmations.PruneImages(state, danglingOnly: false, listNarrowed: filter.MayHideUnused)),
+                connected && removal is not { IsRunning: true },
+                "Remove every image no container uses"));
 
         var selected = RowSelection.SelectedCount(rows, checkedKeys);
         var bulk = ListPage.BulkBar(
