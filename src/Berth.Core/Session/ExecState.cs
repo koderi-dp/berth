@@ -7,11 +7,12 @@ namespace Berth.Session;
 public enum ExecStatus { NotStarted, Starting, Running, Ended, Failed }
 
 /// <summary>
-/// The shell of a container's Exec tab: only its status, never a byte of what it reads or prints. Only
+/// The shell of a container's Exec tab: its status and the command it was started with, never a byte of what it reads or prints.
+/// The command is kept in memory only (for "Starting …" and the hint after a missing shell); it is never logged or saved. Only
 /// <see cref="DetailReducer"/> produces new values.
 /// </summary>
 /// <param name="Generation">Of the latest shell asked for; older results are dropped. 0 before the first.</param>
-/// <param name="Command">The command of the latest shell asked for; empty before the first.</param>
+/// <param name="Command">The command of the latest shell asked for, in memory only; empty before the first.</param>
 /// <param name="Size">The terminal's latest size.</param>
 /// <param name="ExecId">While Running: the engine's ID of the exec.</param>
 /// <param name="ExitCode">When Ended: the shell's exit code, or null when the engine could not say.</param>

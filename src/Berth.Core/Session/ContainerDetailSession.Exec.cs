@@ -8,7 +8,8 @@ namespace Berth.Session;
 /// <summary>
 /// The Exec tab's shell: create and start it, then pump bytes both ways between its stream and the attached
 /// <see cref="IExecOutput"/>. Output waits on the terminal (back-pressure); input has its own loop, so a keystroke never waits
-/// behind output. Only the status goes to the state; no byte and no command is formatted, logged or kept.
+/// behind output. Only the status (and the command, in memory) goes to the state; no byte is formatted, logged or kept, and the
+/// command is never logged.
 /// </summary>
 /// <remarks>
 /// Ending a shell on purpose (a stop, the session disposed or cut off): the input loop is stopped first, then the stream's write

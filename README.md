@@ -68,17 +68,22 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
     (the tab is left, the shell is changed, the connection is switched, Berth is closed, the
     terminal stopped working, or the session ended while the container still ran it) it runs
     a short clean-up command in the same container that sends a hang-up (HUP) to every
-    process carrying that id: the shell and what it started end, as they do when a terminal
-    window is closed. The docker CLI does not do this: after `docker exec -it`, a shell whose
-    connection dropped keeps running. Work started with `nohup` (or a program that handles the
-    hang-up itself) is not ended. In an image without `sh`, `grep` or `/proc`, or where the
-    container's user cannot read a process, nothing is ended; the attempt is only logged.
+    process carrying that id: the shell and everything started from it end. That includes a
+    service or server started by hand from the shell (`nginx`, a dev server) even when it went
+    into the background, which closing a terminal window would not end; start long-running
+    work with `nohup`, or with "Open in external terminal", to keep it. The docker CLI does not
+    do this: after `docker exec -it`, a shell whose connection dropped keeps running. A program
+    that handles the hang-up itself is not ended either. In an image without `sh`, `grep` or
+    `/proc`, or where the container's user cannot read a process, nothing is ended, and Berth
+    is not told: only a clean-up that the engine refused to start is logged.
   - **Open in external terminal** runs the same shell with `docker exec -it` in a Windows
     Terminal tab, or, when Windows Terminal is not installed, in a console window of its own.
     It needs the docker CLI on `PATH` (otherwise the button is disabled and says why). The
-    command names the engine with `-H` (and its TLS files), and Berth removes `DOCKER_HOST`,
-    `DOCKER_CONTEXT`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH` and `DOCKER_TLS` from what it
-    starts. Windows Terminal re-reads what it is given, so a custom command is refused there
+    command names the engine with `-H` (and its TLS files), so it always reaches the connection's
+    engine. Berth also removes `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_TLS_VERIFY`,
+    `DOCKER_CERT_PATH` and `DOCKER_TLS` from what it starts; the console's docker never sees
+    them, but Windows Terminal may give its tab its own environment, so a `DOCKER_TLS_VERIFY` or
+    `DOCKER_CERT_PATH` set for your user can still reach docker there. Windows Terminal re-reads what it is given, so a custom command is refused there
     (and the button says "Copy it instead") when an argument is empty, is `--`, holds a double
     quote, a `%`, a tab or line break or half of a surrogate pair, or has a space and ends in a
     backslash; with Windows Terminal installed such a command is not handed to the console

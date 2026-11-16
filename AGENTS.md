@@ -64,7 +64,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             batched to ten state changes a second per pull), Backoff;
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container); the shell:
-                            ExecState (its status only), DetailReducer.Exec, ContainerDetailSession.Exec (the stream's
+                            ExecState (its status and command, never its bytes), DetailReducer.Exec, ContainerDetailSession.Exec (the stream's
                             owner and both pumps), ExecInput (the 2 MiB input cap), IExecOutput (the terminal's end, which
                             the app attaches), ExecCleanUp (the BERTH_EXEC marker and the clean-up command)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
@@ -268,8 +268,8 @@ Win32 `IsIconic`, because Reactor's window state does not report the restore.
 **Who owns what.** `ContainerDetailSession` owns the shell's stream: it creates and starts the
 exec, then runs two pumps, output (engine to the attached `IExecOutput`, waiting on it each
 time) and input (its own loop, so a key never waits behind output). `DetailState` holds only
-the status (`ExecState`: not started, starting, running, ended with an exit code, failed) and
-the generation; `DetailReducer.Exec` decides everything. A stop on purpose closes the write
+the status (`ExecState`: not started, starting, running, ended with an exit code, failed), the
+generation and the command (in memory only, for "Starting …" and the missing-shell hint); `DetailReducer.Exec` decides everything. A stop on purpose closes the write
 side where there is one (TCP, TLS; not Docker Desktop's pipe), gives the shell 500 ms, then
 disposes the stream; nothing it still sends is shown. Bytes are never decoded, logged, put in
 the state or in an exception message Berth writes, and the command is never logged.

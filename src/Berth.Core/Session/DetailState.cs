@@ -43,7 +43,7 @@ public sealed record DetailState(
     /// <summary>The latest inspect was asked for because a stream ended by itself, not by an open or a refresh.</summary>
     public bool ReadAfterStreamEnded { get; init; }
 
-    /// <summary>The Exec tab's shell: its status only.</summary>
+    /// <summary>The Exec tab's shell: its status and its command (in memory only), never its bytes.</summary>
     public ExecState Exec { get; init; } = ExecState.None;
 
     /// <summary>A page for <paramref name="containerId"/> that has not opened yet.</summary>

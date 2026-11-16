@@ -250,6 +250,7 @@ internal sealed class ExecLink
         var info = new ProcessStartInfo(launch.FileName) { UseShellExecute = launch.UseShellExecute };
         foreach (var argument in launch.Arguments)
             info.ArgumentList.Add(argument);
+        // Removed from what is started here: the console's docker never sees them; a Windows Terminal tab may get its own environment.
         foreach (var name in launch.ClearedVariables)
             info.Environment.Remove(name);
         using var started = Process.Start(info);

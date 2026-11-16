@@ -32,8 +32,10 @@ public sealed record ExternalLaunchPlan(ProcessLaunch? First, ProcessLaunch? Fal
 /// rather than guessed at. The console window has none of those steps: docker is started directly and gets the list .NET joined,
 /// so it refuses only what no command line can hold (<see cref="ConsoleRefusal"/>). The console is used only when Windows Terminal is
 /// not on <c>PATH</c> or fails to start: with Windows Terminal there, a command it cannot carry is refused, not handed to the console
-/// (<see cref="Plan"/>). Both clear the variables that would point
-/// docker at another engine or change its TLS (<see cref="DockerVariables"/>); the command names its engine with <c>-H</c> anyway.
+/// (<see cref="Plan"/>). Both remove the variables that would point docker at another engine or change its TLS
+/// (<see cref="DockerVariables"/>) from what Berth starts. That reaches docker in the console; Windows Terminal may start its tab with
+/// its own or a rebuilt environment, so there a <c>DOCKER_TLS_VERIFY</c> or <c>DOCKER_CERT_PATH</c> set for the user can still
+/// reach docker. The command names its engine with <c>-H</c>, so it never reaches another engine.
 /// </remarks>
 public static class ExternalTerminal
 {
