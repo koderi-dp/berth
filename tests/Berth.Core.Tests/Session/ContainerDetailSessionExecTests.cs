@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using Berth.Engine;
 using Berth.Engine.Models;
 using Berth.Session;
@@ -365,6 +366,8 @@ public sealed class ContainerDetailSessionExecTests
         h.Session.ResizeExec(new TerminalSize(120, 30));
         await resize.Entered.WaitAsync(Patience);
         resize.Release();
+        // Disposing straight after the release could cancel the held call before it sees the release.
+        Assert.True(SpinWait.SpinUntil(() => !api.Resizes.IsEmpty, Patience));
         await h.Session.DisposeAsync();
 
         Assert.Equal([("exec-7", new TerminalSize(120, 30))], api.Resizes);
@@ -385,6 +388,134 @@ public sealed class ContainerDetailSessionExecTests
         Assert.Equal("resizing the terminal failed", error.What);
         Assert.Equal(ExecStatus.Running, h.Session.State.Exec.Status);
         Assert.Null(h.Session.State.Exec.Error);
+    }
+
+    [Fact]
+    public async Task Input_past_two_mebibytes_queued_for_a_shell_that_does_not_read_is_dropped()
+    {
+        const int Piece = 64 * 1024;
+        await using var h = new Harness();
+        var shell = await h.RunningAsync();
+        var held = shell.HoldWrites();
+
+        // Three mebibytes for a shell that reads nothing (the first piece is held in the write): only the first two are kept.
+        var pieces = 3 * ExecInput.QueueLimit / 2 / Piece;
+        for (var i = 0; i < pieces; i++)
+        {
+            h.Session.SendExecInput(1, Enumerable.Repeat((byte)i, Piece).ToArray());
+            if (i == 0)
+                await held.Entered.WaitAsync(Patience);
+        }
+
+        Assert.Equal(ExecInput.QueueLimit, h.Session.QueuedExecInput);
+
+        held.Release();
+        var kept = ExecInput.QueueLimit / Piece;
+        var received = await shell.ReadInputAsync(kept * Piece).WaitAsync(Patience);
+        Assert.Equal([.. Enumerable.Range(0, kept).SelectMany(i => Enumerable.Repeat((byte)i, Piece))], received);
+
+        // Once the queue has drained input is taken again, and nothing of what was dropped comes before it.
+        Assert.True(SpinWait.SpinUntil(() => h.Session.QueuedExecInput == 0, Patience));
+        h.Session.SendExecInput(1, "Z"u8.ToArray());
+        Assert.Equal("Z"u8.ToArray(), await shell.ReadInputAsync(1).WaitAsync(Patience));
+    }
+
+    [Fact]
+    public async Task Resizes_are_sent_one_at_a_time_and_only_the_newest_waiting_one()
+    {
+        await using var h = new Harness();
+        await h.RunningAsync();
+        var held = h.Api.Hold("ResizeExec");
+
+        h.Session.ResizeExec(new TerminalSize(100, 30));
+        await held.Entered.WaitAsync(Patience);
+        var newest = NextChange(h.Session, s => s.Exec.Size == new TerminalSize(120, 32));
+        h.Session.ResizeExec(new TerminalSize(110, 31));
+        h.Session.ResizeExec(new TerminalSize(120, 32));
+        await newest;
+        held.Release();
+
+        Assert.True(SpinWait.SpinUntil(() => h.Api.Resizes.Any(r => r.Size == new TerminalSize(120, 32)), Patience));
+        Assert.Equal([("exec-1", new TerminalSize(100, 30)), ("exec-1", new TerminalSize(120, 32))], h.Api.Resizes);
+        Assert.Equal(2, h.Api.Calls.Count(c => c == "ResizeExec exec-1"));
+    }
+
+    [Fact]
+    public async Task A_stop_while_the_exit_code_is_read_ends_the_reading_and_reports_nothing()
+    {
+        await using var h = new Harness();
+        var shell = await h.RunningAsync();
+        var inspect = h.Api.Hold("InspectExec");
+        h.Api.Fail("InspectExec", new EngineException(500, "inspect broke"));
+
+        shell.End();
+        await inspect.Entered.WaitAsync(Patience);
+        var stopped = NextChange(h.Session, s => s.Exec.Status == ExecStatus.NotStarted);
+        h.Session.StopExec();
+        await stopped;
+        inspect.Release();
+        await shell.Disposed.WaitAsync(Patience);
+
+        Assert.Empty(h.Errors);
+        Assert.Equal(1, h.Api.Calls.Count(c => c == "InspectExec exec-1"));
+        Assert.Equal(ExecStatus.NotStarted, h.Session.State.Exec.Status);
+    }
+
+    [Fact]
+    public async Task A_close_write_that_outlasts_the_grace_has_its_failure_observed()
+    {
+        var unobserved = new ConcurrentQueue<AggregateException>();
+        void Unobserved(object? sender, UnobservedTaskExceptionEventArgs e) => unobserved.Enqueue(e.Exception);
+        TaskScheduler.UnobservedTaskException += Unobserved;
+        try
+        {
+            var failure = await AbandonACloseWriteAsync();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            Assert.DoesNotContain(unobserved, e => e.Flatten().InnerExceptions.Contains(failure));
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= Unobserved;
+        }
+    }
+
+    /// <summary>Stops a shell whose close-write hangs past the grace, then fails that close-write; nothing of it is kept.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task<Exception> AbandonACloseWriteAsync()
+    {
+        var failure = new IOException("close_notify failed after the stream was disposed");
+        await using var h = new Harness();
+        var shell = await h.RunningAsync();
+        var closing = shell.HangCloseWrite();
+
+        h.Session.StopExec();
+        await shell.WriteClosed.WaitAsync(Patience);
+        // The grace is a timer on the fake clock that starts just after the close-write; move the clock until it has run out.
+        while (!shell.Disposed.IsCompleted)
+        {
+            h.Time.Advance(ContainerDetailSession.ExecCloseGrace);
+            await Task.WhenAny(shell.Disposed, Task.Delay(10));
+        }
+
+        closing.SetException(failure);
+        return failure;
+    }
+
+    /// <summary>Completes with the first state change after this call that matches: its effects have been started by then.</summary>
+    private static Task<DetailState> NextChange(ContainerDetailSession session, Func<DetailState, bool> match)
+    {
+        var found = new TaskCompletionSource<DetailState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Check(DetailState s)
+        {
+            if (match(s) && found.TrySetResult(s))
+                session.StateChanged -= Check;
+        }
+
+        session.StateChanged += Check;
+        return found.Task.WaitAsync(Patience);
     }
 
     /// <summary>The terminal's end: records what it is given, and can hold its writes to push back on the pump.</summary>

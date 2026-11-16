@@ -63,6 +63,19 @@ public sealed class ExecCommandTests
     }
 
     [Fact]
+    public void A_command_whose_program_is_empty_is_blank()
+    {
+        foreach (var text in new[] { "''", "\"\"", "'' ''", "'' sh", "  ''  " })
+        {
+            var parsed = ExecCommand.Parse(text);
+            Assert.Equal("Enter a command.", parsed.Error);
+            Assert.Empty(parsed.Command);
+        }
+
+        Assert.Equal<string>(["sh", ""], ExecCommand.Parse("sh ''").Command);
+    }
+
+    [Fact]
     public void An_open_quote_is_an_error()
     {
         foreach (var text in new[] { "sh -c 'ls", "echo \"a", "echo \"a\\\"" })

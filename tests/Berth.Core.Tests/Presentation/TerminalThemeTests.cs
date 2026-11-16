@@ -20,6 +20,33 @@ public sealed class TerminalThemeTests
     }
 
     [Fact]
+    public void Lights_three_greys_stay_apart()
+    {
+        // White, bright black and bright white must reach 4.5:1 on the light surface (or xterm's minimum contrast would darken them
+        // into one grey), and differ from each other by at least 1.4:1 so a program that tells them apart still can.
+        var colors = TerminalTheme.For(dark: false, highContrast: false, LightSurface, "#1a1a1a");
+        int[] greys = [7, 8, 15];
+
+        foreach (var a in greys)
+        {
+            foreach (var b in greys.Where(b => b > a))
+            {
+                var ratio = TerminalTheme.ContrastRatio(colors.Ansi[a], colors.Ansi[b]);
+                Assert.True(ratio >= 1.4, $"{colors.Ansi[a]} and {colors.Ansi[b]}: {ratio:0.00}");
+            }
+        }
+    }
+
+    [Fact]
+    public void Lights_greys_keep_campbells_order_bright_black_darkest_then_white_then_bright_white()
+    {
+        var colors = TerminalTheme.For(dark: false, highContrast: false, LightSurface, "#1a1a1a");
+
+        Assert.True(TerminalTheme.ContrastRatio(colors.Ansi[8], LightSurface) > TerminalTheme.ContrastRatio(colors.Ansi[7], LightSurface));
+        Assert.True(TerminalTheme.ContrastRatio(colors.Ansi[7], LightSurface) > TerminalTheme.ContrastRatio(colors.Ansi[15], LightSurface));
+    }
+
+    [Fact]
     public void Every_dark_colour_but_black_reads_on_a_dark_background()
     {
         var colors = TerminalTheme.For(dark: true, highContrast: false, DarkSurface, "#ffffff");

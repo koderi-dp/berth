@@ -25,11 +25,15 @@ public static class TerminalTheme
         "#767676", "#e74856", "#16c60c", "#f9f1a5", "#3b78ff", "#bc1ca9", "#61d6d6", "#f2f2f2",
     ];
 
-    /// <summary>Campbell darkened, each entry until it reads at 4.5:1 or more on the light surface (#f3f3f3).</summary>
+    /// <summary>
+    /// Campbell darkened, each entry until it reads at 4.5:1 or more on the light surface (#f3f3f3), so xterm's minimum contrast
+    /// leaves them as they are. The three greys cannot all stay pale there, so they are set apart by hand, at least 1.4:1 from each
+    /// other, in Campbell's order: bright black the darkest (#3c3c3c), then white (#555555), then bright white (#6e6e6e).
+    /// </summary>
     private static readonly ImmutableArray<string> Light =
     [
-        "#0c0c0c", "#c50f1f", "#0f810b", "#856c00", "#0037da", "#881798", "#2d73aa", "#6e6e6e",
-        "#6f6f6f", "#c43d49", "#0e8108", "#736f4c", "#3368de", "#b4009e", "#367878", "#6f6f6f",
+        "#0c0c0c", "#c50f1f", "#0f810b", "#856c00", "#0037da", "#881798", "#2d73aa", "#555555",
+        "#3c3c3c", "#c43d49", "#0e8108", "#736f4c", "#3368de", "#b4009e", "#367878", "#6e6e6e",
     ];
 
     private const double SelectionOpacity = 0.3;

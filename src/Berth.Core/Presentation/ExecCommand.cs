@@ -89,7 +89,8 @@ public static class ExecCommand
         if (inWord)
             words.Add(word.ToString());
 
-        return words.Count == 0 ? Blank : new ParsedCommand(words.ToImmutable(), null);
+        // A command whose program is empty ('' or "") names nothing to run: it is as blank as no command.
+        return words.Count == 0 || words[0].Length == 0 ? Blank : new ParsedCommand(words.ToImmutable(), null);
     }
 
     /// <summary>Appends a double-quoted part starting at <paramref name="start"/>; returns the closing quote's index, or -1.</summary>

@@ -531,6 +531,7 @@ internal sealed class FakeEngineApi : IEngineApi
         private int _inputClosed;
         private volatile Gate? _writeGate;
         private volatile bool _closedWriteDuringAWrite;
+        private volatile TaskCompletionSource<bool>? _hangingCloseWrite;
 
         public FakeShell(bool canCloseWrite = true)
         {
@@ -578,6 +579,9 @@ internal sealed class FakeEngineApi : IEngineApi
 
         /// <summary>Makes later writes wait (cancellably) until the returned gate is released.</summary>
         public Gate HoldWrites() => _writeGate = new Gate();
+
+        /// <summary>Makes the close-write answer only when the test completes (or faults) the returned source, as TLS can.</summary>
+        public TaskCompletionSource<bool> HangCloseWrite() => _hangingCloseWrite = new TaskCompletionSource<bool>();
 
         /// <summary>The shell prints <paramref name="bytes"/>.</summary>
         public async Task WriteOutputAsync(byte[] bytes) => await _output.Writer.WriteAsync(bytes);
@@ -644,6 +648,8 @@ internal sealed class FakeEngineApi : IEngineApi
             if (Volatile.Read(ref _pendingWrites) > 0)
                 _closedWriteDuringAWrite = true;
             _writeClosed.TrySetResult();
+            if (_hangingCloseWrite is { } hanging)
+                return hanging.Task;
             if (!_canCloseWrite)
                 return Task.FromResult(false);
             CloseInput();

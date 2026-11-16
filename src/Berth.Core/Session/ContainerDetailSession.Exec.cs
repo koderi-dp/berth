@@ -42,8 +42,17 @@ public sealed partial class ContainerDetailSession
 
     private IExecOutput? _execOutput;
 
+    private readonly Lock _resizeLock = new();
+
+    // The resize to send next, and whether a sender is running; both under _resizeLock.
+    private ResizeExecEffect? _nextResize;
+    private bool _resizing;
+
     // The latest shell asked for; written by the loop, read by any thread.
     private ExecRun? _exec;
+
+    /// <summary>The bytes waiting to be written to the current shell (<see cref="ExecInput.QueueLimit"/> at most). For tests.</summary>
+    internal long QueuedExecInput => Volatile.Read(ref _exec)?.Queued ?? 0;
 
     /// <summary>Raised each time the exec runtime starts waiting on the clock (between inspects, or the close grace). For tests.</summary>
     internal event Action? ExecWaiting;
@@ -59,7 +68,8 @@ public sealed partial class ContainerDetailSession
 
     /// <summary>
     /// Sends what was typed or pasted to the shell of <paramref name="generation"/>. The bytes are copied. Dropped unless that shell
-    /// is the latest one and its stream is open.
+    /// is the latest one and its stream is open, and dropped whole when it would take the bytes waiting for the shell past
+    /// <see cref="ExecInput.QueueLimit"/>.
     /// </summary>
     public void SendExecInput(int generation, ReadOnlyMemory<byte> bytes)
     {
@@ -80,21 +90,53 @@ public sealed partial class ContainerDetailSession
         Run(ct => RunExecAsync(run, start, ct), _calls.Token);
     }
 
-    private void StartResize(ResizeExecEffect resize) => Run(ct => ResizeAsync(resize, ct), _calls.Token);
-
-    private async Task ResizeAsync(ResizeExecEffect resize, CancellationToken ct)
+    /// <summary>
+    /// Sends resizes one at a time, so the engine gets them in order; a resize asked for while one is being sent replaces any
+    /// other still waiting, so only the newest size follows.
+    /// </summary>
+    private void StartResize(ResizeExecEffect resize)
     {
-        try
+        lock (_resizeLock)
         {
-            await _api.ResizeExecAsync(resize.ExecId, resize.Size, ct).ConfigureAwait(false);
+            _nextResize = resize;
+            if (_resizing)
+                return;
+            _resizing = true;
         }
-        catch (Exception) when (ct.IsCancellationRequested)
+
+        Run(SendResizesAsync, _calls.Token);
+    }
+
+    private async Task SendResizesAsync(CancellationToken ct)
+    {
+        while (true)
         {
-        }
-        catch (Exception ex)
-        {
-            // Not shown: a resize fails when the shell is ending, and its end is what the tab shows.
-            Report(ResizeFailedReport, ex);
+            ResizeExecEffect resize;
+            lock (_resizeLock)
+            {
+                if (_nextResize is null || ct.IsCancellationRequested)
+                {
+                    _nextResize = null;
+                    _resizing = false;
+                    return;
+                }
+
+                resize = _nextResize;
+                _nextResize = null;
+            }
+
+            try
+            {
+                await _api.ResizeExecAsync(resize.ExecId, resize.Size, ct).ConfigureAwait(false);
+            }
+            catch (Exception) when (ct.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                // Not shown: a resize fails when the shell is ending, and its end is what the tab shows.
+                Report(ResizeFailedReport, ex);
+            }
         }
     }
 
@@ -139,7 +181,7 @@ public sealed partial class ContainerDetailSession
             // The input loop ends early only by failing; the output loop ends when the engine closes the stream.
             await first.ConfigureAwait(false);
             await StopInputAsync(inputScope, input).ConfigureAwait(false);
-            var exitCode = await ExitCodeAsync(execId, ct).ConfigureAwait(false);
+            var exitCode = await ExitCodeAsync(execId, run, ct).ConfigureAwait(false);
             Post(new ExecEnded(run.Generation, exitCode, run.HadInput));
         }
         catch (Exception) when (ct.IsCancellationRequested || run.IsStopRequested)
@@ -198,7 +240,10 @@ public sealed partial class ContainerDetailSession
     private static async Task PumpInputAsync(ExecRun run, ExecStream stream, CancellationToken ct)
     {
         await foreach (var bytes in run.Input.ReadAllAsync(ct).ConfigureAwait(false))
+        {
             await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
+            run.Written(bytes.Length);
+        }
     }
 
     private static async Task StopInputAsync(CancellationTokenSource inputScope, Task input)
@@ -207,25 +252,43 @@ public sealed partial class ContainerDetailSession
         await Quietly(input).ConfigureAwait(false);
     }
 
-    /// <summary>Closes the stream's write side; false when it has none or closing it failed (the stream is disposed then anyway).</summary>
+    /// <summary>
+    /// Closes the stream's write side; false when it has none, or closing failed or outlasted the grace (the stream is disposed then
+    /// anyway). A close-write left behind (TLS's can wait on a shell that reads nothing) is observed, so its failure once the stream
+    /// is disposed under it is not left unobserved.
+    /// </summary>
     private async Task<bool> TryCloseWriteAsync(ExecStream stream)
     {
+        Task<bool>? closing = null;
         try
         {
-            return await stream.CloseWriteAsync().WaitAsync(ExecCloseGrace, _time).ConfigureAwait(false);
+            closing = stream.CloseWriteAsync();
+            return await closing.WaitAsync(ExecCloseGrace, _time).ConfigureAwait(false);
         }
         catch (Exception)
         {
+            if (closing is { IsCompleted: false })
+            {
+                _ = closing.ContinueWith(
+                    static t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+            }
+
             return false;
         }
     }
 
     /// <summary>
     /// The exit code of an exec whose stream ended: inspected at once, then every <see cref="ExecPollInterval"/> while the engine
-    /// still says it runs, at most <see cref="ExecInspectTries"/> times in all. Null when the engine never gives one.
+    /// still says it runs, at most <see cref="ExecInspectTries"/> times in all. Null when the engine never gives one. A stop ends
+    /// it (cancelled, so nothing is posted or reported).
     /// </summary>
-    private async Task<int?> ExitCodeAsync(string execId, CancellationToken ct)
+    private async Task<int?> ExitCodeAsync(string execId, ExecRun run, CancellationToken calls)
     {
+        using var poll = CancellationTokenSource.CreateLinkedTokenSource(calls, run.Stopping);
+        var ct = poll.Token;
         for (var tries = 1; ; tries++)
         {
             ExecInspection inspection;
@@ -269,9 +332,11 @@ public sealed partial class ContainerDetailSession
         private readonly Lock _lock = new();
         private readonly Channel<byte[]> _input = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
         private readonly TaskCompletionSource _stop = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly CancellationTokenSource _stopping = new();
         private CancellationTokenSource? _scope;
         private bool _started;
         private bool _finished;
+        private long _queued;
         private volatile bool _hadInput;
 
         public int Generation => generation;
@@ -281,9 +346,22 @@ public sealed partial class ContainerDetailSession
 
         public bool IsStopRequested => _stop.Task.IsCompleted;
 
+        /// <summary>Cancelled when the shell is asked to end on purpose.</summary>
+        public CancellationToken Stopping => _stopping.Token;
+
         public bool HadInput => _hadInput;
 
         public ChannelReader<byte[]> Input => _input.Reader;
+
+        /// <summary>The bytes taken and not yet written, the write under way included.</summary>
+        public long Queued
+        {
+            get
+            {
+                lock (_lock)
+                    return _queued;
+            }
+        }
 
         /// <summary>Takes the scope the shell runs under; false when it was stopped before it began.</summary>
         public bool Open(CancellationTokenSource scope)
@@ -308,11 +386,21 @@ public sealed partial class ContainerDetailSession
         {
             lock (_lock)
             {
-                if (!_started || _finished || IsStopRequested)
+                if (!_started || _finished || IsStopRequested || !ExecInput.Accepts(_queued, bytes.Length))
                     return;
                 if (_input.Writer.TryWrite(bytes))
+                {
+                    _queued += bytes.Length;
                     _hadInput = true;
+                }
             }
+        }
+
+        /// <summary>A message of <paramref name="length"/> bytes has been written: it no longer counts against the limit.</summary>
+        public void Written(int length)
+        {
+            lock (_lock)
+                _queued -= length;
         }
 
         /// <summary>
@@ -329,6 +417,7 @@ public sealed partial class ContainerDetailSession
                 cancel = _started || _finished ? null : _scope;
             }
 
+            _stopping.Cancel();
             try
             {
                 cancel?.Cancel();

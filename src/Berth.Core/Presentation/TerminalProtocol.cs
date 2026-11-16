@@ -37,6 +37,12 @@ public abstract record TerminalMessage
 /// </summary>
 public static class TerminalProtocol
 {
+    /// <summary>
+    /// The longest message from the page that is read, in characters: room for 2 MiB of input (the shell's input limit) as base64,
+    /// or a long selection to copy. The page is the less trusted side; anything longer is refused before it is decoded.
+    /// </summary>
+    public const int MaxMessageLength = 4 * 1024 * 1024;
+
     private static readonly string ResetMessage = Write(w => w.WriteString("t", "reset"));
 
     private static readonly string FocusMessage = Write(w => w.WriteString("t", "focus"));
@@ -48,11 +54,11 @@ public static class TerminalProtocol
     /// <summary>
     /// Reads a message from the page. Null for anything malformed, unknown or out of range: not one JSON object, an unknown or
     /// missing <c>t</c>, a missing or mistyped field, base64 that does not decode, a size outside 2 to 1000 columns and 1 to 500
-    /// rows, or a negative count. Never throws.
+    /// rows, a negative count, or longer than <see cref="MaxMessageLength"/>. Never throws.
     /// </summary>
     public static TerminalMessage? Parse(string json)
     {
-        if (string.IsNullOrEmpty(json))
+        if (string.IsNullOrEmpty(json) || json.Length > MaxMessageLength)
             return null;
 
         try

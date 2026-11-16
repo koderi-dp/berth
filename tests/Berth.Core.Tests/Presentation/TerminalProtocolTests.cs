@@ -141,4 +141,16 @@ public sealed class TerminalProtocolTests
         Assert.DoesNotContain("\r", json, StringComparison.Ordinal);
         Assert.DoesNotContain("\u2028", json, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void A_message_longer_than_the_limit_is_refused_before_it_is_read()
+    {
+        Assert.Equal(4 * 1024 * 1024, TerminalProtocol.MaxMessageLength);
+        const string Start = "{\"t\":\"copy\",\"d\":\"";
+        static string Copy(int length) => Start + new string('a', length - Start.Length - 2) + "\"}";
+
+        Assert.Equal(TerminalProtocol.MaxMessageLength, Copy(TerminalProtocol.MaxMessageLength).Length);
+        Assert.IsType<TerminalMessage.Copy>(TerminalProtocol.Parse(Copy(TerminalProtocol.MaxMessageLength)));
+        Assert.Null(TerminalProtocol.Parse(Copy(TerminalProtocol.MaxMessageLength + 1)));
+    }
 }
