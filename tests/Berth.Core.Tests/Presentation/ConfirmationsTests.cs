@@ -151,6 +151,20 @@ public sealed class ConfirmationsTests
     }
 
     [Fact]
+    public void Deleting_an_image_the_engine_counts_as_in_use_with_no_container_listed_says_a_container_uses_it()
+    {
+        var rows = ImageRowsOf(Image("sha256:a", ["a:1"], containers: 1), Image("sha256:b", ["b:1"], containers: 2));
+
+        var one = RemoveImages(rows, "a:1");
+        var both = RemoveImages(rows, "a:1", "b:1");
+
+        Assert.Equal("a:1 will be deleted from this engine.\nIn use by a container. The engine will refuse while a container uses it.", one.Text);
+        Assert.Equal(
+            "These will be removed:\na:1\nb:1\nIn use, so the engine will refuse them while a container uses them:\na:1 (in use by a container)\nb:1 (in use by a container)",
+            both.Text);
+    }
+
+    [Fact]
     public void Deleting_an_image_a_container_uses_names_the_containers_and_says_the_engine_will_refuse()
     {
         var state = StateWith(

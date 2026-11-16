@@ -340,8 +340,14 @@ public static class Confirmations
         if (used.Count == 0)
             return text;
         if (one)
-            return $"{text}\nUsed by {string.Join(", ", used[0].UsedBy)}. The engine will refuse while a container uses it.";
-        return Listed($"{text}\nIn use, so the engine will refuse them while a container uses them:", used.Select(u => $"{u.Name} (used by {string.Join(", ", u.UsedBy)})"));
+            return $"{text}\n{Users(used[0].UsedBy, "In use", "Used")}. The engine will refuse while a container uses it.";
+        return Listed(
+            $"{text}\nIn use, so the engine will refuse them while a container uses them:",
+            used.Select(u => $"{u.Name} ({Users(u.UsedBy, "in use", "used")})"));
+
+        // The engine can count an image's containers when the container list names none of them.
+        static string Users(IReadOnlyList<string> names, string inUse, string used) =>
+            names.Count == 0 ? $"{inUse} by a container" : $"{used} by {string.Join(", ", names)}";
     }
 
     /// <summary>The sum of the sizes, or null when there is nothing or any size is unknown.</summary>
