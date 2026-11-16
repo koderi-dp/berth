@@ -137,6 +137,20 @@ public sealed class EngineArchiveTests
         Assert.Equal("extraction point is not a directory", error.Message);
     }
 
+    /// <summary>A local file that cannot be read while the tar is written; the writer's own exception type, not an IOException.</summary>
+    private sealed class LocalReadFailed() : Exception("A file could not be read while it was being sent.");
+
+    [Fact]
+    public async Task A_failure_of_the_writer_itself_is_thrown_as_it_is_not_as_an_engine_failure()
+    {
+        var (client, _) = await ConnectedAsync(s => s.On(
+            "/v1.56/containers/abc/archive?path=%2Ftmp&noOverwriteDirNonDir=true", HttpStatusCode.OK, ""));
+        await using var _client = client;
+
+        await Assert.ThrowsAsync<LocalReadFailed>(() => client.PutArchiveAsync(
+            "abc", "/tmp", (_, _) => throw new LocalReadFailed(), CancellationToken.None));
+    }
+
     private static byte[] Frame(byte stream, string text)
     {
         var payload = Encoding.UTF8.GetBytes(text);

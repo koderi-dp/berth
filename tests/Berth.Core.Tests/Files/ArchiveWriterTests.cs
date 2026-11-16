@@ -112,8 +112,8 @@ public sealed class ArchiveWriterTests : IDisposable
     }
 
     [Fact]
-    public async Task A_missing_source_fails_as_it_is()
+    public async Task A_missing_source_fails_as_a_source_error()
     {
-        await Assert.ThrowsAsync<FileNotFoundException>(() => WriteAsync(Path.Combine(_root, "gone.txt")));
+        await Assert.ThrowsAsync<UploadSourceException>(() => WriteAsync(Path.Combine(_root, "gone.txt")));
     }
 }
