@@ -150,7 +150,7 @@ public sealed class DockerRunCommandTests
 
     [Theory]
     [InlineData(ShellKind.Posix, @"'C:\My Data:/data'", @"'GREETING=it'\''s me'", "sh -c 'echo \"$HOME\" && sleep 1'")]
-    [InlineData(ShellKind.PowerShell, @"'C:\My Data:/data'", "'GREETING=it''s me'", "sh -c 'echo \"$HOME\" && sleep 1'")]
+    [InlineData(ShellKind.PowerShell, @"'C:\My Data:/data'", "'GREETING=it''s me'", "sh '-c' 'echo \"$HOME\" && sleep 1'")]
     public void Option_values_mounts_and_commands_are_quoted_as_whole_arguments(
         ShellKind shell,
         string mount,
@@ -167,6 +167,38 @@ public sealed class DockerRunCommandTests
         Assert.Equal(
             $"docker run -d --name web -v {mount} -e {env} -e EMPTY= nginx:alpine {command}",
             DockerRunCommand.Build(details, shell));
+    }
+
+    [Theory]
+    [InlineData("-c", "'-c'")]
+    [InlineData("--%", "'--%'")]
+    [InlineData("-a.b", "'-a.b'")]
+    [InlineData("--flag=value", "'--flag=value'")]
+    [InlineData("-", "'-'")]
+    [InlineData("a-b", "a-b")]
+    public void PowerShell_quotes_a_value_that_starts_with_a_dash_so_it_is_not_read_as_a_parameter(string argument, string expected)
+    {
+        var details = Details() with { Cmd = ["sh", argument] };
+
+        Assert.Equal($"docker run -d --name web nginx:alpine sh {expected}", DockerRunCommand.Build(details, ShellKind.PowerShell));
+    }
+
+    [Fact]
+    public void PowerShell_quotes_every_option_value_that_starts_with_a_dash_and_leaves_the_option_names_bare()
+    {
+        var details = Details("-web") with { Env = ["-X=1"], WorkingDir = "-w", User = "-u" };
+
+        Assert.Equal(
+            "docker run -d --name '-web' -e '-X=1' -w '-w' -u '-u' nginx:alpine",
+            DockerRunCommand.Build(details, ShellKind.PowerShell));
+    }
+
+    [Fact]
+    public void A_posix_shell_leaves_a_value_that_starts_with_a_dash_bare()
+    {
+        var details = Details() with { Cmd = ["sh", "-c", "--%"] };
+
+        Assert.Equal("docker run -d --name web nginx:alpine sh -c --%", DockerRunCommand.Build(details, ShellKind.Posix));
     }
 
     [Fact]

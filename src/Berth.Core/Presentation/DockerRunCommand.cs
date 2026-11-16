@@ -11,9 +11,9 @@ public static class DockerRunCommand
     /// "docker run -d --name N", then "-p" per published port (once per port; with its address when bound to one address, and
     /// "/udp" for a protocol other than TCP), "-v source:destination" per mount (a volume by its name, ":ro" when read-only;
     /// "--tmpfs destination" for a tmpfs), "-e" per environment entry, "--restart" unless the policy is "no", "-w", "-u",
-    /// "-t" for a TTY, the image and the command. Each argument is written for <paramref name="shell"/> so that pasting the
-    /// command passes it through unchanged: bare when it holds only letters, digits and <c>_ - . / : = @ % +</c>, otherwise
-    /// in single quotes.
+    /// "-t" for a TTY, the image and the command. Each value is written for <paramref name="shell"/> so that pasting the
+    /// command passes it through unchanged: bare when it holds only letters, digits and <c>_ - . / : = @ % +</c> (for
+    /// PowerShell, and does not start with <c>@</c> or <c>-</c>), otherwise in single quotes.
     /// </summary>
     public static string Build(ContainerDetails details, ShellKind shell)
     {
@@ -94,12 +94,13 @@ public static class DockerRunCommand
     }
 
     /// <summary>
-    /// The argument bare when it is made only of safe characters (and, for PowerShell, does not start with "@", which would
-    /// splat); otherwise in single quotes, inside which neither shell acts on anything but the quote itself.
+    /// A value (every argument but docker's own option names) bare when it is made only of safe characters and, for PowerShell,
+    /// does not start with "@", which would splat, or "-", which PowerShell can take for a parameter ("--%" stops its parsing,
+    /// "-a.b" is split in two); otherwise in single quotes, inside which neither shell acts on anything but the quote itself.
     /// </summary>
     private static string Quote(string arg, ShellKind shell)
     {
-        if (arg.Length > 0 && arg.All(IsSafe) && !(shell == ShellKind.PowerShell && arg[0] == '@'))
+        if (arg.Length > 0 && arg.All(IsSafe) && !(shell == ShellKind.PowerShell && arg[0] is '@' or '-'))
         {
             return arg;
         }
