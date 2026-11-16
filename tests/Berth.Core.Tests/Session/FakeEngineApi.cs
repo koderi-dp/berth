@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Pipelines;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Berth.Engine;
@@ -10,7 +11,8 @@ namespace Berth.Tests.Session;
 /// An engine stand-in for one connection. A test sets the version, container list and inspect answers, makes calls fail, holds
 /// calls until it releases them, and pushes messages into the event stream, lines into the log stream and samples into the stats
 /// stream. Images, volumes, networks, disk use and container create answer from properties and the Set* methods; the pull stream
-/// is <see cref="Pulls"/>.
+/// is <see cref="Pulls"/>. Execs: create answers <see cref="ExecId"/>, each start hands out a new <see cref="FakeShell"/>
+/// (<see cref="NextShellAsync"/>), resizes are recorded in <see cref="Resizes"/>, and inspect answers <see cref="ScriptExecInspections"/>.
 /// </summary>
 internal sealed class FakeEngineApi : IEngineApi
 {
@@ -25,6 +27,9 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _cancelledWaiters = new(StringComparer.Ordinal);
     private readonly Channel<EngineEventMessage> _events = Channel.CreateUnbounded<EngineEventMessage>();
+    private readonly Channel<FakeShell> _shells = Channel.CreateUnbounded<FakeShell>();
+    private readonly ConcurrentQueue<ExecInspection> _execInspections = new();
+    private volatile ExecInspection _lastExecInspection = new(Running: false, ExitCode: 0);
     private readonly TaskCompletionSource _streamStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private volatile IReadOnlyList<ContainerSummary> _containers = [Container("a"), Container("b")];
     private volatile bool _disposed;
@@ -74,7 +79,8 @@ internal sealed class FakeEngineApi : IEngineApi
     /// <summary>
     /// Makes every later <paramref name="call"/> throw: "Connect", "GetInfo", "List", "Stop", ..., and "ListImages",
     /// "InspectImage", "RemoveImage", "PruneImages", "Pull", "ListVolumes", "CreateVolume", "RemoveVolume", "PruneVolumes",
-    /// "ListNetworks", "InspectNetwork", "RemoveNetwork", "PruneNetworks", "DiskUsage", "CreateContainer".
+    /// "ListNetworks", "InspectNetwork", "RemoveNetwork", "PruneNetworks", "DiskUsage", "CreateContainer", and "CreateExec",
+    /// "StartExec", "ResizeExec", "InspectExec".
     /// </summary>
     public void Fail(string call, Exception error) => _failures[call] = error;
 
@@ -280,6 +286,58 @@ internal sealed class FakeEngineApi : IEngineApi
         return CreatedId;
     }
 
+    /// <summary>The ID <see cref="CreateExecAsync"/> answers.</summary>
+    public string ExecId { get; set; } = "exec-1";
+
+    /// <summary>Every exec create, in order: the container, the command and the size.</summary>
+    public ConcurrentQueue<(string ContainerId, IReadOnlyList<string> Command, TerminalSize Size)> ExecCreates { get; } = new();
+
+    /// <summary>Every exec resize, in order.</summary>
+    public ConcurrentQueue<(string ExecId, TerminalSize Size)> Resizes { get; } = new();
+
+    /// <summary>
+    /// Makes the next exec inspects answer <paramref name="answers"/>, one per call; the last one is then answered for good. Until
+    /// this is called an inspect answers an exec that ended with code 0.
+    /// </summary>
+    public void ScriptExecInspections(params ExecInspection[] answers)
+    {
+        foreach (var answer in answers)
+            _execInspections.Enqueue(answer);
+    }
+
+    /// <summary>The shells exec starts handed out, one per call, in the order of the starts.</summary>
+    public async Task<FakeShell> NextShellAsync(CancellationToken ct = default) => await _shells.Reader.ReadAsync(ct);
+
+    public async Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct)
+    {
+        await EnterAsync("CreateExec", $"CreateExec {containerId}", ct);
+        ExecCreates.Enqueue((containerId, command, size));
+        return ExecId;
+    }
+
+    /// <summary>Opens after any hold or failure set for "StartExec", then hands out a new <see cref="FakeShell"/>'s stream.</summary>
+    public async Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct)
+    {
+        await EnterAsync("StartExec", $"StartExec {execId}", ct);
+        var shell = new FakeShell();
+        _shells.Writer.TryWrite(shell);
+        return shell.Stream;
+    }
+
+    public async Task ResizeExecAsync(string execId, TerminalSize size, CancellationToken ct)
+    {
+        await EnterAsync("ResizeExec", $"ResizeExec {execId}", ct);
+        Resizes.Enqueue((execId, size));
+    }
+
+    public async Task<ExecInspection> InspectExecAsync(string execId, CancellationToken ct)
+    {
+        await EnterAsync("InspectExec", $"InspectExec {execId}", ct);
+        if (_execInspections.TryDequeue(out var next))
+            _lastExecInspection = next;
+        return _lastExecInspection;
+    }
+
     public ValueTask DisposeAsync()
     {
         _disposed = true;
@@ -447,5 +505,101 @@ internal sealed class FakeEngineApi : IEngineApi
         public void Release() => _released.TrySetResult();
 
         internal void MarkEntered() => _entered.TrySetResult();
+    }
+
+    /// <summary>
+    /// The engine's end of an exec's two-way stream, in memory. <see cref="Stream"/> is what start hands out: what is written to it
+    /// arrives in <see cref="Input"/>, and what the test writes with <see cref="WriteOutputAsync"/> is read from it. Neither direction
+    /// waits for the other.
+    /// </summary>
+    public sealed class FakeShell
+    {
+        private readonly Pipe _input = new(new PipeOptions(pauseWriterThreshold: 0));
+        private readonly Pipe _output = new(new PipeOptions(pauseWriterThreshold: 0));
+        private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public FakeShell() => Stream = new ShellStream(this);
+
+        /// <summary>The stream start hands out.</summary>
+        public Stream Stream { get; }
+
+        /// <summary>What was written to <see cref="Stream"/>; it ends once the stream is disposed.</summary>
+        public PipeReader Input => _input.Reader;
+
+        /// <summary>Completes once <see cref="Stream"/> has been disposed.</summary>
+        public Task Disposed => _disposed.Task;
+
+        /// <summary>The shell prints <paramref name="bytes"/>.</summary>
+        public async Task WriteOutputAsync(byte[] bytes) => await _output.Writer.WriteAsync(bytes);
+
+        /// <summary>The shell exits: reads of <see cref="Stream"/> return 0 after what was written.</summary>
+        public void End() => _output.Writer.Complete();
+
+        /// <summary>The connection drops: the read after what was written throws <paramref name="error"/>.</summary>
+        public void Fail(Exception error) => _output.Writer.Complete(error);
+
+        /// <summary>Reads all of <see cref="Input"/>, until the stream is disposed.</summary>
+        public async Task<byte[]> ReadAllInputAsync(CancellationToken ct = default)
+        {
+            using var all = new MemoryStream();
+            await _input.Reader.CopyToAsync(all, ct);
+            return all.ToArray();
+        }
+
+        private sealed class ShellStream(FakeShell shell) : Stream
+        {
+            private readonly Stream _reads = shell._output.Reader.AsStream();
+            private readonly Stream _writes = shell._input.Writer.AsStream();
+
+            public override bool CanRead => true;
+
+            public override bool CanSeek => false;
+
+            public override bool CanWrite => true;
+
+            public override long Length => throw new NotSupportedException();
+
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+                _reads.ReadAsync(buffer, cancellationToken);
+
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                _reads.ReadAsync(buffer, offset, count, cancellationToken);
+
+            public override int Read(byte[] buffer, int offset, int count) => _reads.Read(buffer, offset, count);
+
+            public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+                _writes.WriteAsync(buffer, cancellationToken);
+
+            public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+                _writes.WriteAsync(buffer, offset, count, cancellationToken);
+
+            public override void Write(byte[] buffer, int offset, int count) => _writes.Write(buffer, offset, count);
+
+            public override Task FlushAsync(CancellationToken cancellationToken) => _writes.FlushAsync(cancellationToken);
+
+            public override void Flush() => _writes.Flush();
+
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+            public override void SetLength(long value) => throw new NotSupportedException();
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                {
+                    _writes.Dispose();
+                    _reads.Dispose();
+                    shell._disposed.TrySetResult();
+                }
+
+                base.Dispose(disposing);
+            }
+        }
     }
 }

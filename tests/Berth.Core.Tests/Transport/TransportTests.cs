@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
-using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Berth.Connections;
@@ -102,8 +101,8 @@ public sealed class TransportTests : IDisposable
     public async Task Tls_stream_reaches_a_server_whose_ca_is_trusted()
     {
         var ct = _timeout.Token;
-        using var ca = CreateCa("Berth Test CA");
-        using var serverCert = CreateLeaf(ca, "localhost", serverAuth: true, out _);
+        using var ca = TestCertificates.CreateCa("Berth Test CA");
+        using var serverCert = TestCertificates.CreateLeaf(ca, "localhost", serverAuth: true, out _);
         var caPath = WritePem("ca.pem", ca.ExportCertificatePem());
 
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -123,9 +122,9 @@ public sealed class TransportTests : IDisposable
     public async Task Tls_rejects_a_server_signed_by_another_ca()
     {
         var ct = _timeout.Token;
-        using var trustedCa = CreateCa("Berth Trusted CA");
-        using var otherCa = CreateCa("Berth Other CA");
-        using var serverCert = CreateLeaf(otherCa, "localhost", serverAuth: true, out _);
+        using var trustedCa = TestCertificates.CreateCa("Berth Trusted CA");
+        using var otherCa = TestCertificates.CreateCa("Berth Other CA");
+        using var serverCert = TestCertificates.CreateLeaf(otherCa, "localhost", serverAuth: true, out _);
         var caPath = WritePem("ca.pem", trustedCa.ExportCertificatePem());
 
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -142,9 +141,9 @@ public sealed class TransportTests : IDisposable
     public async Task Tls_presents_the_client_certificate_when_one_is_set()
     {
         var ct = _timeout.Token;
-        using var ca = CreateCa("Berth Test CA");
-        using var serverCert = CreateLeaf(ca, "localhost", serverAuth: true, out _);
-        using var clientCert = CreateLeaf(ca, "berth-client", serverAuth: false, out var clientKeyPem);
+        using var ca = TestCertificates.CreateCa("Berth Test CA");
+        using var serverCert = TestCertificates.CreateLeaf(ca, "localhost", serverAuth: true, out _);
+        using var clientCert = TestCertificates.CreateLeaf(ca, "berth-client", serverAuth: false, out var clientKeyPem);
         var caPath = WritePem("ca.pem", ca.ExportCertificatePem());
         var certPath = WritePem("cert.pem", clientCert.ExportCertificatePem());
         var keyPath = WritePem("key.pem", clientKeyPem);
@@ -231,41 +230,5 @@ public sealed class TransportTests : IDisposable
         var path = Path.Combine(_tempDir, fileName);
         File.WriteAllText(path, pem);
         return path;
-    }
-
-    private static X509Certificate2 CreateCa(string name)
-    {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var request = new CertificateRequest($"CN={name}", key, HashAlgorithmName.SHA256);
-        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(certificateAuthority: true, hasPathLengthConstraint: false, pathLengthConstraint: 0, critical: true));
-        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign, critical: true));
-        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, critical: false));
-        var now = DateTimeOffset.UtcNow;
-        return request.CreateSelfSigned(now.AddDays(-1), now.AddDays(2));
-    }
-
-    /// <summary>Creates a certificate signed by <paramref name="ca"/>, re-imported so Windows TLS can use its private key.</summary>
-    private static X509Certificate2 CreateLeaf(X509Certificate2 ca, string commonName, bool serverAuth, out string keyPem)
-    {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var request = new CertificateRequest($"CN={commonName}", key, HashAlgorithmName.SHA256);
-        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(certificateAuthority: false, hasPathLengthConstraint: false, pathLengthConstraint: 0, critical: true));
-        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, critical: true));
-        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(
-            [new Oid(serverAuth ? "1.3.6.1.5.5.7.3.1" : "1.3.6.1.5.5.7.3.2")], critical: false));
-        request.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(ca, includeKeyIdentifier: true, includeIssuerAndSerial: false));
-        if (serverAuth)
-        {
-            var names = new SubjectAlternativeNameBuilder();
-            names.AddDnsName(commonName);
-            names.AddIpAddress(IPAddress.Loopback);
-            request.CertificateExtensions.Add(names.Build());
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        using var signed = request.Create(ca, now.AddHours(-1), now.AddDays(1), RandomNumberGenerator.GetBytes(16));
-        using var withKey = signed.CopyWithPrivateKey(key);
-        keyPem = key.ExportPkcs8PrivateKeyPem();
-        return X509CertificateLoader.LoadPkcs12(withKey.Export(X509ContentType.Pkcs12), null);
     }
 }

@@ -82,4 +82,46 @@ public sealed class FakeEngineApiTests
             ["ListImages", "CreateContainer alpine name=berth-it-x", "InspectImage nope", "RemoveVolume v"],
             api.Calls);
     }
+
+    [Fact]
+    public async Task An_exec_start_hands_out_a_shell_that_carries_bytes_both_ways_and_ends()
+    {
+        var api = new FakeEngineApi { ExecId = "e7" };
+        var size = new TerminalSize(80, 24);
+
+        var execId = await api.CreateExecAsync("a", ["sh"], size, CancellationToken.None);
+        var stream = await api.StartExecAsync(execId, size, CancellationToken.None);
+        var shell = await api.NextShellAsync();
+        await stream.WriteAsync(new byte[] { 0x03, 0xFF });
+        await shell.WriteOutputAsync([0x1B, 0x5B]);
+        shell.End();
+        var output = new MemoryStream();
+        await stream.CopyToAsync(output);
+        await stream.DisposeAsync();
+
+        Assert.Equal("e7", execId);
+        Assert.Equal([0x1B, 0x5B], output.ToArray());
+        Assert.Equal([0x03, 0xFF], await shell.ReadAllInputAsync());
+        await shell.Disposed;
+        Assert.Equal(["CreateExec a", "StartExec e7"], api.Calls);
+        var create = Assert.Single(api.ExecCreates);
+        Assert.Equal("a", create.ContainerId);
+        Assert.Equal(["sh"], create.Command);
+        Assert.Equal(size, create.Size);
+    }
+
+    [Fact]
+    public async Task Exec_resizes_are_recorded_and_inspections_answer_in_order_then_repeat_the_last()
+    {
+        var api = new FakeEngineApi();
+        api.ScriptExecInspections(new ExecInspection(true, null), new ExecInspection(false, 3));
+
+        await api.ResizeExecAsync("e1", new TerminalSize(120, 30), CancellationToken.None);
+        var answers = new List<ExecInspection>();
+        for (var i = 0; i < 3; i++)
+            answers.Add(await api.InspectExecAsync("e1", CancellationToken.None));
+
+        Assert.Equal(("e1", new TerminalSize(120, 30)), Assert.Single(api.Resizes));
+        Assert.Equal([new(true, null), new(false, 3), new(false, 3)], answers);
+    }
 }

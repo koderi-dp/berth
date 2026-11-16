@@ -10,6 +10,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Berth.Engine.Models;
+using Berth.Transport;
 
 namespace Berth.Engine;
 
@@ -24,10 +25,17 @@ public sealed class EngineClient : IEngineApi
     private static readonly ApiVersion DiskUsageVerboseSince = new(1, 52);
 
     private readonly HttpClient _http;
+    private readonly IEngineTransport? _streams;
     private string? _prefix;
 
-    public EngineClient(HttpMessageHandler handler)
+    /// <param name="handler">Carries every call but exec start; disposed with the client.</param>
+    /// <param name="streams">
+    /// Opens the connection of each exec start (see <see cref="StartExecAsync"/>); stays owned by the caller. Without it exec start
+    /// throws.
+    /// </param>
+    public EngineClient(HttpMessageHandler handler, IEngineTransport? streams = null)
     {
+        _streams = streams;
         _http = new HttpClient(handler, disposeHandler: true)
         {
             BaseAddress = new Uri("http://docker"),
@@ -324,6 +332,82 @@ public sealed class EngineClient : IEngineApi
         return wire.Id ?? "";
     }
 
+    public async Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct)
+    {
+        var consoleSize = ConsoleSize(size);
+        var body = JsonBody(new WireExecCreate(true, true, true, true, command, consoleSize), EngineJson.Default.WireExecCreate);
+        using var response = await SendAsync(HttpMethod.Post, ContainerPath(containerId, "/exec"), PlainTimeout, ct, body).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireCreated, ct).ConfigureAwait(false);
+        return wire.Id ?? "";
+    }
+
+    /// <summary>
+    /// Starts an exec on a new connection from the transport given to the constructor: the request is written by hand and the answer
+    /// read up to its headers, so the connection can be handed over as an <see cref="ExecStream"/> whose write side can be closed
+    /// alone. A client made without that transport throws <see cref="InvalidOperationException"/>.
+    /// </summary>
+    public async Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct)
+    {
+        var transport = _streams ?? throw new InvalidOperationException("This client was made without a transport for two-way streams.");
+        var path = ExecPath(execId, "/start");
+        var body = JsonSerializer.SerializeToUtf8Bytes(new WireExecStart(false, true, ConsoleSize(size)), EngineJson.Default.WireExecStart);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(PlainTimeout);
+
+        Stream? connection = null;
+        try
+        {
+            connection = await transport.OpenAsync(deadline.Token).ConfigureAwait(false);
+            var answer = await HttpUpgrade.SendAsync(connection, path, body, deadline.Token).ConfigureAwait(false);
+            if (answer.Status == (int)HttpStatusCode.SwitchingProtocols)
+            {
+                var stream = new ExecStream(connection, answer.Rest.ToArray());
+                connection = null;
+                return stream;
+            }
+
+            if (answer.Status == (int)HttpStatusCode.OK)
+                throw new EngineException(200, "The engine did not switch the connection to a two-way stream.");
+
+            var error = await answer.ReadBodyAsync(deadline.Token).ConfigureAwait(false);
+            throw new EngineException(answer.Status, ErrorMessage(answer.Status, answer.Reason, error));
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new EngineException(0, $"The engine did not answer within {PlainTimeout.TotalSeconds:0} seconds.") { TimedOut = true };
+        }
+        catch (Exception ex) when (IsUnreachable(ex))
+        {
+            throw Unreachable(ex, ct);
+        }
+        finally
+        {
+            if (connection is not null)
+                await connection.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    public Task ResizeExecAsync(string execId, TerminalSize size, CancellationToken ct)
+    {
+        ConsoleSize(size);
+        var rows = size.Rows.ToString(CultureInfo.InvariantCulture);
+        var columns = size.Columns.ToString(CultureInfo.InvariantCulture);
+        return ActAsync(HttpMethod.Post, ExecPath(execId, $"/resize?h={rows}&w={columns}"), PlainTimeout, ct);
+    }
+
+    public async Task<ExecInspection> InspectExecAsync(string execId, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, ExecPath(execId, "/json"), PlainTimeout, ct).ConfigureAwait(false);
+        var wire = await ReadAsync(response, EngineJson.Default.WireExecInspect, ct).ConfigureAwait(false);
+        var running = wire.Running ?? false;
+        return new ExecInspection(running, running ? null : wire.ExitCode);
+    }
+
+    /// <summary>The engine's <c>ConsoleSize</c>, rows first. A size Berth never sends throws.</summary>
+    private static int[] ConsoleSize(TerminalSize size) => size.IsValid
+        ? [size.Rows, size.Columns]
+        : throw new ArgumentOutOfRangeException(nameof(size), size, "A terminal has 2 to 1000 columns and 1 to 500 rows.");
+
     public ValueTask DisposeAsync()
     {
         _http.Dispose();
@@ -567,6 +651,8 @@ public sealed class EngineClient : IEngineApi
 
     private string ImagePath(string idOrName, string rest) => Versioned($"/images/{Uri.EscapeDataString(idOrName)}{rest}");
 
+    private string ExecPath(string id, string rest) => Versioned($"/exec/{Uri.EscapeDataString(id)}{rest}");
+
     private string NetworkPath(string id) => Versioned($"/networks/{Uri.EscapeDataString(id)}");
 
     private string Versioned(string path) =>
@@ -640,7 +726,12 @@ public sealed class EngineClient : IEngineApi
     {
         var status = (int)response.StatusCode;
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return new EngineException(status, ErrorMessage(status, response.ReasonPhrase, body));
+    }
 
+    /// <summary>The engine's own message in an error answer's body, or the status line when the body carries none.</summary>
+    private static string ErrorMessage(int status, string? reason, string body)
+    {
         string? message = null;
         try
         {
@@ -651,7 +742,7 @@ public sealed class EngineClient : IEngineApi
             // Not JSON: fall back to the status line.
         }
 
-        return new EngineException(status, string.IsNullOrWhiteSpace(message) ? $"{status} {response.ReasonPhrase}" : message);
+        return string.IsNullOrWhiteSpace(message) ? $"{status} {reason}" : message;
     }
 
     /// <summary>Whether <paramref name="ex"/> means the engine could not be reached or the connection failed.</summary>

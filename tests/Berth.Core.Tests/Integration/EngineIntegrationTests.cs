@@ -487,7 +487,7 @@ public sealed partial class EngineIntegrationTests
             var transport = TransportFactory.Create(_profile);
             lock (_gate)
                 _transports.Add(transport);
-            return new EngineClient(EngineHttp.CreateHandler(transport));
+            return new EngineClient(EngineHttp.CreateHandler(transport), transport);
         }
 
         public async ValueTask DisposeAsync()

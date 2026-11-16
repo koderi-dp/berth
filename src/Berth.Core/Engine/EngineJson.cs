@@ -24,6 +24,9 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(WireDiskUsage))]
 [JsonSerializable(typeof(WireCreateContainer))]
 [JsonSerializable(typeof(WireCreated))]
+[JsonSerializable(typeof(WireExecCreate))]
+[JsonSerializable(typeof(WireExecStart))]
+[JsonSerializable(typeof(WireExecInspect))]
 internal sealed partial class EngineJson : JsonSerializerContext;
 
 internal sealed record WireVersion(
@@ -300,3 +303,26 @@ internal sealed record WireCreateHostConfig(
     [property: JsonPropertyName("PortBindings")] Dictionary<string, List<WirePortBinding>> PortBindings);
 
 internal sealed record WireCreated([property: JsonPropertyName("Id")] string? Id);
+
+/// <summary>
+/// The body of <c>/containers/{id}/exec</c>: a TTY exec attached to stdin, stdout and stderr. <c>ConsoleSize</c> is rows, then
+/// columns. No <c>Env</c>, <c>User</c> or <c>WorkingDir</c>: the shell runs as the container's user in its working directory.
+/// </summary>
+internal sealed record WireExecCreate(
+    [property: JsonPropertyName("AttachStdin")] bool AttachStdin,
+    [property: JsonPropertyName("AttachStdout")] bool AttachStdout,
+    [property: JsonPropertyName("AttachStderr")] bool AttachStderr,
+    [property: JsonPropertyName("Tty")] bool Tty,
+    [property: JsonPropertyName("Cmd")] IReadOnlyList<string> Cmd,
+    [property: JsonPropertyName("ConsoleSize")] int[] ConsoleSize);
+
+/// <summary>The body of <c>/exec/{id}/start</c>. <c>ConsoleSize</c> is rows, then columns.</summary>
+internal sealed record WireExecStart(
+    [property: JsonPropertyName("Detach")] bool Detach,
+    [property: JsonPropertyName("Tty")] bool Tty,
+    [property: JsonPropertyName("ConsoleSize")] int[] ConsoleSize);
+
+/// <summary>An exec's inspect answer (<c>/exec/{id}/json</c>), the parts Berth reads.</summary>
+internal sealed record WireExecInspect(
+    [property: JsonPropertyName("Running")] bool? Running,
+    [property: JsonPropertyName("ExitCode")] int? ExitCode);

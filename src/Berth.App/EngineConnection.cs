@@ -25,7 +25,7 @@ internal sealed class EngineConnection : IEngineApi
     public static IEngineApi Open(ConnectionProfile profile)
     {
         var transport = TransportFactory.Create(profile);
-        return new EngineConnection(transport, new EngineClient(EngineHttp.CreateHandler(transport)));
+        return new EngineConnection(transport, new EngineClient(EngineHttp.CreateHandler(transport), transport));
     }
 
     public Task<EngineVersion> ConnectAsync(CancellationToken ct) => _client.ConnectAsync(ct);
@@ -76,6 +76,15 @@ internal sealed class EngineConnection : IEngineApi
     public Task<DiskUsage> GetDiskUsageAsync(CancellationToken ct) => _client.GetDiskUsageAsync(ct);
 
     public Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct) => _client.CreateContainerAsync(request, ct);
+
+    public Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct) =>
+        _client.CreateExecAsync(containerId, command, size, ct);
+
+    public Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct) => _client.StartExecAsync(execId, size, ct);
+
+    public Task ResizeExecAsync(string execId, TerminalSize size, CancellationToken ct) => _client.ResizeExecAsync(execId, size, ct);
+
+    public Task<ExecInspection> InspectExecAsync(string execId, CancellationToken ct) => _client.InspectExecAsync(execId, ct);
 
     public async ValueTask DisposeAsync()
     {

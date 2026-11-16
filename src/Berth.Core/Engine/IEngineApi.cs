@@ -81,4 +81,26 @@ public interface IEngineApi : IAsyncDisposable
 
     /// <summary>Creates a container (it is not started) and returns its ID.</summary>
     Task<string> CreateContainerAsync(ContainerCreateRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Creates a TTY exec of <paramref name="command"/> in a running container, attached to stdin, stdout and stderr and sized to
+    /// <paramref name="size"/>, and returns its ID. 30 s deadline. A paused or stopped container throws the engine's 409, a missing
+    /// one its 404. An invalid <paramref name="size"/> throws <see cref="ArgumentOutOfRangeException"/>.
+    /// </summary>
+    Task<string> CreateExecAsync(string containerId, IReadOnlyList<string> command, TerminalSize size, CancellationToken ct);
+
+    /// <summary>
+    /// Starts an exec on a connection the engine switches to a two-way raw stream, and returns that stream: what is written to it is
+    /// the shell's input, what is read is its output, and a read returns 0 when the shell has ended. The caller owns the stream;
+    /// disposing it closes the connection. The engine's answer has the 30 s deadline; the stream has none, and its reads and writes
+    /// throw what the transport throws. An answer that does not switch the connection, or any error answer, throws
+    /// <see cref="EngineException"/>. <see cref="EngineClient"/> returns an <see cref="ExecStream"/>, whose write side can be closed alone.
+    /// </summary>
+    Task<Stream> StartExecAsync(string execId, TerminalSize size, CancellationToken ct);
+
+    /// <summary>Resizes a running exec's terminal. 30 s deadline.</summary>
+    Task ResizeExecAsync(string execId, TerminalSize size, CancellationToken ct);
+
+    /// <summary>Reads whether an exec still runs and, once it has ended, its exit code. 30 s deadline.</summary>
+    Task<ExecInspection> InspectExecAsync(string execId, CancellationToken ct);
 }
