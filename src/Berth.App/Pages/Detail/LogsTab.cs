@@ -35,9 +35,11 @@ namespace Berth.Pages.Detail;
 /// The search, kept by the page so it outlives the tab being mounted again (another tab chosen and back).
 /// </param>
 /// <param name="UpdateSearch">Changes <paramref name="Search"/>.</param>
-/// <param name="ClaimEscape">
-/// Told whether Escape is the search's (it empties the box or closes the search) rather than the page's (back to the list); false once
-/// the tab goes.
+/// <param name="Keys">
+/// What the tab does with the page's Ctrl+F and Escape, filled in while the tab is shown (the page owns the shortcuts).
+/// </param>
+/// <param name="SearchRequests">
+/// Counts the page's Ctrl+F presses: each one, also one that chose this tab, opens the search with the focus in its box.
 /// </param>
 internal sealed record LogsTabProps(
     DetailState Detail,
@@ -45,7 +47,24 @@ internal sealed record LogsTabProps(
     Action ClearLogs,
     LogSearchState Search,
     Action<Func<LogSearchState, LogSearchState>> UpdateSearch,
-    Action<bool> ClaimEscape);
+    LogsTabKeys Keys,
+    int SearchRequests);
+
+/// <summary>
+/// What the Logs tab does with its page's shortcuts, kept by the page (one instance for the page's life) and filled in by the tab
+/// while it is shown.
+/// </summary>
+internal sealed class LogsTabKeys
+{
+    /// <summary>
+    /// Escape, while it is the search's (<see cref="LogView.Escape"/>): empties the box, or closes the search. Null while Escape is
+    /// the page's (back to the list) or the tab is not shown.
+    /// </summary>
+    public Action? Escape { get; set; }
+
+    /// <summary>Set by the page on Ctrl+F: the tab, once it renders, puts the focus in the search box and clears it.</summary>
+    public bool FocusSearch { get; set; }
+}
 
 /// <summary>
 /// The "Logs" tab of a container's detail page: the container's log, followed live, in a virtualized list that fills the tab, with a
@@ -137,12 +156,10 @@ internal sealed class LogsTab : Component<LogsTabProps>
             },
             term);
 
-        // Escape in the search box empties it, then closes the search; anywhere else it is the page's (back to the list). Only one of
-        // the two Escape commands is enabled at a time, so which host WinUI asks first does not matter.
+        // Escape in the search box empties it, then closes the search; anywhere else it is the page's (back to the list). The page
+        // owns the key and asks the tab (Props.Keys) whether it is the search's.
         var escape = LogView.Escape(search, searchFocused);
-        var claimEscape = Props.ClaimEscape;
-        UseEffect(() => claimEscape(escape != LogEscape.Leave), escape);
-        UseEffect(() => () => claimEscape(false), Array.Empty<object>());
+        var keys = Props.Keys;
 
         void OpenSearch()
         {
@@ -172,6 +189,27 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 CloseSearch();
         }
 
+        UseEffect(
+            () =>
+            {
+                keys.Escape = escape == LogEscape.Leave ? null : OnEscape;
+                return () => keys.Escape = null;
+            },
+            escape);
+
+        // Ctrl+F on the page (which opened the search, choosing this tab if another one showed): the box takes the focus once it is
+        // there. Runs when the tab is shown too, for a press that chose it.
+        UseEffect(
+            () =>
+            {
+                if (keys.FocusSearch)
+                {
+                    keys.FocusSearch = false;
+                    updateFocusRequests(n => n + 1);
+                }
+            },
+            Props.SearchRequests);
+
         void Step(int index)
         {
             if (index < 0)
@@ -188,23 +226,6 @@ internal sealed class LogsTab : Component<LogsTabProps>
             Props.ClearLogs();
             scroller.Follow();
         }
-
-        Command[] shortcuts =
-        [
-            new()
-            {
-                Label = "Search the log",
-                Execute = OpenSearch,
-                Accelerator = Accelerator(VirtualKey.F, VirtualKeyModifiers.Control),
-            },
-            new()
-            {
-                Label = escape == LogEscape.CloseSearch ? "Close the search" : "Clear the search",
-                Execute = OnEscape,
-                CanExecute = escape != LogEscape.Leave,
-                Accelerator = Accelerator(VirtualKey.Escape),
-            },
-        ];
 
         var waiting = Props.Waiting;
         var emptyText = LogView.EmptyText(detail.LogStatus, logs.Lines.Count, linesSeen: logs.FirstNumber > 1, waitedGeneration == generation, waiting);
@@ -252,7 +273,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
 
         var toolbar = Toolbar(options, logs, SetSearchShown, searchOpen, Clear).Grid(column: 1);
 
-        return CommandHost(shortcuts, Grid(Columns, OneRow, main, toolbar).Margin(0, 0, 0, 16)).Flex(grow: 1, basis: 0);
+        return Grid(Columns, OneRow, main, toolbar).Margin(0, 0, 0, 16).Flex(grow: 1, basis: 0);
     }
 
     /// <summary>The log, one line per row, virtualized: only the rows in view are built, each from its line alone.</summary>

@@ -19,7 +19,7 @@ namespace Berth.Pages;
 /// The containers of the engine, grouped by compose project, with search, a "running only" switch, actions per row, per project and
 /// for the checked rows, and a confirmation before anything is deleted.
 /// </summary>
-internal sealed class ContainersPage : EngineStateComponent
+internal sealed class ContainersPage : ListPageComponent
 {
     /// <summary>One line of the virtualized list: a compose project's row or a container's row.</summary>
     private abstract record ListItem(string Key);
@@ -40,11 +40,10 @@ internal sealed class ContainersPage : EngineStateComponent
         var compact = !UseBreakpoint(ContainerRowView.WideLayoutMinWidth);
         var settings = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot);
         var (search, setSearch) = UseState("");
-        var (checkedIds, updateChecked) = UseReducer(NoIds);
         var (collapsed, updateCollapsed) = UseReducer(NoIds);
+        var (checkedIds, updateChecked) = UseReducer(NoIds);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
-        var (searchFocused, setSearchFocused) = UseState(false);
-        var searchBox = this.UseElementRef<TextBox>();
+        var searchBox = UseListSearch();
         var nav = UseNavigation<AppRoute>();
 
         var connected = state.Status == ConnectionStatus.Connected;
@@ -77,22 +76,20 @@ internal sealed class ContainersPage : EngineStateComponent
         var deleteRows = DeleteRows(visibleRows, checkedIds, connected);
 
         // None of the shortcuts acts while the delete confirmation is open.
-        var shortcuts = ListPage.Shortcuts(
+        var keys = ListPage.Keys(
             searchBox,
             dialogOpen: deleteRequest is not null,
             connected,
-            searchFocused,
-            canDelete: deleteRows.Length > 0,
-            () => callbacks.RequestDelete(deleteRows));
+            deleteRows.Length > 0 ? () => callbacks.RequestDelete(deleteRows) : null);
+        UseEffect(() => ShellKeys.Register(AppRoute.Containers, keys), keys);
 
         return ListPage.Render(
             "Containers",
             state,
             Strip(state),
-            Toolbar(search, setSearch, runningOnly, searchBox, setSearchFocused),
+            Toolbar(search, setSearch, runningOnly, searchBox),
             BulkBar(visibleRows, checkedIds, deleteRows, connected, callbacks),
             Table(state, filter, sort, groups, items, shownIds, checkedIds, connected, compact, callbacks),
-            shortcuts,
             DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)));
     }
 
@@ -158,9 +155,9 @@ internal sealed class ContainersPage : EngineStateComponent
     /// navigation cache while a container's page or Settings shows, and a box that is mounted starts from <paramref name="search"/>,
     /// so the box and the filter cannot disagree.
     /// </summary>
-    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ElementRef<TextBox> searchBox, Action<bool> setSearchFocused) =>
+    private static Element Toolbar(string search, Action<string> setSearch, bool runningOnly, ListSearch searchBox) =>
         ListPage.Toolbar(
-            ListPage.SearchBox(search, setSearch, searchBox, setSearchFocused, "Search by name, image or ID (Ctrl+F)"),
+            ListPage.SearchBox(search, setSearch, searchBox, "Search by name, image or ID (Ctrl+F)"),
             ToggleSwitch(runningOnly, SetRunningOnly, onContent: "Only show running containers", offContent: "Only show running containers")
                 .AutomationName("Only show running containers"));
 

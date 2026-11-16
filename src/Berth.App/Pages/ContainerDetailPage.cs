@@ -7,9 +7,7 @@ using Berth.Presentation;
 using Berth.Session;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
-using Microsoft.UI.Reactor.Input;
 using Microsoft.UI.Reactor.Layout;
-using Windows.System;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth.Pages;
@@ -47,7 +45,9 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var nav = UseNavigation<AppRoute>();
         var (tab, setTab) = UseState(0);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
-        var (logsClaimEscape, setLogsClaimEscape) = UseState(false);
+        // What the Logs tab does with Ctrl+F and Escape while it is shown; the page owns the shortcuts.
+        var logsKeys = UseMemo(() => new LogsTabKeys(), Array.Empty<object>());
+        var (logSearchRequests, updateLogSearchRequests) = UseReducer(0);
         // The Logs tab's search lives here, so it outlives the tab being mounted again (another tab chosen and back, or a ring shown).
         var (logSearch, updateLogSearch) = UseReducer(LogSearchState.Closed);
         var lastName = UseRef<string?>(null);
@@ -111,24 +111,31 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             state.Pending,
             sessionKey);
 
-        var dialogOpen = deleteRequest is not null;
-        Command[] shortcuts =
-        [
-            new()
-            {
-                Label = "Back to containers",
-                Execute = () => leave(null),
-                CanExecute = !dialogOpen && !logsClaimEscape,
-                Accelerator = Accelerator(VirtualKey.Escape),
-            },
-            new()
-            {
-                Label = "Back to containers",
-                Execute = () => leave(null),
-                CanExecute = !dialogOpen,
-                Accelerator = Accelerator(VirtualKey.Left, VirtualKeyModifiers.Menu),
-            },
-        ];
+        // The shortcuts, none while the delete confirmation is open. Ctrl+F searches the log (choosing the Logs tab), F5 reads the
+        // container and the list again, Delete asks to delete the container, Escape is the log search's while its box has the focus
+        // and otherwise goes back to the list, as Alt+Left does.
+        var keys = deleteRequest is not null
+            ? new PageKeys()
+            : new PageKeys(
+                Search: () =>
+                {
+                    logsKeys.FocusSearch = true;
+                    updateLogSearch(s => s.Opened());
+                    updateLogSearchRequests(n => n + 1);
+                    setTab(0);
+                },
+                Reload: connected ? () => Reload(id) : null,
+                Delete: row is not null && RowSelection.CanAct(row, connected) ? () => setDeleteRequest(DeleteRequest.For((ContainerRow[])[row])) : null,
+                Escape: () =>
+                {
+                    if (logsKeys.Escape is { } escape)
+                        escape();
+                    else
+                        leave(null);
+                },
+                Back: () => leave(null));
+        var route = Props.Route;
+        UseEffect(() => ShellKeys.Register(route, keys), keys);
 
         void Run(RowAction action)
         {
@@ -157,7 +164,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested()))?.WithKey("connection"),
                 LoadErrorBar(mine?.LoadError, connected ? id : null)?.WithKey("load-error"),
                 tabStrip,
-                Content(shown, waiting, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, setLogsClaimEscape), state.Info?.MemoryBytes ?? 0)
+                Content(shown, waiting, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, logsKeys, logSearchRequests), state.Info?.MemoryBytes ?? 0)
                     .Flex(grow: 1, basis: 0)
                     .WithKey("content"),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null))?.WithKey("delete-dialog"))
@@ -167,7 +174,14 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             })
             .FlexPadding(24, 16, 24, 0);
 
-        return CommandHost(shortcuts, page).Flex(grow: 1, basis: 0);
+        return page.Flex(grow: 1, basis: 0);
+    }
+
+    /// <summary>F5: reads the container again and the lists the session shows.</summary>
+    private static void Reload(string id)
+    {
+        Refresh(id);
+        AppServices.Current.Session.Dispatch(new ReloadRequested());
     }
 
     /// <summary>The list's row for <paramref name="id"/>, or null when the list does not have it (not loaded yet, or removed).</summary>
@@ -213,12 +227,12 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             2 => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
             3 => Component<StatsTab, StatsTabProps>(new(
                 detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, waiting, detail.Details.CpuLimit, machineMemory)),
-            _ => Component<LogsTab, LogsTabProps>(new(detail, waiting, ClearLogs, logs.Search, logs.UpdateSearch, logs.ClaimEscape)),
+            _ => Component<LogsTab, LogsTabProps>(new(detail, waiting, ClearLogs, logs.Search, logs.UpdateSearch, logs.Keys, logs.SearchRequests)),
         };
     }
 
-    /// <summary>What the page keeps for the Logs tab: its search, and whether the tab has Escape.</summary>
-    private sealed record LogsTabHooks(LogSearchState Search, Action<Func<LogSearchState, LogSearchState>> UpdateSearch, Action<bool> ClaimEscape);
+    /// <summary>What the page keeps for the Logs tab: its search, and what the tab does with Ctrl+F and Escape.</summary>
+    private sealed record LogsTabHooks(LogSearchState Search, Action<Func<LogSearchState, LogSearchState>> UpdateSearch, LogsTabKeys Keys, int SearchRequests);
 
     private static void ClearLogs() => AppServices.Current.Detail?.ClearLogs();
 }
