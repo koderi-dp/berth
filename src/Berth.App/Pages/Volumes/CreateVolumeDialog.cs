@@ -2,6 +2,7 @@ using Berth.Components;
 using Berth.Hooks;
 using Berth.Presentation;
 using Berth.Session;
+using Berth.State;
 using Microsoft.UI.Reactor;
 using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml.Controls;
@@ -14,8 +15,9 @@ internal sealed record CreateVolumeDialogProps(Action OnDone);
 
 /// <summary>
 /// "Create volume": one field for the name, checked as it is typed (the engine's rule for names, and not a name already listed), its error
-/// under it and Create disabled while it is wrong. Create sends it and the dialog waits: it closes when the engine has made the volume, and
-/// shows the engine's refusal as it is otherwise. Mounted for one use: it opens when mounted.
+/// under it and Create disabled while it is wrong. Create sends it and the dialog waits (Create disabled from the click): it closes when the
+/// engine has made the volume, and shows the engine's refusal as it is otherwise (the session's <see cref="EngineState.VolumeCreate"/>).
+/// Mounted for one use: it opens when mounted.
 /// </summary>
 internal sealed class CreateVolumeDialog : EngineStateComponent<CreateVolumeDialogProps>
 {
@@ -25,56 +27,55 @@ internal sealed class CreateVolumeDialog : EngineStateComponent<CreateVolumeDial
         var (name, setName) = UseState("");
         var (open, setOpen) = UseState(true);
         var (failure, setFailure) = UseState<string?>(null);
-        // The name sent, while its create is under way; and whether the session has shown it pending yet.
+        // The name sent, while its create is under way.
         var (sent, setSent) = UseState<string?>(null);
+        // From the click until the create has ended, so a second click or Enter before the dialog renders again sends nothing.
+        var asked = UseRef(false);
+        // The session has shown this create: once it is gone from the state again, the connection changed (which forgets it).
         var seen = UseRef(false);
-        // The error bar's message when Create was clicked: a different one when the create ends is the engine's refusal of it.
-        var errorBefore = UseRef<string?>(null);
 
         var connected = state.Status == ConnectionStatus.Connected;
-        var creating = sent is not null && state.Volumes.Pending.ContainsKey(sent);
-        if (creating)
+        var outcome = sent is not null && state.VolumeCreate is { Unattended: false } create && create.Name == sent ? create : null;
+        if (outcome is not null)
             seen.Current = true;
+        var interrupted = sent is not null && outcome is null && (seen.Current || !connected);
+        var ended = interrupted ? "interrupted" : outcome is { Status: not VolumeCreateStatus.InProgress } ? outcome.Status.ToString() : "";
 
-        // The create ended: the session reads the list again (success), or set the error bar to the engine's message (failure), which is
-        // shown here instead and taken off the bar, or the connection went. The page may not render while the create is pending (state
-        // changes are coalesced), so the volume listed or a new error also tell that it ended.
-        var listed = sent is not null && state.Volumes.Items.Any(v => v.Name == sent);
-        var refused = state.ActionError is { } newError && !ReferenceEquals(newError, errorBefore.Current);
-        var ended = sent is not null && !creating && (seen.Current || listed || refused || !connected);
+        // A result of an earlier dialog is no longer wanted.
+        UseEffect(() => AppServices.Current.Session.Dispatch(new VolumeCreateDismissed()), Array.Empty<object>());
+
+        // The create ended: created closes the dialog; a refusal is shown under the form as the engine gave it, and so is a change of
+        // connection that forgot the create.
         UseEffect(
             () =>
             {
-                if (!ended)
+                if (ended.Length == 0)
                     return;
-                seen.Current = false;
-                setSent(null);
-                if (!connected)
-                {
-                    setFailure(state.ConnectionError ?? "The connection to the engine was lost.");
-                }
-                else if (!listed && refused && state.ActionError is { } error)
-                {
-                    setFailure(error);
-                    AppServices.Current.Session.Dispatch(new ActionErrorDismissed());
-                }
-                else
+                if (outcome is { Status: VolumeCreateStatus.Created })
                 {
                     setOpen(false);
+                    return;
                 }
+
+                asked.Current = false;
+                seen.Current = false;
+                setSent(null);
+                setFailure(outcome?.Error ?? VolumeRows.CreateInterruptedText);
             },
             ended);
 
         void Create()
         {
-            var current = AppServices.Current.Session.State;
-            if (sent is not null || !VolumeRows.CanCreate(name, current))
+            var session = AppServices.Current.Session;
+            if (asked.Current || !VolumeRows.CanCreate(name, session.State))
                 return;
-            setFailure(null);
-            errorBefore.Current = current.ActionError;
+            asked.Current = true;
             seen.Current = false;
+            setFailure(null);
             setSent(name);
-            AppServices.Current.Session.Dispatch(new CreateVolumeRequested(name));
+            // Forget how an earlier create of this dialog ended first, so its result is never read as this one's.
+            session.Dispatch(new VolumeCreateDismissed());
+            session.Dispatch(new CreateVolumeRequested(name));
         }
 
         var error = VolumeRows.NameError(name, state);
@@ -103,8 +104,12 @@ internal sealed class CreateVolumeDialog : EngineStateComponent<CreateVolumeDial
                 IsOpen = open,
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Primary,
-                IsPrimaryButtonEnabled = sent is null && VolumeRows.CanCreate(name, state),
-                OnClosed = _ => Props.OnDone(),
+                IsPrimaryButtonEnabled = sent is null && !asked.Current && VolumeRows.CanCreate(name, state),
+                OnClosed = _ =>
+                {
+                    AppServices.Current.Session.Dispatch(new VolumeCreateDismissed());
+                    Props.OnDone();
+                },
             })
             .KeepOpenOnPrimary(Create);
     }

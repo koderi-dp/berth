@@ -38,8 +38,17 @@ public sealed record RemoveItemFinished(ResourceKind Kind, RemovalItem Item, Rem
 /// <summary>Forget the ended batch of removes of one list and its refusals.</summary>
 public sealed record RemovalDismissed(ResourceKind Kind) : SessionEvent;
 
-/// <summary>Create a volume named <paramref name="Name"/>.</summary>
+/// <summary>
+/// Create a volume named <paramref name="Name"/> for the create dialog (<see cref="EngineState.VolumeCreate"/>). Ignored while not
+/// connected, while another create is under way, or while that name is pending.
+/// </summary>
 public sealed record CreateVolumeRequested(string Name) : SessionEvent;
+
+/// <summary>
+/// The create dialog closed: forget how its create ended. A create still under way is left to finish, and a refusal of it then goes to the
+/// app's error bar.
+/// </summary>
+public sealed record VolumeCreateDismissed : SessionEvent;
 
 public sealed record VolumeCreated(string Name) : SessionEvent;
 

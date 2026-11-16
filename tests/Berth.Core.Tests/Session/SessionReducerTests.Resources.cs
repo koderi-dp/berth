@@ -655,22 +655,80 @@ public sealed partial class SessionReducerTests
         var (creating, effects) = Reduce(WithVolumes(), new CreateVolumeRequested("berth-check-vol"));
 
         Assert.Equal(ItemAction.Create, creating.Volumes.Pending["berth-check-vol"]);
+        Assert.Equal(new VolumeCreate("berth-check-vol", VolumeCreateStatus.InProgress, null), creating.VolumeCreate);
         Assert.Equal([new CreateVolumeEffect("berth-check-vol")], effects);
 
         var (state, doneEffects) = Reduce(creating, new VolumeCreated("berth-check-vol"));
         Assert.Empty(state.Volumes.Pending);
+        Assert.Equal(new VolumeCreate("berth-check-vol", VolumeCreateStatus.Created, null), state.VolumeCreate);
         Assert.Equal([new ScheduleResourceReloadEffect(ResourceKind.Volumes, SessionReducer.ReloadDebounce)], doneEffects);
     }
 
     [Fact]
-    public void A_refused_volume_create_shows_the_engine_message_as_is()
+    public void A_refused_volume_create_keeps_the_engine_message_for_the_dialog_and_not_on_the_error_bar()
     {
         var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("data"));
 
         var (state, _) = Reduce(creating, new VolumeCreateFailed("data", "volume name is already in use", EngineUnreachable: false));
 
-        Assert.Equal("volume name is already in use", state.ActionError);
+        Assert.Equal(new VolumeCreate("data", VolumeCreateStatus.Refused, "volume name is already in use"), state.VolumeCreate);
+        Assert.Null(state.ActionError);
         Assert.Empty(state.Volumes.Pending);
+    }
+
+    [Fact]
+    public void A_second_volume_create_while_one_is_under_way_is_dropped()
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+
+        var (again, effects) = Reduce(creating, new CreateVolumeRequested("two"));
+
+        Assert.Same(creating, again);
+        Assert.Empty(effects);
+    }
+
+    [Fact]
+    public void A_volume_create_outcome_is_dismissed_and_a_new_create_can_start()
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+        var (refused, _) = Reduce(creating, new VolumeCreateFailed("one", "refused", EngineUnreachable: false));
+
+        var (dismissed, _) = Reduce(refused, new VolumeCreateDismissed());
+        Assert.Null(dismissed.VolumeCreate);
+
+        var (next, effects) = Reduce(dismissed, new CreateVolumeRequested("two"));
+        Assert.Equal(new VolumeCreate("two", VolumeCreateStatus.InProgress, null), next.VolumeCreate);
+        Assert.Equal([new CreateVolumeEffect("two")], effects);
+    }
+
+    [Fact]
+    public void A_volume_create_whose_dialog_closed_sends_a_refusal_to_the_error_bar()
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+        var (unattended, _) = Reduce(creating, new VolumeCreateDismissed());
+        Assert.Equal(new VolumeCreate("one", VolumeCreateStatus.InProgress, null, Unattended: true), unattended.VolumeCreate);
+        Assert.Same(unattended, Reduce(unattended, new CreateVolumeRequested("two")).State);
+
+        var (refused, _) = Reduce(unattended, new VolumeCreateFailed("one", "refused", EngineUnreachable: false));
+        Assert.Null(refused.VolumeCreate);
+        Assert.Equal("refused", refused.ActionError);
+
+        var (created, _) = Reduce(unattended, new VolumeCreated("one"));
+        Assert.Null(created.VolumeCreate);
+        Assert.Null(created.ActionError);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_change_of_connection_drops_the_volume_create(bool lost)
+    {
+        var (creating, _) = Reduce(WithVolumes(), new CreateVolumeRequested("one"));
+
+        var (state, _) = Reduce(creating, lost ? new ConnectionLost("connection reset") : new ConnectRequested());
+
+        Assert.Null(state.VolumeCreate);
+        Assert.Same(state, Reduce(state, new VolumeCreated("one")).State);
     }
 
     // Disk use

@@ -151,12 +151,20 @@ public static partial class VolumeRows
         : state.Volumes.Items.Any(v => v.Name == name) ? $"A volume named {name} already exists."
         : null;
 
-    /// <summary>Whether Create can send <paramref name="name"/>: not empty, no <see cref="NameError"/>, connected, and not being created already.</summary>
+    /// <summary>
+    /// Whether Create can send <paramref name="name"/>: not empty, no <see cref="NameError"/>, connected, no other create under way and
+    /// not being created already.
+    /// </summary>
     public static bool CanCreate(string name, EngineState state) =>
         name.Length > 0
         && NameError(name, state) is null
         && state.Status == ConnectionStatus.Connected
+        && state.VolumeCreate?.Status != VolumeCreateStatus.InProgress
         && !state.Volumes.Pending.ContainsKey(name);
+
+    /// <summary>What the create dialog says when the connection changed before its create ended (the session forgets the create then).</summary>
+    public const string CreateInterruptedText =
+        "The connection to the engine changed before the create ended. The volume may have been created; look for it in the list.";
 
     /// <summary>Why the table is empty: no volumes at all, nothing matching the search, or nothing the filter keeps.</summary>
     public static string EmptyText(bool engineHasVolumes, UsageFilter filter) => filter.EmptyText("volumes", engineHasVolumes);

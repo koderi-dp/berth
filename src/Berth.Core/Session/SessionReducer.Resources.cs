@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using Berth.Engine.Models;
 using Berth.State;
 
@@ -71,23 +72,32 @@ public static partial class SessionReducer
             case RemovalDismissed dismissed when StatusOf(state, dismissed.Kind).Removal is { IsRunning: false }:
                 return (WithStatus(state, dismissed.Kind, StatusOf(state, dismissed.Kind) with { Removal = null }), None);
 
-            case CreateVolumeRequested request when connected && !state.Volumes.Pending.ContainsKey(request.Name):
+            case CreateVolumeRequested request when connected && state.VolumeCreate?.Status != VolumeCreateStatus.InProgress
+                && !state.Volumes.Pending.ContainsKey(request.Name):
                 return (
-                    WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.SetItem(request.Name, ItemAction.Create) }),
+                    WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.SetItem(request.Name, ItemAction.Create) })
+                        with { VolumeCreate = new VolumeCreate(request.Name, VolumeCreateStatus.InProgress, null) },
                     [new CreateVolumeEffect(request.Name)]);
 
-            case VolumeCreated created when connected:
+            case VolumeCreated created when connected && IsCreating(state, created.Name, out var create):
                 return RequestListReload(
-                    WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.Remove(created.Name) }),
+                    WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.Remove(created.Name) })
+                        with { VolumeCreate = create.Unattended ? null : create with { Status = VolumeCreateStatus.Created } },
                     ResourceKind.Volumes);
 
-            case VolumeCreateFailed failure when connected:
+            case VolumeCreateFailed failure when connected && IsCreating(state, failure.Name, out var create):
             {
                 if (failure.EngineUnreachable)
                     return Lose(state, failure.Message);
                 var next = WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.Remove(failure.Name) });
-                return RequestListReload(next with { ActionError = failure.Message }, ResourceKind.Volumes);
+                next = create.Unattended
+                    ? next with { VolumeCreate = null, ActionError = failure.Message }
+                    : next with { VolumeCreate = create with { Status = VolumeCreateStatus.Refused, Error = failure.Message } };
+                return RequestListReload(next, ResourceKind.Volumes);
             }
+
+            case VolumeCreateDismissed when state.VolumeCreate is { } create:
+                return (state with { VolumeCreate = create.Status == VolumeCreateStatus.InProgress ? create with { Unattended = true } : null }, None);
 
             case DiskUsageRequested when connected:
                 return LoadDiskUsage(state);
@@ -178,7 +188,7 @@ public static partial class SessionReducer
 
     /// <summary>
     /// What is under way on the connection is over, lost or started over: pending item actions, reloads and the disk use read are
-    /// forgotten, a batch of removes ends where it is (keeping its refusals), running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created), and an image read is forgotten. When
+    /// forgotten, a batch of removes ends where it is (keeping its refusals), running pulls and an unfinished run are interrupted (a run keeps the ID of a container already created), and an image read and a volume create are forgotten. When
     /// the session starts over (<paramref name="startingOver"/>) every list also counts as not loaded until it is read again.
     /// </summary>
     private static EngineState ForgetUnderWay(EngineState state, bool startingOver)
@@ -204,7 +214,7 @@ public static partial class SessionReducer
             .Select(p => KeyValuePair.Create(p.Reference, p with { Status = PullStatus.Interrupted })));
         var run = next.Run is { Status: RunStatus.InProgress } inProgress ? inProgress with { Status = RunStatus.Interrupted } : next.Run;
 
-        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false, Again = false }, ImageInspect = null };
+        return next with { Pulls = pulls, Run = run, DiskUsage = next.DiskUsage with { Loading = false, Again = false }, ImageInspect = null, VolumeCreate = null };
     }
 
     /// <summary>Reads every list whose page has been shown, and the disk use once it has been asked for: the connection is new.</summary>
@@ -437,6 +447,13 @@ public static partial class SessionReducer
 
     /// <summary>The key of a pull named as typed or as already keyed; a reference that does not parse is its own key.</summary>
     private static string PullKey(string reference) => ImagePull.KeyOf(reference) ?? reference;
+
+    /// <summary>The dialog's create of <paramref name="name"/> is under way (a result for any other is from before a change of connection).</summary>
+    private static bool IsCreating(EngineState state, string name, [NotNullWhen(true)] out VolumeCreate? create)
+    {
+        create = state.VolumeCreate is { Status: VolumeCreateStatus.InProgress } current && current.Name == name ? current : null;
+        return create is not null;
+    }
 
     private static bool IsRunning(EngineState state, string reference, int generation, out ImagePull pull) =>
         state.Pulls.TryGetValue(reference, out pull!) && pull.Status == PullStatus.Running && pull.Generation == generation;

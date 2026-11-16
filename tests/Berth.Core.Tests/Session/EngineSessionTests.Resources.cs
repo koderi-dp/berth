@@ -120,6 +120,27 @@ public sealed partial class EngineSessionTests
     }
 
     [Fact]
+    public async Task A_volume_create_ends_as_created_or_as_the_engine_refused_it()
+    {
+        var api = new FakeEngineApi { Volumes = [Volume("data")] };
+        await using var h = Harness.With(api);
+        await h.ConnectAsync();
+        await AllWantedAsync(h);
+
+        h.Session.Dispatch(new CreateVolumeRequested("berth-it-v"));
+        var created = await h.WaitFor(s => s.VolumeCreate is { Status: VolumeCreateStatus.Created });
+        Assert.Equal("berth-it-v", created.VolumeCreate!.Name);
+
+        h.Session.Dispatch(new VolumeCreateDismissed());
+        api.Fail("CreateVolume", new EngineException(500, "error while creating volume root path: file name too long"));
+        h.Session.Dispatch(new CreateVolumeRequested("berth-it-w"));
+        var refused = await h.WaitFor(s => s.VolumeCreate is { Status: VolumeCreateStatus.Refused });
+
+        Assert.Equal(new VolumeCreate("berth-it-w", VolumeCreateStatus.Refused, "error while creating volume root path: file name too long"), refused.VolumeCreate);
+        Assert.Null(refused.ActionError);
+    }
+
+    [Fact]
     public async Task An_image_item_stops_at_the_first_tag_the_engine_refuses()
     {
         var api = new FakeEngineApi { Images = [Image("sha256:a", "a:1", "a:2")] };

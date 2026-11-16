@@ -158,6 +158,15 @@ public sealed class VolumeAndNetworkPageTests
     }
 
     [Fact]
+    public void Create_waits_while_another_create_is_under_way_and_not_after_it_ended()
+    {
+        var state = StateWith(volumes: [Volume("data")]);
+
+        Assert.False(VolumeRows.CanCreate("new", state with { VolumeCreate = new VolumeCreate("other", VolumeCreateStatus.InProgress, null) }));
+        Assert.True(VolumeRows.CanCreate("new", state with { VolumeCreate = new VolumeCreate("other", VolumeCreateStatus.Refused, "no") }));
+    }
+
+    [Fact]
     public void A_networks_members_are_its_attached_containers_by_name_with_their_ids()
     {
         var state = StateWith(
