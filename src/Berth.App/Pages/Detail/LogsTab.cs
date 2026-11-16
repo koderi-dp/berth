@@ -27,10 +27,20 @@ namespace Berth.Pages.Detail;
 /// <summary>What the Logs tab is given.</summary>
 /// <param name="Detail">The container's detail state: its log, and where the log stream stands.</param>
 /// <param name="ClearLogs">Empties the view (the container's log is kept).</param>
-/// <param name="ClaimEscape">
-/// Told whether Escape is the search's (it clears the search box) rather than the page's (back to the list); false once the tab goes.
+/// <param name="Search">
+/// The search, kept by the page so it outlives the tab being mounted again (another tab chosen and back).
 /// </param>
-internal sealed record LogsTabProps(DetailState Detail, Action ClearLogs, Action<bool> ClaimEscape);
+/// <param name="UpdateSearch">Changes <paramref name="Search"/>.</param>
+/// <param name="ClaimEscape">
+/// Told whether Escape is the search's (it empties the box or closes the search) rather than the page's (back to the list); false once
+/// the tab goes.
+/// </param>
+internal sealed record LogsTabProps(
+    DetailState Detail,
+    Action ClearLogs,
+    LogSearchState Search,
+    Action<Func<LogSearchState, LogSearchState>> UpdateSearch,
+    Action<bool> ClaimEscape);
 
 /// <summary>
 /// The "Logs" tab of a container's detail page: the container's log, followed live, in a virtualized list that fills the tab, with a
@@ -66,8 +76,10 @@ internal sealed class LogsTab : Component<LogsTabProps>
         var logs = detail.Logs;
         var options = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot).Logs;
         var dark = UseIsDarkTheme();
-        var (searchOpen, setSearchOpen) = UseState(false);
-        var (term, setTerm) = UseState("");
+        var search = Props.Search;
+        var updateSearch = Props.UpdateSearch;
+        var searchOpen = search.Open;
+        var term = search.Term;
         var (anchor, setAnchor) = UseState<LogMatchAnchor?>(null);
         var (focusRequests, updateFocusRequests) = UseReducer(0);
         var (searchFocused, setSearchFocused) = UseState(false);
@@ -110,39 +122,49 @@ internal sealed class LogsTab : Component<LogsTabProps>
             },
             focusRequests);
 
-        // A new term shows its newest match.
+        // A new term shows its newest match, and the chosen match starts over from there.
         UseEffect(
             () =>
             {
-                if (matches.Count > 0 && anchor is null)
+                setAnchor(null);
+                if (matches.Count > 0)
                     scroller.BringIntoView(matches[^1].Line);
             },
             term);
 
-        // Escape clears the search while its box has the focus and text; otherwise it is the page's (back to the list). Only one of
+        // Escape in the search box empties it, then closes the search; anywhere else it is the page's (back to the list). Only one of
         // the two Escape commands is enabled at a time, so which host WinUI asks first does not matter.
-        var escapeClearsSearch = LogView.EscapeClearsSearch(searchFocused, term);
+        var escape = LogView.Escape(search, searchFocused);
         var claimEscape = Props.ClaimEscape;
-        UseEffect(() => claimEscape(escapeClearsSearch), escapeClearsSearch);
+        UseEffect(() => claimEscape(escape != LogEscape.Leave), escape);
         UseEffect(() => () => claimEscape(false), Array.Empty<object>());
 
         void OpenSearch()
         {
-            setSearchOpen(true);
+            updateSearch(s => s.Opened());
             updateFocusRequests(n => n + 1);
         }
 
-        void CloseSearch()
+        void CloseSearch() => updateSearch(_ => LogSearchState.Closed);
+
+        // The box reports every change of its text here; the term follows it and nothing else writes the term while the box is shown,
+        // so the two cannot disagree.
+        void ChangeTerm(string value) => updateSearch(s => s.WithTerm(value));
+
+        // Empties the box itself (which reports "" back), so the box and the term stay the same.
+        void ClearTerm()
         {
-            setSearchOpen(false);
-            setTerm("");
-            setAnchor(null);
+            if (searchBox.Current is { } box)
+                box.Text = "";
+            updateSearch(s => s.Cleared());
         }
 
-        void ChangeTerm(string value)
+        void OnEscape()
         {
-            setTerm(value);
-            setAnchor(null);
+            if (escape == LogEscape.ClearTerm)
+                ClearTerm();
+            else if (escape == LogEscape.CloseSearch)
+                CloseSearch();
         }
 
         void Step(int index)
@@ -172,9 +194,9 @@ internal sealed class LogsTab : Component<LogsTabProps>
             },
             new()
             {
-                Label = "Clear the search",
-                Execute = () => ChangeTerm(""),
-                CanExecute = escapeClearsSearch,
+                Label = escape == LogEscape.CloseSearch ? "Close the search" : "Clear the search",
+                Execute = OnEscape,
+                CanExecute = escape != LogEscape.Leave,
                 Accelerator = Accelerator(VirtualKey.Escape),
             },
         ];
@@ -213,7 +235,16 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 Grid(MainColumns, OneRow, log, latest).Grid(row: 3))
             .Grid(column: 0);
 
-        var toolbar = Toolbar(options, logs, searchOpen ? CloseSearch : OpenSearch, searchOpen, Clear).Grid(column: 1);
+        // The toolbar's Search follows the value its toggle reports, so a repeated report never flips the search the wrong way.
+        void SetSearchShown(bool shown)
+        {
+            if (shown)
+                OpenSearch();
+            else
+                CloseSearch();
+        }
+
+        var toolbar = Toolbar(options, logs, SetSearchShown, searchOpen, Clear).Grid(column: 1);
 
         return CommandHost(shortcuts, Grid(Columns, OneRow, main, toolbar).Margin(0, 0, 0, 16)).Flex(grow: 1, basis: 0);
     }
@@ -346,7 +377,10 @@ internal sealed class LogsTab : Component<LogsTabProps>
         ElementRef<TextBox> searchBox,
         Action<bool> setFocused) =>
         (FlexRow(
-                TextBox(term, setTerm, placeholderText: "Search the log")
+                // Uncontrolled: a controlled box that has just mounted drops its first edit (Reactor takes it for the echo of its own
+                // first write). The box starts from the term when it mounts and reports every change; it is never written over.
+                TextBox(onChanged: setTerm, placeholderText: "Search the log")
+                    .OnMount(control => StartFrom(control, term))
                     .Ref(searchBox)
                     .AutomationId("log-search")
                     .AutomationName("Search the log")
@@ -372,6 +406,13 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 ColumnGap = 4,
             });
 
+    /// <summary>A newly mounted search box shows the term in use (setting it reports the same text back, which changes nothing).</summary>
+    private static void StartFrom(FrameworkElement control, string term)
+    {
+        if (control is TextBox box && box.Text != term)
+            box.Text = term;
+    }
+
     /// <summary>The engine's message, as it gave it, when the log could not be read; Retry opens the page's session again.</summary>
     private static Element? FailureBar(DetailState detail) =>
         detail.LogStatus != StreamStatus.Failed
@@ -387,12 +428,12 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 .AutomationId("log-error");
 
     /// <summary>The narrow toolbar at the right edge: Search, Timestamps and Wrap (kept in the settings), Copy all and Clear.</summary>
-    private static Element Toolbar(LogViewOptions options, LogBuffer logs, Action toggleSearch, bool searchOpen, Action clear)
+    private static Element Toolbar(LogViewOptions options, LogBuffer logs, Action<bool> setSearchShown, bool searchOpen, Action clear)
     {
         var empty = logs.Lines.Count == 0;
         return Border(VStack(
                     4,
-                    ToolbarToggle(Glyphs.Search, "Search (Ctrl+F)", searchOpen, _ => toggleSearch()).AutomationId("log-search-toggle"),
+                    ToolbarToggle(Glyphs.Search, "Search (Ctrl+F)", searchOpen, setSearchShown).AutomationId("log-search-toggle"),
                     ToolbarToggle(Glyphs.Clock, "Show timestamps", options.Timestamps, SetTimestamps).AutomationId("log-timestamps"),
                     ToolbarToggle(Glyphs.Wrap, "Wrap long lines", options.Wrap, SetWrap).AutomationId("log-wrap"),
                     ToolbarButton(Glyphs.Copy, "Copy all", () => ContainerParts.CopyToClipboard(LogSearch.CopyText(logs.Lines, options.Timestamps)))

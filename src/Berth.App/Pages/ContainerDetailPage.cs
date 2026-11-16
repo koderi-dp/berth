@@ -45,6 +45,8 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var (tab, setTab) = UseState(0);
         var (deleteRequest, setDeleteRequest) = UseState<DeleteRequest?>(null);
         var (logsClaimEscape, setLogsClaimEscape) = UseState(false);
+        // The Logs tab's search lives here, so it outlives the tab being mounted again (another tab chosen and back, or a ring shown).
+        var (logSearch, updateLogSearch) = UseReducer(LogSearchState.Closed);
         var lastName = UseRef<string?>(null);
         var lastRowState = UseRef<(RowState State, ContainerAction? Pending)?>(null);
 
@@ -53,6 +55,13 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
         var connected = state.Status == ConnectionStatus.Connected;
         var row = UseMemo(() => FindRow(state, id), state.Containers, state.Pending);
         var mine = detail?.ContainerId == id ? detail : null;
+
+        // The tabs show the last read container while the session is opened again (the page closes it while another page shows and
+        // opens it when it renders again), so they stay mounted and keep what the user was doing, such as an edit in the log search.
+        var lastRead = UseRef<DetailState?>(null);
+        if (mine?.Details is not null)
+            lastRead.Current = mine;
+        var shown = mine?.Details is null && lastRead.Current is { } previous ? previous : mine;
         if (row is not null)
             lastName.Current = row.Name;
         var name = row?.Name ?? lastName.Current ?? mine?.Details?.Name ?? id;
@@ -145,7 +154,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
                 ConnectionBar.Render(state, () => AppServices.Current.Session.Dispatch(new ConnectRequested())),
                 LoadErrorBar(mine?.LoadError),
                 tabStrip,
-                Content(mine, row is not null, tab, setLogsClaimEscape, state.Info?.MemoryBytes ?? 0).Flex(grow: 1, basis: 0),
+                Content(shown, row is not null, tab, new LogsTabHooks(logSearch, updateLogSearch, setLogsClaimEscape), state.Info?.MemoryBytes ?? 0).Flex(grow: 1, basis: 0),
                 DeleteDialog.Render(deleteRequest, () => setDeleteRequest(null)))
             with
             {
@@ -173,7 +182,7 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
     /// The chosen tab, once the container has been read; a ring until then. Each tab is a component whose props are what it shows, so
     /// it renders again only when that changes, not on every batch of log lines.
     /// </summary>
-    private static Element Content(DetailState? detail, bool listed, int tab, Action<bool> logsClaimEscape, long machineMemory)
+    private static Element Content(DetailState? detail, bool listed, int tab, LogsTabHooks logs, long machineMemory)
     {
         if (detail?.Details is null)
         {
@@ -188,9 +197,12 @@ internal sealed class ContainerDetailPage : DetailStateComponent<DetailPageProps
             2 => Component<BindMountsTab, BindMountsTabProps>(new(detail.Details)),
             3 => Component<StatsTab, StatsTabProps>(new(
                 detail.ContainerId, detail.Stats, detail.StatsStatus, detail.StatsError, detail.Details.CpuLimit, machineMemory)),
-            _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs, logsClaimEscape)),
+            _ => Component<LogsTab, LogsTabProps>(new(detail, ClearLogs, logs.Search, logs.UpdateSearch, logs.ClaimEscape)),
         };
     }
+
+    /// <summary>What the page keeps for the Logs tab: its search, and whether the tab has Escape.</summary>
+    private sealed record LogsTabHooks(LogSearchState Search, Action<Func<LogSearchState, LogSearchState>> UpdateSearch, Action<bool> ClaimEscape);
 
     private static void ClearLogs() => AppServices.Current.Detail?.ClearLogs();
 }

@@ -33,14 +33,46 @@ public sealed class LogViewTests
     }
 
     [Theory]
-    [InlineData(true, "port", true)]
-    [InlineData(true, "", false)]
-    [InlineData(true, "  ", true)]
-    [InlineData(false, "port", false)]
-    [InlineData(false, "", false)]
-    public void Escape_clears_the_search_only_while_its_box_has_focus_and_text(bool focused, string term, bool clears)
+    // Open, box focused: Escape clears the text, then a second Escape closes the bar.
+    [InlineData(true, true, "port", LogEscape.ClearTerm)]
+    [InlineData(true, true, "  ", LogEscape.ClearTerm)]
+    [InlineData(true, true, "", LogEscape.CloseSearch)]
+    // The focus is elsewhere, or the bar is closed: Escape is the page's (back to the list).
+    [InlineData(true, false, "port", LogEscape.Leave)]
+    [InlineData(true, false, "", LogEscape.Leave)]
+    [InlineData(false, false, "", LogEscape.Leave)]
+    public void Escape_clears_the_search_box_then_closes_the_search_and_otherwise_leaves(bool open, bool focused, string term, LogEscape action)
     {
-        Assert.Equal(clears, LogView.EscapeClearsSearch(focused, term));
+        Assert.Equal(action, LogView.Escape(new LogSearchState(open, term), focused));
+    }
+
+    [Fact]
+    public void The_search_opens_empty_and_keeps_its_term_until_it_is_closed()
+    {
+        var opened = LogSearchState.Closed.Opened();
+        Assert.Equal(new LogSearchState(Open: true, Term: ""), opened);
+
+        var typed = opened.WithTerm("alert");
+        Assert.Equal(new LogSearchState(Open: true, Term: "alert"), typed);
+
+        // Opening an open search (a repeated Ctrl+F, the toggle reporting On again) keeps the term.
+        Assert.Same(typed, typed.Opened());
+        Assert.Equal(new LogSearchState(Open: true, Term: ""), typed.Cleared());
+        Assert.Equal(new LogSearchState(Open: false, Term: ""), LogSearchState.Closed);
+    }
+
+    [Fact]
+    public void A_term_arriving_while_the_search_is_closed_opens_nothing()
+    {
+        // A box being torn down can still report its text; the closed search stays closed and empty.
+        Assert.Same(LogSearchState.Closed, LogSearchState.Closed.WithTerm("late"));
+    }
+
+    [Fact]
+    public void Setting_the_same_term_changes_nothing()
+    {
+        var typed = LogSearchState.Closed.Opened().WithTerm("alert");
+        Assert.Same(typed, typed.WithTerm("alert"));
     }
 
     [Theory]

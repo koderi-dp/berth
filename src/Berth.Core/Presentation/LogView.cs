@@ -7,6 +7,39 @@ namespace Berth.Presentation;
 /// <summary>A search match by the number of its line since the stream started, so it can be found again after older lines are dropped.</summary>
 public readonly record struct LogMatchAnchor(long LineNumber, int Start);
 
+/// <summary>What Escape does on a container's page with the Logs tab shown.</summary>
+public enum LogEscape
+{
+    /// <summary>Back to the list (the page's own Escape).</summary>
+    Leave,
+
+    /// <summary>Empty the search box; the search stays open.</summary>
+    ClearTerm,
+
+    /// <summary>Close the search bar (its box was already empty).</summary>
+    CloseSearch,
+}
+
+/// <summary>
+/// The Logs tab's search: whether its bar is open and the term in its box. The box only reports into it and starts from it when it
+/// mounts, so the two cannot disagree; it closes only on an explicit close (the bar's close button, the toolbar's Search, Escape in
+/// an empty box), never because the focus went elsewhere.
+/// </summary>
+public sealed record LogSearchState(bool Open, string Term)
+{
+    /// <summary>No search bar, no term.</summary>
+    public static readonly LogSearchState Closed = new(Open: false, Term: "");
+
+    /// <summary>The bar open; an open search keeps its term.</summary>
+    public LogSearchState Opened() => Open ? this : new LogSearchState(Open: true, Term: "");
+
+    /// <summary>The box reported <paramref name="term"/>; ignored while closed (a box being removed can still report).</summary>
+    public LogSearchState WithTerm(string term) => !Open || term == Term ? this : this with { Term = term };
+
+    /// <summary>The box emptied, the bar still open.</summary>
+    public LogSearchState Cleared() => WithTerm("");
+}
+
 /// <summary>What the Logs tab decides: the texts it shows for each state, the search counter and its stepping, and whether it follows.</summary>
 public static class LogView
 {
@@ -40,9 +73,13 @@ public static class LogView
     }
 
     /// <summary>
-    /// Whether Escape clears the log search rather than leaving the page: only while the search box has the focus and text in it.
+    /// What Escape does: while the search box has the focus, it first empties the box, then closes the search; anywhere else it is
+    /// the page's (back to the list).
     /// </summary>
-    public static bool EscapeClearsSearch(bool searchFocused, string term) => searchFocused && term.Length > 0;
+    public static LogEscape Escape(LogSearchState search, bool boxFocused) =>
+        !search.Open || !boxFocused ? LogEscape.Leave
+        : search.Term.Length > 0 ? LogEscape.ClearTerm
+        : LogEscape.CloseSearch;
 
     /// <summary>The notes shown above the lines: that a stopped container's lines are its last, and that older lines were dropped.</summary>
     public static IReadOnlyList<string> Notes(StreamStatus status, int lineCount, long dropped)
