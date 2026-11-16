@@ -356,6 +356,51 @@ internal sealed class FakeEngineApi : IEngineApi
         return _lastExecInspection;
     }
 
+    /// <summary>What a non-TTY exec answers ("RunExecForOutput"); an empty listing that ended with 0 until set.</summary>
+    public ExecOutput ExecOutput { get; set; } = new([], false, 0);
+
+    /// <summary>Every non-TTY exec, in order.</summary>
+    public ConcurrentQueue<(string ContainerId, IReadOnlyList<string> Command)> OutputExecs { get; } = new();
+
+    /// <summary>The stat of each path ("StatPath"); a missing one answers the engine's 404.</summary>
+    public ConcurrentDictionary<string, PathStat> PathStats { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The tar of each path ("GetArchive"); a missing one answers the engine's 404.</summary>
+    public ConcurrentDictionary<string, Func<Stream>> Archives { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Every archive written ("PutArchive"): the folder and the tar's bytes.</summary>
+    public ConcurrentQueue<(string Path, byte[] Tar)> Uploads { get; } = new();
+
+    public async Task<ExecOutput> RunExecForOutputAsync(string containerId, IReadOnlyList<string> command, int limit, CancellationToken ct)
+    {
+        await EnterAsync("RunExecForOutput", $"RunExecForOutput {containerId}", ct);
+        OutputExecs.Enqueue((containerId, command));
+        return ExecOutput;
+    }
+
+    public async Task<PathStat> StatPathAsync(string containerId, string path, CancellationToken ct)
+    {
+        await EnterAsync("StatPath", $"StatPath {path}", ct);
+        return PathStats.TryGetValue(path, out var stat) ? stat : throw new EngineException(404, $"Could not find the file {path} in container {containerId}");
+    }
+
+    public async Task<ArchiveRead> GetArchiveAsync(string containerId, string path, CancellationToken ct)
+    {
+        await EnterAsync("GetArchive", $"GetArchive {path}", ct);
+        if (!Archives.TryGetValue(path, out var open))
+            throw new EngineException(404, $"Could not find the file {path} in container {containerId}");
+        PathStats.TryGetValue(path, out var stat);
+        return new ArchiveRead(stat, open(), new MemoryStream());
+    }
+
+    public async Task PutArchiveAsync(string containerId, string path, Func<Stream, CancellationToken, Task> write, CancellationToken ct)
+    {
+        await EnterAsync("PutArchive", $"PutArchive {path}", ct);
+        var tar = new MemoryStream();
+        await write(tar, ct);
+        Uploads.Enqueue((path, tar.ToArray()));
+    }
+
     public ValueTask DisposeAsync()
     {
         _disposed = true;

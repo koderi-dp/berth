@@ -19,7 +19,7 @@ namespace Berth.Engine;
 /// 90; streams, a pull and disk usage have no deadline. A timeout or an engine that cannot be reached throws
 /// <see cref="EngineException"/> with status 0 (a timeout also with <see cref="EngineException.TimedOut"/>). Disposing the client disposes the handler.
 /// </summary>
-public sealed class EngineClient : IEngineApi
+public sealed partial class EngineClient : IEngineApi
 {
     /// <summary>The API from which <c>/system/df</c> takes <c>verbose</c> and then leaves out its older lists.</summary>
     private static readonly ApiVersion DiskUsageVerboseSince = new(1, 52);
@@ -633,9 +633,9 @@ public sealed class EngineClient : IEngineApi
     }
 
     /// <summary>Sends a request whose answer is read as it arrives, with no deadline. A 2xx answer is returned; any other status throws.</summary>
-    private async Task<HttpResponseMessage> OpenStreamAsync(HttpMethod method, string path, CancellationToken ct)
+    private async Task<HttpResponseMessage> OpenStreamAsync(HttpMethod method, string path, CancellationToken ct, HttpContent? content = null)
     {
-        using var request = new HttpRequestMessage(method, path);
+        using var request = new HttpRequestMessage(method, path) { Content = content };
 
         HttpResponseMessage response;
         try

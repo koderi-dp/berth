@@ -23,6 +23,22 @@ internal sealed class StubHandler : HttpMessageHandler
 
     public StubHandler On(string pathAndQuery, string body) => On(pathAndQuery, HttpStatusCode.OK, body);
 
+    /// <summary>Answers requests for <paramref name="pathAndQuery"/> with this status, these bytes and these headers.</summary>
+    public StubHandler On(string pathAndQuery, HttpStatusCode status, byte[] body, params (string Name, string Value)[] headers)
+    {
+        _headers[pathAndQuery] = headers;
+        _answers[pathAndQuery] = (status, () => new ByteArrayContent(body));
+        return this;
+    }
+
+    private readonly Dictionary<string, (string Name, string Value)[]> _headers = new(StringComparer.Ordinal);
+
+    /// <summary>Each request's body as bytes, in the order of <see cref="Requests"/>; empty when it had none.</summary>
+    public List<byte[]> BodyBytes { get; } = [];
+
+    /// <summary>Each request's content type, in the order of <see cref="Requests"/>; null when it had no body.</summary>
+    public List<string?> ContentTypes { get; } = [];
+
     /// <summary>Answers requests for <paramref name="pathAndQuery"/> with 200 and a body that arrives as the test writes it.</summary>
     public StubHandler On(string pathAndQuery, ChunkStream body)
     {
@@ -39,17 +55,23 @@ internal sealed class StubHandler : HttpMessageHandler
     {
         var pathAndQuery = request.RequestUri!.PathAndQuery;
         Requests.Add((request.Method.Method, pathAndQuery));
-        Bodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+        var bytes = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(cancellationToken);
+        BodyBytes.Add(bytes);
+        Bodies.Add(Encoding.UTF8.GetString(bytes));
+        ContentTypes.Add(request.Content?.Headers.ContentType?.MediaType);
 
         var (status, content) = _answers.TryGetValue(pathAndQuery, out var answer)
             ? answer
             : (HttpStatusCode.NotFound, () => new StringContent("""{"message":"page not found"}""", Encoding.UTF8, "application/json"));
 
-        return new HttpResponseMessage(status)
+        var response = new HttpResponseMessage(status)
         {
             RequestMessage = request,
             Content = content(),
         };
+        foreach (var (name, value) in _headers.GetValueOrDefault(pathAndQuery) ?? [])
+            response.Headers.TryAddWithoutValidation(name, value);
+        return response;
     }
 }
 

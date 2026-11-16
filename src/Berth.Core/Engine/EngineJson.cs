@@ -27,6 +27,7 @@ namespace Berth.Engine;
 [JsonSerializable(typeof(WireExecCreate))]
 [JsonSerializable(typeof(WireExecStart))]
 [JsonSerializable(typeof(WireExecInspect))]
+[JsonSerializable(typeof(WirePathStat))]
 internal sealed partial class EngineJson : JsonSerializerContext;
 
 internal sealed record WireVersion(
@@ -337,3 +338,11 @@ internal sealed record WireExecStart(
 internal sealed record WireExecInspect(
     [property: JsonPropertyName("Running")] bool? Running,
     [property: JsonPropertyName("ExitCode")] int? ExitCode);
+
+/// <summary>The archive calls' <c>X-Docker-Container-Path-Stat</c> header, base64 of this JSON (lower-case names).</summary>
+internal sealed record WirePathStat(
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("size")] long Size,
+    [property: JsonPropertyName("mode")] long Mode,
+    [property: JsonPropertyName("mtime")] string? Mtime,
+    [property: JsonPropertyName("linkTarget")] string? LinkTarget);

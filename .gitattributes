@@ -4,3 +4,5 @@ src/Berth.App/Assets/Terminal/xterm.js -text
 src/Berth.App/Assets/Terminal/xterm.css -text
 src/Berth.App/Assets/Terminal/addon-fit.js -text
 src/Berth.App/Assets/Terminal/LICENSE-xterm.txt -text
+# Tar fixtures made by GNU tar and the engine, kept byte for byte.
+*.tar binary

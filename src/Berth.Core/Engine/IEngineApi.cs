@@ -112,4 +112,26 @@ public interface IEngineApi : IAsyncDisposable
 
     /// <summary>Reads whether an exec still runs and, once it has ended, its exit code. 30 s deadline.</summary>
     Task<ExecInspection> InspectExecAsync(string execId, CancellationToken ct);
+
+    /// <summary>
+    /// Runs <paramref name="command"/> in a running container without a terminal and returns its standard output, at most
+    /// <paramref name="limit"/> bytes, and its exit code. 30 s deadline for the whole run. Errors as <see cref="CreateExecAsync"/>.
+    /// </summary>
+    Task<ExecOutput> RunExecForOutputAsync(string containerId, IReadOnlyList<string> command, int limit, CancellationToken ct);
+
+    /// <summary>What the engine says about <paramref name="path"/> in a container, running or not. 30 s deadline. A missing path throws its 404.</summary>
+    Task<PathStat> StatPathAsync(string containerId, string path, CancellationToken ct);
+
+    /// <summary>
+    /// A tar stream of <paramref name="path"/> (a folder with everything under it), running or not, read as it arrives with no deadline.
+    /// The caller disposes it. An error answer (no such path) throws with the engine's message.
+    /// </summary>
+    Task<ArchiveRead> GetArchiveAsync(string containerId, string path, CancellationToken ct);
+
+    /// <summary>
+    /// Unpacks the tar that <paramref name="write"/> writes into the folder <paramref name="path"/> of a container, with no deadline.
+    /// Never replaces a folder with a file or the other way round. An error answer throws with the engine's message; a failure of
+    /// <paramref name="write"/> is thrown as it is.
+    /// </summary>
+    Task PutArchiveAsync(string containerId, string path, Func<Stream, CancellationToken, Task> write, CancellationToken ct);
 }
