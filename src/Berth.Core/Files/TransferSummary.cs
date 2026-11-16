@@ -32,3 +32,6 @@ public sealed record TransferSummary(
 
 /// <summary>A download would replace what is already in the chosen folder and was not told it may.</summary>
 public sealed class TransferConflictException(string message) : IOException(message);
+
+/// <summary>The destination drive has, or would have, less than <see cref="ArchiveExtractor.FreeSpaceFloor"/> free.</summary>
+public sealed class DiskSpaceException(string message) : IOException(message);

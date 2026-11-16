@@ -137,6 +137,8 @@ public sealed class ArchiveExtractorTests : IDisposable
     [InlineData("trail ", "trail_")]
     [InlineData("tab\there", "tab_here")]
     [InlineData("new\nline", "new_line")]
+    [InlineData("CONIN$", "_CONIN$")]
+    [InlineData("conout$.txt", "_conout$.txt")]
     public async Task A_name_windows_cannot_hold_is_made_safe_and_counted(string name, string saved)
     {
         var tar = new TarBytes().Folder("src").File("src/" + name, "x").End();
@@ -326,7 +328,46 @@ public sealed class ArchiveExtractorTests : IDisposable
         Assert.Equal(big, await File.ReadAllBytesAsync(Path.Combine(_destination, "big.bin")));
         Assert.True(steps > 8, "the content was written in pieces");
     }
-}
+
+    [Fact]
+    public async Task A_folder_that_is_a_junction_is_not_merged_into()
+    {
+        var elsewhere = Path.Combine(_root, "elsewhere");
+        Directory.CreateDirectory(elsewhere);
+
+        using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                   "cmd.exe", $"/c mklink /J \"{Path.Combine(_destination, "src")}\" \"{elsewhere}\"") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!)
+            await mklink.WaitForExitAsync();
+
+        await Assert.ThrowsAsync<TransferConflictException>(() => ExtractAsync(new TarBytes().Folder("src").File("src/a.txt", "a").End(), replace: true));
+
+        Assert.Empty(Directory.GetFileSystemEntries(elsewhere));
+        Assert.DoesNotContain(Directory.GetFileSystemEntries(_destination), p => Path.GetFileName(p).StartsWith(".berth-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_download_stops_when_the_drive_runs_low_and_leaves_nothing()
+    {
+        var tar = new TarBytes().Entry("big.bin", '0', new byte[4 * 1024 * 1024]).End();
+        long free = 300L * 1024 * 1024;
+
+        var error = await Assert.ThrowsAsync<DiskSpaceException>(() =>
+            ArchiveExtractor.ExtractAsync(new MemoryStream(tar), _destination, false, n => free -= 60L * 1024 * 1024, CancellationToken.None, () => free));
+
+        Assert.Equal(["downloads"], Everything());
+        Assert.Contains("200 MB", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_download_does_not_start_on_a_drive_that_is_already_low()
+    {
+        var tar = new TarBytes().File("a.txt", "a").End();
+
+        await Assert.ThrowsAsync<DiskSpaceException>(() =>
+            ArchiveExtractor.ExtractAsync(new MemoryStream(tar), _destination, false, _ => { }, CancellationToken.None, () => 100L * 1024 * 1024));
+
+        Assert.Equal(["downloads"], Everything());
+    }}
 
 internal static class TarBytesExtensions
 {

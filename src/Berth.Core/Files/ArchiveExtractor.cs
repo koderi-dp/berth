@@ -23,16 +23,40 @@ public static class ArchiveExtractor
 {
     private const int BufferSize = 81920;
 
+    /// <summary>A download stops when the destination drive has less than this free: 200 MB.</summary>
+    public const long FreeSpaceFloor = 200L * 1024 * 1024;
+
+    /// <summary>How much is written between two looks at the free space.</summary>
+    private const long FreeSpaceCheckEvery = 1024 * 1024;
+
+    /// <summary>The free space of the drive that holds <paramref name="folder"/>, read each time it is called.</summary>
+    public static Func<long> FreeSpaceOf(string folder)
+    {
+        var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(folder))!);
+        return () => drive.AvailableFreeSpace;
+    }
+
+    /// <summary>Why a download stopped for lack of room.</summary>
+    public static string FloorText(string folder) =>
+        $"Less than 200 MB would be free on {Path.GetPathRoot(Path.GetFullPath(folder))}, so the download stopped. Nothing partial was left.";
+
     /// <summary>
     /// Saves the archive into <paramref name="destination"/>, reporting each piece of content written to <paramref name="progress"/>.
     /// Throws <see cref="TransferConflictException"/> when the target is there and <paramref name="replace"/> is false,
     /// <see cref="ArchiveFormatException"/> for an archive that cannot be read or whose top entry is not a plain name, and what the
-    /// disk throws; in every such case, and on cancel, nothing of this archive is left in the folder.
+    /// disk throws, and <see cref="DiskSpaceException"/> when the drive has (or comes to have) less than <see cref="FreeSpaceFloor"/>
+    /// free (<paramref name="freeSpace"/>, the drive's own by default, read at the start and after each megabyte); in every such case,
+    /// and on cancel, nothing of this archive is left under its temporary name. A merge into a folder that is already there moves the
+    /// files one by one, so one that fails half way leaves the files moved before it.
     /// </summary>
     public static async Task<TransferSummary> ExtractAsync(
-        Stream archive, string destination, bool replace, Action<long> progress, CancellationToken ct)
+        Stream archive, string destination, bool replace, Action<long> progress, CancellationToken ct, Func<long>? freeSpace = null)
     {
         destination = Path.GetFullPath(destination);
+        freeSpace ??= FreeSpaceOf(destination);
+        if (freeSpace() < FreeSpaceFloor)
+            throw new DiskSpaceException(FloorText(destination));
+        progress = Guarded(progress, freeSpace, destination);
         await using var reader = new ArchiveReader(archive);
         var top = await reader.NextAsync(ct).ConfigureAwait(false) ?? throw new ArchiveFormatException("The archive is empty.");
         if (top.Name.StartsWith('/') || Segments(top.Name) is not [var topName] || !IsPlain(topName))
@@ -71,6 +95,22 @@ public static class ArchiveExtractor
             Remove(staging);
             throw;
         }
+    }
+
+    /// <summary><paramref name="progress"/>, with a look at the free space after each megabyte written; under the floor it throws.</summary>
+    private static Action<long> Guarded(Action<long> progress, Func<long> freeSpace, string destination)
+    {
+        long sinceCheck = 0;
+        return written =>
+        {
+            progress(written);
+            sinceCheck += written;
+            if (sinceCheck < FreeSpaceCheckEvery)
+                return;
+            sinceCheck = 0;
+            if (freeSpace() < FreeSpaceFloor)
+                throw new DiskSpaceException(FloorText(destination));
+        };
     }
 
     private static async Task ExtractTreeAsync(
@@ -188,6 +228,8 @@ public static class ArchiveExtractor
             return;
         }
 
+        if (folderThere && new DirectoryInfo(target).LinkTarget is not null)
+            throw new TransferConflictException($"\"{name}\" is already in the folder as a link or junction, so nothing was put into it.");
         if (folder ? fileThere : folderThere)
             throw new TransferConflictException($"\"{name}\" is already in the folder as a {(fileThere ? "file" : "folder")}, so it was not replaced.");
         if (!replace)
@@ -219,7 +261,7 @@ public static class ArchiveExtractor
                 continue;
             }
 
-            if (Directory.Exists(there) && new DirectoryInfo(there).Attributes.HasFlag(FileAttributes.ReparsePoint))
+            if (Directory.Exists(there) && LocalFiles.IsLink(new DirectoryInfo(there)))
             {
                 counts.Unsafe++;
                 continue;
