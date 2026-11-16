@@ -129,10 +129,10 @@ public sealed class EngineSessionTests
         var copied = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Session.CopyRequested += text => copied.TrySetResult(text);
 
-        h.Session.Dispatch(new RunCommandRequested("a", Berth.Presentation.ShellKind.Posix));
+        h.Session.Dispatch(new RunCommandRequested("a", ShellKind.Posix));
         var text = await copied.Task.WaitAsync(Patience);
 
-        Assert.Equal(Berth.Presentation.DockerRunCommand.Build(inspection.Details, Berth.Presentation.ShellKind.Posix), text);
+        Assert.Equal(DockerRunCommand.Build(inspection.Details, ShellKind.Posix), text);
         Assert.Contains("Inspect a", api.Calls);
         Assert.Null(h.Session.State.ActionError);
     }
@@ -146,7 +146,7 @@ public sealed class EngineSessionTests
         var copies = 0;
         h.Session.CopyRequested += _ => Interlocked.Increment(ref copies);
 
-        h.Session.Dispatch(new RunCommandRequested("gone", Berth.Presentation.ShellKind.PowerShell));
+        h.Session.Dispatch(new RunCommandRequested("gone", ShellKind.PowerShell));
         var state = await h.WaitFor(s => s.ActionError is not null);
 
         Assert.Equal("No such container: gone", state.ActionError);

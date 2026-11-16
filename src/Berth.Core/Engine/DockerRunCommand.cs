@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using Berth.Engine.Models;
 
-namespace Berth.Presentation;
+namespace Berth.Engine;
 
 /// <summary>The <c>docker run</c> command that creates a container like an existing one.</summary>
 public static class DockerRunCommand

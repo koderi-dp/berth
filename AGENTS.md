@@ -23,19 +23,22 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list, actions, event stream, inspect,
                             logs (StreamLogsAsync), stats (StreamStatsAsync); EngineHttp, EngineJson (source-generated),
                             ApiVersion, ConnectionTester, EngineTime, JsonLines (line-delimited JSON streams), LogFrames (the
-                            engine's multiplexed log framing), LogLines (frames or TTY text to LogLine), StatsMath (CPU and
-                            memory from a raw stats line), Models/ (ContainerDetails/ContainerInspection, LogLine, StatsSample)
+                            engine's multiplexed log framing), LogLines (frames or TTY text to LogLine), AnsiText (terminal
+                            output to plain text), StatsMath (CPU and memory from a raw stats line), DockerRunCommand (the
+                            `docker run` command of an inspected container, PowerShell or bash quoting; ShellKind),
+                            Models/ (ContainerDetails/ContainerInspection, LogLine, StatsSample)
+  State/                    value types that hold what a session gathered and that both Session and Presentation read:
+                            LogBuffer (last 10,000 lines), StatsHistory (last 120 samples, as chart series)
   Session/                  EngineState, SessionEvents, SessionEffects, SessionReducer (all list behaviour, including list
                             stats), EngineSession (runs the reducer and its effects; reports failures to an optional error
                             sink; opens detail sessions on its current connection), Backoff;
                             DetailState, DetailEvents, DetailReducer (all detail page behaviour), ContainerDetailSession
                             (runs the detail reducer: inspect, log and stats streams of one container)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSort, ContainerStatus, BulkSelection,
-                            RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat, DockerRunCommand (PowerShell or
-                            bash quoting); detail page: LogBuffer (last 10,000 lines), LogView, LogSearch, AnsiText,
-                            InspectSections, StatsHistory (last 120 samples), StatsCharts (axes, figures, screen-reader
-                            summaries), StatsSummary (list strip and CPU column texts), DetailPage (the detail page's
-                            lifecycle: when it opens, closes, refreshes or leaves its session, and which state its tabs show)
+                            RowActions, EngineCounts, AgeFormat, PortFormat, ByteFormat; detail page: LogView, LogSearch,
+                            InspectSections, StatsCharts (axes, figures, screen-reader summaries), StatsSummary (list strip
+                            and CPU column texts), DetailPage (the detail page's lifecycle: when it opens, closes, refreshes
+                            or leaves its session, and which state its tabs show)
   Logging/, Storage/        FileLog, AtomicFile
 src/Berth.App/              UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
   Program.cs                entry point: log, services, first connect, window
@@ -63,6 +66,20 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   Package.appxmanifest      package identity Koderi.Berth, publisher CN=Koderi
 tests/Berth.Core.Tests/     xunit tests for Core; Integration/ holds the tests that need a real engine
 ```
+
+Core's layers depend one way, never back up (one assembly gives no compiler check, so
+`tests/Berth.Core.Tests/LayerTests.cs` reads the source and fails on a reference upward):
+
+- `Engine` depends on nothing in Core but `Connections` and `Transport`. Text utilities the engine
+  client needs (`AnsiText`) live in `Engine`.
+- `State` holds value types that both sessions and presentation need (`LogBuffer`,
+  `StatsHistory`). It depends on `Engine` models only, never on `Session` or `Presentation`.
+- `Session` depends on `Engine` and `State`, never on `Presentation`.
+- `Presentation` depends on `Engine`, `State` and `Session`'s state records (`EngineState`,
+  `DetailState` and what they hold), never the reverse.
+
+A type that a lower layer needs moves down (to `Engine` or `State`); a lower layer never
+reaches up.
 
 Pure logic goes in Core and is unit-tested; the app project holds UI, interop and wiring only.
 Where the original plan put logic in the app, it now lives in Core: the connection editor's

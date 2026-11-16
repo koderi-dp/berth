@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
 
-namespace Berth.Presentation;
+namespace Berth.State;
 
 /// <summary>One point of a stats chart.</summary>
 public sealed record StatsPoint(DateTimeOffset Time, double Value);

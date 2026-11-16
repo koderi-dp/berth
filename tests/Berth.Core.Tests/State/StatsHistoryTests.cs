@@ -1,7 +1,7 @@
-using Berth.Presentation;
+using Berth.State;
 using static Berth.Tests.Presentation.DetailsFixtures;
 
-namespace Berth.Tests.Presentation;
+namespace Berth.Tests.State;
 
 public sealed class StatsHistoryTests
 {

@@ -1,6 +1,6 @@
-using Berth.Presentation;
+using Berth.Engine;
 
-namespace Berth.Tests.Presentation;
+namespace Berth.Tests.Engine;
 
 public sealed class AnsiTextTests
 {

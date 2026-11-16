@@ -1,8 +1,8 @@
 using Berth.Engine.Models;
-using Berth.Presentation;
+using Berth.Engine;
 using static Berth.Tests.Presentation.DetailsFixtures;
 
-namespace Berth.Tests.Presentation;
+namespace Berth.Tests.Engine;
 
 public sealed class DockerRunCommandTests
 {

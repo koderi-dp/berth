@@ -1,6 +1,7 @@
 using Berth.Engine.Models;
 using Berth.Presentation;
 using Berth.Session;
+using Berth.State;
 using static Berth.Tests.Presentation.DetailsFixtures;
 
 namespace Berth.Tests.Presentation;

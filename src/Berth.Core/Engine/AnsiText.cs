@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Berth.Presentation;
+namespace Berth.Engine;
 
 /// <summary>Turns terminal output into plain text.</summary>
 public static class AnsiText

@@ -1,7 +1,7 @@
 using System.Collections.Immutable;
 using Berth.Engine.Models;
 
-namespace Berth.Presentation;
+namespace Berth.State;
 
 /// <summary>
 /// The log lines a page shows: a window over the newest <see cref="Capacity"/> lines of a log stream. Immutable; an append
