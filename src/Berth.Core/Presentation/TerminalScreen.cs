@@ -16,10 +16,15 @@ public enum TerminalOutput
 /// <summary>
 /// Which shell's output the terminal shows, by the shell's generation, and the flow count of what it was sent. Generations are a
 /// detail session's own and start again at 1 in each: when the terminal follows another session, <see cref="NewSession"/> forgets
-/// the old numbering, or the new session's shells would be taken for old ones and dropped. Not thread-safe: the bridge guards it.
+/// the old numbering, or the new session's shells would be taken for old ones and dropped. Output carries the session it came from
+/// (<see cref="Session"/> when it was attached), so a write the old session's pump had already begun is dropped instead of being
+/// taken for a new shell. Not thread-safe: the bridge guards it.
 /// </summary>
 public sealed class TerminalScreen
 {
+    /// <summary>The detail session followed: a number that changes with each <see cref="NewSession"/>.</summary>
+    public int Session { get; private set; }
+
     /// <summary>The shell shown; 0 before the first.</summary>
     public int Generation { get; private set; }
 
@@ -35,10 +40,10 @@ public sealed class TerminalScreen
         return true;
     }
 
-    /// <summary>Output of the shell of <paramref name="generation"/> arrived.</summary>
-    public TerminalOutput Output(int generation)
+    /// <summary>Output of the shell of <paramref name="generation"/> of <paramref name="session"/> arrived.</summary>
+    public TerminalOutput Output(int session, int generation)
     {
-        if (generation < Generation)
+        if (session != Session || generation < Generation)
             return TerminalOutput.Drop;
         if (generation == Generation)
             return TerminalOutput.Show;
@@ -46,11 +51,16 @@ public sealed class TerminalScreen
         return TerminalOutput.NewScreen;
     }
 
-    /// <summary>The terminal follows another detail session: no shell is shown and nothing is outstanding.</summary>
-    public void NewSession()
+    /// <summary>
+    /// The terminal follows another detail session: no shell is shown, nothing is outstanding, and output of the sessions before is
+    /// dropped. Returns the new session's number, which its output carries.
+    /// </summary>
+    public int NewSession()
     {
+        Session++;
         Generation = 0;
         Flow.Reset();
+        return Session;
     }
 
     private void StartGeneration(int generation)

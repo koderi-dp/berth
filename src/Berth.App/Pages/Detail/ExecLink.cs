@@ -120,11 +120,11 @@ internal sealed class ExecLink
         Session = session;
         if (session is null)
             return;
-        Bridge.NewSession();
+        var output = Bridge.NewSession();
         var startedOnce = ExecView.StartedOnceAfterNewSession(StartedOnce, _previousLost);
         if (startedOnce != StartedOnce)
             SetStartedOnce(startedOnce);
-        session.AttachExecOutput(Bridge);
+        session.AttachExecOutput(output);
     }
 
     /// <summary>The tab is left: the shell ends and its output goes nowhere.</summary>

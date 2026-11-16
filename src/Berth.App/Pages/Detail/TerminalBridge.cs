@@ -11,10 +11,11 @@ namespace Berth.Pages.Detail;
 /// byte is counted in a <see cref="TerminalFlow"/>: <see cref="WriteAsync"/> completes only while the flow is not paused, so a shell
 /// that floods output waits on xterm's acknowledgements instead of piling bytes up. Which shell is shown is decided by a
 /// <see cref="TerminalScreen"/>: a new shell (a higher generation, from the session's pump or from <see cref="Begin"/>) clears the
-/// screen first and starts the count again, and <see cref="NewSession"/> forgets one detail session's numbering for the next.
+/// screen first and starts the count again, and <see cref="NewSession"/> forgets one detail session's numbering for the next and hands
+/// out the output that session is given, so a write the session before had already begun is dropped.
 /// </summary>
 /// <remarks><see cref="WriteAsync"/> is called on a thread-pool thread; everything else on the UI thread.</remarks>
-internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
+internal sealed class TerminalBridge(DispatcherQueue ui)
 {
     private readonly Lock _lock = new();
     private readonly TerminalScreen _screen = new();
@@ -36,19 +37,21 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
 
     /// <summary>
     /// The terminal follows another detail session, whose shells are numbered from 1 again: what the old one sent and had
-    /// outstanding is forgotten, and its pump, if still waiting, is let go.
+    /// outstanding is forgotten, and its pump, if still waiting, is let go. Returns the output to attach to the new session.
     /// </summary>
-    public void NewSession()
+    public IExecOutput NewSession()
     {
         TaskCompletionSource? resume;
+        int session;
         lock (_lock)
         {
-            _screen.NewSession();
+            session = _screen.NewSession();
             _pending.ResetWrittenCount();
             resume = TakeResume();
         }
 
         resume?.TrySetResult();
+        return new SessionOutput(this, session);
     }
 
     /// <summary>A new terminal page (a new WebView, or the same one loaded again): nothing it was sent is outstanding.</summary>
@@ -111,7 +114,7 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         resume?.TrySetResult();
     }
 
-    public ValueTask WriteAsync(int generation, ReadOnlyMemory<byte> bytes, CancellationToken ct)
+    private ValueTask WriteAsync(int session, int generation, ReadOnlyMemory<byte> bytes, CancellationToken ct)
     {
         TaskCompletionSource? released = null;
         Task wait;
@@ -119,7 +122,7 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
         {
             if (_handle is null)
                 return ValueTask.CompletedTask;
-            var output = _screen.Output(generation);
+            var output = _screen.Output(session, generation);
             if (output == TerminalOutput.Drop)
                 return ValueTask.CompletedTask;
             if (output == TerminalOutput.NewScreen)
@@ -190,5 +193,12 @@ internal sealed class TerminalBridge(DispatcherQueue ui) : IExecOutput
             handle.Post(TerminalProtocol.Reset());
         if (output is not null)
             handle.Post(output);
+    }
+
+    /// <summary>One detail session's output: its writes carry the session's number.</summary>
+    private sealed class SessionOutput(TerminalBridge bridge, int session) : IExecOutput
+    {
+        public ValueTask WriteAsync(int generation, ReadOnlyMemory<byte> bytes, CancellationToken ct) =>
+            bridge.WriteAsync(session, generation, bytes, ct);
     }
 }
