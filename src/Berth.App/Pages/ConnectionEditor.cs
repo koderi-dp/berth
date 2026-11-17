@@ -129,7 +129,7 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
                     : ToggleSwitch(draft.UseTls, on => Edit(d => d.WithTls(on)), header: "Use TLS").AutomationName("Use TLS").WithKey("tls"),
                 draft.UseTls && !draft.IsNamedPipe && !draft.IsSsh ? TlsFields(draft, tlsError, Edit).WithKey("tls-files") : null,
                 draft.IsSsh
-                    ? SshFields(draft, buildError == ConnectionDraft.KeyFileMissing && draft.SshKeyPath.Length > 0 ? buildError : null, secretSaved, keyPicked, Edit, SecretChanged, () => _ = PickKeyAsync())
+                    ? SshFields(draft, buildError == ConnectionDraft.KeyFileMissing ? buildError : null, secretSaved, keyPicked, Edit, SecretChanged, () => _ = PickKeyAsync())
                         .WithKey("ssh-" + draft.SignIn)
                     : null,
                 draft.IsSsh ? SavedKeys(draft, key => Edit(d => d.WithoutHostKey(key))).WithKey("ssh-keys") : null,
