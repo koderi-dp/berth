@@ -153,13 +153,21 @@ public sealed class SshTransport : IEngineTransport
         }
     }
 
+    /// <summary>A session with room for one more stream, or null; a session that broke is closed and forgotten on the way.</summary>
     private Session? Usable()
     {
+        Session[] broken;
+        Session? usable;
         lock (_sessions)
         {
+            broken = [.. _sessions.Where(s => s.Broken)];
             _sessions.RemoveAll(s => s.Broken);
-            return _sessions.FirstOrDefault(s => s.Count < Math.Min(s.Capacity, _channelsPerSession));
+            usable = _sessions.FirstOrDefault(s => s.Count < Math.Min(s.Capacity, _channelsPerSession));
         }
+
+        foreach (var session in broken)
+            session.Close();
+        return usable;
     }
 
     /// <summary>Opens and signs in one more session; the first one checks the host key and reads the secret.</summary>

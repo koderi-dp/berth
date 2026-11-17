@@ -190,6 +190,57 @@ public sealed class SshIntegrationTests
     }
 
     [EngineFact]
+    public async Task Logs_stats_a_file_both_ways_and_a_pull_work_over_ssh()
+    {
+        await using var host = await SshStandIn.StartAsync(Cli());
+        var name = DockerCli.NewContainerName();
+        try
+        {
+            await Cli().RunAsync("run", "-d", "--name", name, "alpine:latest", "sh", "-c", "echo hello-over-ssh; sleep 300");
+            using var cts = new CancellationTokenSource(Patience);
+            await using var transport = await AcceptedAsync(host, host.Profile(), host.Password, cts.Token);
+            await using var client = new EngineClient(EngineHttp.CreateHandler(transport), transport);
+            await client.ConnectAsync(cts.Token);
+
+            var lines = new List<string>();
+            await foreach (var line in client.StreamLogsAsync(name, tty: false, new LogRequest(10, Follow: false), cts.Token))
+                lines.Add(line.Text);
+            Assert.Contains("hello-over-ssh", lines);
+
+            await foreach (var sample in client.StreamStatsAsync(name, cts.Token))
+            {
+                Assert.True(sample.MemoryLimitBytes > 0);
+                break;
+            }
+
+            var content = System.Security.Cryptography.RandomNumberGenerator.GetBytes(1024 * 1024);
+            await client.PutArchiveAsync(name, "/tmp", async (stream, ct) =>
+            {
+                await using var writer = new System.Formats.Tar.TarWriter(stream, leaveOpen: true);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "berth-ssh.bin") { DataStream = new MemoryStream(content) };
+                await writer.WriteEntryAsync(entry, ct);
+            }, cts.Token);
+            await using (var archive = await client.GetArchiveAsync(name, "/tmp/berth-ssh.bin", cts.Token))
+            {
+                await using var reader = new System.Formats.Tar.TarReader(archive.Content);
+                var entry = await reader.GetNextEntryAsync(copyData: true, cts.Token);
+                using var copy = new MemoryStream();
+                await entry!.DataStream!.CopyToAsync(copy, cts.Token);
+                Assert.Equal(content, copy.ToArray());
+            }
+
+            var pulled = new List<PullProgress>();
+            await foreach (var progress in client.PullImageAsync("alpine:3.19", cts.Token))
+                pulled.Add(progress);
+            Assert.Contains(pulled, p => p.Status.Contains("alpine:3.19", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await Cli().RemoveAsync(name);
+        }
+    }
+
+    [EngineFact]
     public async Task Streams_past_the_hosts_channel_limit_go_on_another_session()
     {
         await using var host = await SshStandIn.StartAsync(Cli(), maxSessions: 3);
