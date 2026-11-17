@@ -71,6 +71,13 @@ public sealed class SshConnectionTests
     public void The_key_type_is_the_key_s_not_the_signature_algorithm(string algorithm, string type) =>
         Assert.Equal(type, HostKey.TypeOf(algorithm));
 
+    [Theory]
+    [InlineData("ssh-rsa", new[] { "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa" })]
+    [InlineData("ssh-ed25519", new[] { "ssh-ed25519" })]
+    [InlineData("ecdsa-sha2-nistp256", new[] { "ecdsa-sha2-nistp256" })]
+    public void A_saved_key_pins_the_host_key_algorithms_to_its_own_type(string type, string[] algorithms) =>
+        Assert.Equal(algorithms, HostKey.AlgorithmsFor(type));
+
     [Fact]
     public void A_problem_that_needs_the_user_stops_the_retries()
     {

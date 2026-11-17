@@ -29,6 +29,14 @@ public sealed record HostKey(string Host, int Port, string Type, string Fingerpr
     /// </summary>
     public static string TypeOf(string algorithm) => algorithm is "rsa-sha2-512" or "rsa-sha2-256" ? "ssh-rsa" : algorithm;
 
+    /// <summary>
+    /// The host key algorithms that offer a key of <paramref name="type"/>, as OpenSSH pins them for a known host: an RSA key under its
+    /// three signature algorithms, any other under its own name. Asking only for these keeps an unchanged host from offering a key of
+    /// another type it also has (a false "changed").
+    /// </summary>
+    public static string[] AlgorithmsFor(string type) =>
+        type == "ssh-rsa" ? ["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"] : [type];
+
     /// <summary>Whether this key is for <paramref name="host"/> and <paramref name="port"/> (host names compare without case).</summary>
     public bool IsFor(string host, int port) => Port == port && string.Equals(Host, host, StringComparison.OrdinalIgnoreCase);
 }

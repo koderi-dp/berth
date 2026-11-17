@@ -206,7 +206,9 @@ public sealed class SshTransport : IEngineTransport
 
         var method = SignInMethod();
         HostKey? offered = null;
-        var client = new SshClient(Info(method));
+        var info = Info(method);
+        PinHostKeyAlgorithms(info, saved.Type);
+        var client = new SshClient(info);
         client.KeepAliveInterval = KeepAliveInterval;
         client.HostKeyReceived += (_, e) =>
         {
@@ -273,6 +275,19 @@ public sealed class SshTransport : IEngineTransport
             // Berth counts the channels itself (ChannelsPerSession); SSH.NET's own count would make a stream wait instead.
             MaxSessions = 1000,
         };
+
+    /// <summary>
+    /// Asks the host only for a key of the saved type (<see cref="HostKey.AlgorithmsFor"/>). A type SSH.NET does not know leaves its
+    /// list as it is: the key check still refuses any other key.
+    /// </summary>
+    private static void PinHostKeyAlgorithms(ConnectionInfo info, string savedType)
+    {
+        var wanted = HostKey.AlgorithmsFor(savedType);
+        if (!wanted.Any(info.HostKeyAlgorithms.ContainsKey))
+            return;
+        foreach (var name in info.HostKeyAlgorithms.Keys.Where(name => !wanted.Contains(name)).ToList())
+            info.HostKeyAlgorithms.Remove(name);
+    }
 
     /// <summary>The password or the key file, read once and kept for the sessions this transport opens.</summary>
     private AuthenticationMethod SignInMethod()
