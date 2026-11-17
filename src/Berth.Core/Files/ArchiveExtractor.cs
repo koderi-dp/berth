@@ -29,11 +29,38 @@ public static class ArchiveExtractor
     /// <summary>How much is written between two looks at the free space.</summary>
     private const long FreeSpaceCheckEvery = 1024 * 1024;
 
-    /// <summary>The free space of the drive that holds <paramref name="folder"/>, read each time it is called.</summary>
+    /// <summary>
+    /// The free space of the drive that holds <paramref name="folder"/>, read each time it is called. A folder whose free space
+    /// cannot be read this way (a network share such as <c>\\server\share</c>, a drive that went away) is taken to have room: the
+    /// floor then does not apply, and a full disk shows as the disk's own error.
+    /// </summary>
     public static Func<long> FreeSpaceOf(string folder)
     {
-        var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(folder))!);
-        return () => drive.AvailableFreeSpace;
+        DriveInfo drive;
+        try
+        {
+            drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(folder))!);
+        }
+        catch (ArgumentException)
+        {
+            return static () => long.MaxValue;
+        }
+
+        return () =>
+        {
+            try
+            {
+                return drive.AvailableFreeSpace;
+            }
+            catch (IOException)
+            {
+                return long.MaxValue;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return long.MaxValue;
+            }
+        };
     }
 
     /// <summary>Why a download stopped for lack of room.</summary>

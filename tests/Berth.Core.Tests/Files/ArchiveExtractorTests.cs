@@ -36,6 +36,22 @@ public sealed class ArchiveExtractorTests : IDisposable
     private string Read(string relative) => File.ReadAllText(Path.Combine(_destination, relative));
 
     [Fact]
+    public void A_network_share_has_no_free_space_floor()
+    {
+        var freeSpace = ArchiveExtractor.FreeSpaceOf(@"\\berth-no-such-server\share\folder");
+
+        Assert.Equal(long.MaxValue, freeSpace());
+    }
+
+    [Fact]
+    public void A_local_folder_reports_its_drives_free_space()
+    {
+        var freeSpace = ArchiveExtractor.FreeSpaceOf(_destination);
+
+        Assert.InRange(freeSpace(), 1, long.MaxValue - 1);
+    }
+
+    [Fact]
     public async Task A_file_is_saved_under_its_name_with_its_time()
     {
         var tar = new TarBytes().File("hello.txt", "hello").End();
