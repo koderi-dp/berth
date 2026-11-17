@@ -60,6 +60,9 @@ public static class TerminalTheme
         return new TerminalColors(backText, foreText, foreText, selection, dark ? Dark : Light, Contrast: 4.5);
     }
 
+    /// <summary>The sixteen ANSI colours of the light or dark theme (no contrast theme), as <see cref="For"/> gives them.</summary>
+    public static ImmutableArray<string> Ansi(bool dark) => dark ? Dark : Light;
+
     /// <summary>The WCAG contrast ratio of two "#rrggbb" colours, from 1 (the same) to 21 (black on white).</summary>
     public static double ContrastRatio(string a, string b)
     {

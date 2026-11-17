@@ -88,7 +88,7 @@ public sealed class EngineLogsTests
                 new LogLine(LogStream.Stdout, Time, "ready on port 80"),
                 new LogLine(LogStream.Stderr, new DateTimeOffset(2026, 11, 15, 21, 36, 23, TimeSpan.Zero), "second line"),
             ],
-            lines);
+            lines.Select(line => line with { Spans = [] }));
     }
 
     [Fact]

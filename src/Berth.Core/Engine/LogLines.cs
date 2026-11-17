@@ -19,7 +19,8 @@ internal static class LogLines
     /// that is all stdout. Lines are put together per stream, so a line split across frames is whole and a stderr frame never
     /// lands inside a stdout line. A line ends at <c>\n</c> or <c>\r\n</c>; a last line without one is yielded when the stream
     /// ends. Bytes that are not UTF-8 become U+FFFD; a line longer than <see cref="MaxLineBytes"/> is cut there with "…".
-    /// A leading RFC 3339 timestamp and its space become <see cref="LogLine.Timestamp"/>; ANSI codes are removed.
+    /// A leading RFC 3339 timestamp and its space become <see cref="LogLine.Timestamp"/>; ANSI codes are removed, the colours they set kept as
+    /// <see cref="LogLine.Spans"/>.
     /// </summary>
     public static async IAsyncEnumerable<LogLine> ReadAsync(Stream stream, bool tty, [EnumeratorCancellation] CancellationToken ct)
     {
@@ -143,7 +144,8 @@ internal static class LogLines
             var space = text.IndexOf(' ');
             var timestamp = space > 0 ? EngineTime.Parse(text.AsSpan(0, space)) : null;
             var rest = timestamp is null ? text : text[(space + 1)..];
-            return new LogLine(stream, timestamp, AnsiText.Strip(rest) + suffix);
+            var (plain, spans) = AnsiText.Style(rest);
+            return new LogLine(stream, timestamp, plain + suffix) { Spans = spans };
         }
     }
 }
