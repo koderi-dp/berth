@@ -39,7 +39,9 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
     match, copy all and clear. Logs of containers started with a terminal (`-t`) are read
     as well. Colour codes are shown as colours (the sixteen terminal colours, 256 colours
     and 24-bit colour, bold, dim, italic and underline), with a toolbar toggle to show the
-    log plain; other terminal codes are removed.
+    log plain; other terminal codes are removed. A "Stick to bottom" switch under the log
+    keeps the newest line in view: scrolling up turns it off, turning it on or scrolling to the
+    end turns it back on.
   - **Inspect** shows the container's configuration in sections (platform, command, state,
     image, ports, runtime, mounts, environment, labels, networks), each value copyable, or
     the engine's raw JSON.
@@ -52,6 +54,24 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
     with the CPU and memory limits when the container has them.
   When the container stops, the streams end and the page shows its new state; when it is
   removed, the page returns to the list and says so.
+- **Logs page.** "Logs" in the sidebar shows the logs of every container on the connection
+  together: each running container's last 100 lines, then new lines as they come, merged by
+  time (lines in the same second keep the order they arrived in). Containers that start later
+  join; a container that stops keeps its lines, and one removed keeps them marked removed. Up
+  to 20,000 lines are kept (older ones are dropped, and the page says so), and up to 50 logs are
+  followed at once (the page says how many are not). The table has a checkbox, the time, the
+  container (a small icon and its name in a colour of its own; a compose service shows as
+  `project/service`; the name opens the container's page) and the message, and a chevron that
+  expands a line to the whole message with its container, stream and time to the millisecond.
+  Search is plain text, or a regular expression written as `/error|warn/`, with an "Aa" toggle
+  for case; an invalid pattern says so and a pattern that runs too long is stopped. The filter
+  picks containers and compose projects, stdout and stderr, and running containers only; the
+  columns menu shows or hides the time and container columns and turns colours on or off (the
+  same setting as the Logs tab). Copy copies the checked lines (or all shown), Save writes the
+  shown lines to a `.log` file; under the table, "274 lines" or "41 of 274 lines" and the "Stick
+  to bottom" switch. The logs are read only while the page is shown and for a minute after it
+  is left; they stop at once when the window is hidden to the tray and on a switch of
+  connection, and start again with a fresh tail. Log lines are never written to Berth's log.
 - **Files: browse, download, upload.** The Files tab lists a folder of the container: name (a
   folder, file or link glyph; a link shows its target), size, modified and mode, folders first;
   Name, Size and Modified sort it (folders stay first).

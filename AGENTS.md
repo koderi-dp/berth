@@ -69,6 +69,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             and as PowerShell text), ExternalTerminal (how "Open in external terminal" starts it: a
                             Windows Terminal tab or a console, as data, with what each refuses and why)
   State/                    value types that more than one layer holds or reads: LogBuffer (last 10,000 lines),
+                            MergedLog (the Logs page's lines of every container merged by time, last 20,000; LogOrigin, LogEntry),
                             StatsHistory (last 120 samples, as chart series), ContainerSort (the list's saved sort choice),
                             ResourceList/ListStatus/RemovalBatch (the images, volumes and networks lists and their
                             batches of removes), ImagePull (a pull's layers), DiskUsageState, ContainerRun (the run
@@ -89,7 +90,10 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             the app attaches), ExecCleanUp (the BERTH_EXEC marker and the clean-up command); the Files tab:
                             FilesState (DetailState.Files), DetailReducer.Files, ContainerDetailSession.Files (runs a listing);
                             transfers: FileTransfers (EngineState.Transfers, by ticket), TransferEvents, SessionReducer.Transfers,
-                            EngineSession.Transfers (progress batched to ten state changes a second per transfer)
+                            EngineSession.Transfers (progress batched to ten state changes a second per transfer);
+                            the Logs page: LogsState, LogsEvents, LogsReducer (all its behaviour), LogsSession (runs it: one
+                            log stream per followed container, lines batched every 100 ms), IConnectionBound (a detail or logs
+                            session the connection cuts off when retired)
   Presentation/             ContainerRows, ComposeGrouping, ContainerFilter, ContainerSorting, ContainerStatus, BulkSelection,
                             RowActions (a container's, image's, volume's or network's row actions), EngineCounts, AgeFormat, PortFormat, ByteFormat; RowSelection (checked rows of any
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
@@ -108,7 +112,9 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             TerminalFlow (output in flight), TerminalScreen (which shell's output is shown), TerminalTheme
                             (the sixteen colours), TerminalRecovery (what a failed browser process does), ShortcutFocus
                             (when the window's shortcuts give way to the terminal); the Files tab: FilesView (rows, notes,
-                            breadcrumb; TransferConfirmations, the questions before replacing), TransferView (a transfer's line)
+                            breadcrumb; TransferConfirmations, the questions before replacing), TransferView (a transfer's line); the Logs page: LogsView (filter, shown lines, count, notes,
+                            empty texts, times, copy text; LogsFilter, LogObject), LogsQuery (plain or /regex/ search with
+                            a timeout), LogsPalette (a container's colour), LogsLifecycle (when its session runs)
   Logging/, Storage/        FileLog, AtomicFile
 src/Berth.App/              UI and wiring (packaged single-project MSIX app, assembly Berth, root namespace Berth)
   Program.cs                entry point: log, services, first connect, window; a Release build first removes every
@@ -128,12 +134,13 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   WslList.cs                asks wsl.exe for the distributions (read only) for the editor's WSL default
   Shell/                    the window outside its pages (see "The tray and the window"): TrayIcon, TrayIcons,
                             TrayFlyout, TrayFlyoutWindow, MainWindow, SingleInstance, StartWithWindows, Notifications
-  App.cs                    the window component: title bar, navigation (AppRoute: Containers, Images, Volumes, Networks,
+  App.cs                    the window component: title bar, navigation (AppRoute: Containers, Images, Logs, Volumes, Networks,
                             ContainerDetail, VolumeDetail, Settings), status bar; switches list stats on and off (see below) and tells the
                             session which of the images, volumes and networks lists is wanted when its page is shown
   Hooks/                    EngineStateHook.cs (EngineStateComponent and EngineStateComponent<TProps>, the base classes
                             for components that show the engine state), DetailStateHook.cs (the open detail session's state as an external store),
-                            UiThreadSubscription.cs (shared by both: follows a replaceable source and coalesces its
+                            LogsStateHook.cs (the Logs page's session state, held back by
+                            RenderGate.LogsPage while another page shows), UiThreadSubscription.cs (shared by all: follows a replaceable source and coalesces its
                             thread-pool changes into one pending UI-thread callback), SettingsHook.cs (settings as an
                             external store), ListViewHook.cs (ListPageComponent, the base class of the four list pages:
                             UseListView keeps a list's search, filter, sort and collapsed groups by route in
@@ -152,8 +159,10 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             confirmed one sends; several items are RemoveTableDialog, a table to untick rows of), DialogParts (a primary button that keeps
                             its dialog open, a wider dialog, stacks, field errors and hints), DeleteDialog, DetailHeader
                             (breadcrumb, name, ID, image, ports, status, actions), StatsStrip (total CPU and memory
-                            above the list)
-  Pages/                    ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage,
+                            above the list), LogText (a log line drawn in colour with its matches marked) and LogScroller
+                            (following the newest line, "Stick to bottom"), shared by the Logs tab and the Logs page
+  Pages/                    LogsPage and LogsTable (the Logs page and its rows; not in a Logs/ folder, which .gitignore
+                            ignores), ContainersPage, ContainerRowView, ImagesPage, VolumesPage, NetworksPage, SettingsPage,
                             ConnectionEditor, ContainerDetailPage (header, tab strip, keeps a detail session open while
                             shown), VolumeDetailPage (header and the containers that mount it, from the session's lists)
     Images/                 ImageTable (the images table, a component with record props so a pull's progress does not
@@ -291,6 +300,30 @@ is closed, reopening or its connection is lost, the tabs show the last live stat
 Both `DetailStateHook` and `EngineStateHook` use
 `UiThreadSubscription`, which follows a source that can be replaced and coalesces its
 thread-pool changes into at most one pending UI-thread callback that reads the latest state.
+
+## The Logs page
+
+`LogsSession` (opened through `EngineSession.OpenLogs`, via `AppServices.OpenLogs`) follows the log of every running or paused
+container on the connection: the last 100 lines (`LogsReducer.Tail`), then new ones, newest containers first, at most 50 streams
+(`MaxStreams`; `LogsState.NotFollowed` counts the rest, and a stream that ends hands its place on). It hears the engine session's
+container list (a new list starts streams, marks removed containers and stops their streams; before `ListLoaded` it is ignored). A
+container that runs again is followed from its newest line shown (`since`, its repeated lines dropped), only on a new list, never on
+the end of its own stream, so a stream that keeps ending cannot loop. Lines of every stream are batched every 100 ms into one
+event; `MergedLog` places them by the engine's timestamp to the second, then arrival order, and keeps the newest 20,000. Each
+container's TTY flag is read once by an inspect (its log is framed or plain). Lines are never logged. Tests:
+`LogsReducerTests`, `EngineSessionTests.Logs`, `MergedLogTests`, `LogsQueryTests`, `LogsViewTests`.
+
+`App` decides when it runs (`LogsLifecycle.Next`): while the page is shown (and the window not minimized), and for a minute after
+(`LeftLimit`); closed at once when the window is hidden to the tray; closed on a switch of connection (`AppServices`); opened again
+when the page shows with none, or with one cut off from a lost connection. The page reads it through `LogsStateHook`, which holds
+changes back while the window is hidden or another page is shown (`RenderGate.LogsPage`). Filters, search and texts are in
+Presentation (`LogsView`, `LogsQuery`: a 100 ms timeout per line and 1 s per search). Container colours (`LogsPalette`, eight colours
+in a light and a dark form, each at least 4.5:1 on its theme's background, tested) are another set of colour values in code.
+
+AutomationIds: `logs-search`, `logs-match-case`, `logs-search-error`, `logs-filter` (its flyout: `logs-filter-all`,
+`logs-filter-<label>`, `logs-filter-stdout`, `logs-filter-stderr`, `logs-filter-running`, `logs-filter-reset`), `logs-columns`,
+`logs-copy`, `logs-save`, `logs-notes`, `logs-save-error`, `logs-select-all`, `logs-lines`, `logs-open-<name>`, `logs-empty`,
+`logs-latest`, `logs-count`, `logs-stick`, `logs-copy-selected`, `logs-clear-selection`. The Logs tab's switch is `log-stick`.
 
 ## List stats
 
@@ -750,7 +783,7 @@ On the detail page:
   `PART_BackButton` go to Settings and back to the page.
 - Tabs: the SelectorBar `detail-tabs`; select one with `winapp ui invoke Stats --type
   ListItem -a Berth` (`Logs`, `Inspect`, `Bind mounts`, `Exec`, `Files`, `Stats`).
-- Logs: `log-lines` (the log), `log-notes`, `log-empty`, `log-error`, `log-latest`; toolbar
+- Logs: `log-lines` (the log), `log-notes`, `log-empty`, `log-error`, `log-latest`, `log-stick` (Stick to bottom); toolbar
   `log-search-toggle`, `log-timestamps`, `log-wrap`, `log-copy`, `log-clear`; search
   `log-search` (an Edit: `set-value`/`get-value`), `log-match-count`, `log-previous`,
   `log-next`, `log-search-close`. A `set-value` sent right after the search opens can be
