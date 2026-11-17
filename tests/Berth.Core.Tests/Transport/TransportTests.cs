@@ -173,6 +173,66 @@ public sealed class TransportTests : IDisposable
         Assert.IsType<NamedPipeTransport>(TransportFactory.Create(pipe));
     }
 
+    [Fact]
+    public void Factory_builds_the_ssh_transport_with_the_secret_store()
+    {
+        var ssh = new ConnectionProfile("c", "Remote", TransportKind.Ssh, "host", 22, "", null) { Ssh = new SshOptions("berth", SshSignIn.Password, null, []) };
+
+        Assert.IsType<SshTransport>(TransportFactory.Create(ssh, new NoSecrets()));
+        Assert.Throws<ArgumentException>(() => TransportFactory.Create(ssh with { Ssh = null }, new NoSecrets()));
+    }
+
+    [Fact]
+    public async Task Ssh_asks_for_a_password_it_does_not_have_without_reaching_the_host()
+    {
+        // Nothing listens on this port: had the transport tried to connect, the problem would be "unreachable".
+        int port;
+        using (var listener = new TcpListener(IPAddress.Loopback, 0))
+        {
+            listener.Start();
+            port = Port(listener);
+        }
+
+        var key = new HostKey("127.0.0.1", port, "ssh-ed25519", "SHA256:abc");
+        var ssh = new ConnectionProfile("c", "Remote", TransportKind.Ssh, "127.0.0.1", port, "", null) { Ssh = new SshOptions("berth", SshSignIn.Password, null, [key]) };
+        await using var transport = TransportFactory.Create(ssh, new NoSecrets());
+
+        var ex = await Assert.ThrowsAsync<SshTransportException>(async () => await transport.OpenAsync(_timeout.Token));
+
+        Assert.Equal(SshFailure.SecretMissing, ex.Problem.Failure);
+        Assert.Equal(SecretKind.Password, ex.Problem.Secret);
+    }
+
+    [Fact]
+    public async Task Ssh_to_a_host_that_does_not_answer_is_unreachable()
+    {
+        int port;
+        using (var listener = new TcpListener(IPAddress.Loopback, 0))
+        {
+            listener.Start();
+            port = Port(listener);
+        }
+
+        var ssh = new ConnectionProfile("c", "Remote", TransportKind.Ssh, "127.0.0.1", port, "", null) { Ssh = new SshOptions("berth", SshSignIn.Password, null, []) };
+        await using var transport = TransportFactory.Create(ssh, new NoSecrets());
+
+        var ex = await Assert.ThrowsAsync<SshTransportException>(async () => await transport.OpenAsync(_timeout.Token));
+
+        Assert.Equal(SshFailure.Unreachable, ex.Problem.Failure);
+        Assert.False(ex.Problem.StopsRetry);
+    }
+
+    private sealed class NoSecrets : ISecretStore
+    {
+        public string? Get(string connectionId, SecretKind kind) => null;
+
+        public void Set(string connectionId, SecretKind kind, string secret) => throw new InvalidOperationException();
+
+        public void Delete(string connectionId, SecretKind kind)
+        {
+        }
+    }
+
     private static int Port(TcpListener listener) => ((IPEndPoint)listener.LocalEndpoint).Port;
 
     private static async Task<string> RoundTripAsync(Stream stream, CancellationToken ct)

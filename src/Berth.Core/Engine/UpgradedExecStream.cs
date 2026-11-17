@@ -1,5 +1,6 @@
 using System.Net.Security;
 using System.Net.Sockets;
+using Berth.Transport;
 
 namespace Berth.Engine;
 
@@ -21,13 +22,16 @@ internal sealed class UpgradedExecStream : ExecStream
     }
 
     /// <summary>
-    /// On TCP the socket's sending side is shut down; on TLS a close_notify is written. Other connections (Docker Desktop's pipe,
-    /// which is in byte mode) have no half to close: false.
+    /// On TCP the socket's sending side is shut down; on TLS a close_notify is written; on SSH the channel's EOF is sent. Other
+    /// connections (Docker Desktop's pipe, which is in byte mode) have no half to close: false.
     /// </summary>
     public override async Task<bool> CloseWriteAsync()
     {
         switch (_connection)
         {
+            case IHalfClosable halfClosable:
+                await halfClosable.CloseWriteAsync().ConfigureAwait(false);
+                return true;
             case NetworkStream network:
                 network.Socket.Shutdown(SocketShutdown.Send);
                 return true;

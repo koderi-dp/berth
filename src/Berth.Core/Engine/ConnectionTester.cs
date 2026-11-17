@@ -3,6 +3,9 @@ using Berth.Transport;
 
 namespace Berth.Engine;
 
+/// <summary>The outcome of a connection test. <see cref="Ssh"/> says why an SSH connection failed, so the editor can ask about a host key or a secret.</summary>
+public sealed record ConnectionTestResult(bool Ok, string Message, SshProblem? Ssh);
+
 /// <summary>Checks that a connection profile reaches an engine Berth can talk to.</summary>
 public static class ConnectionTester
 {
@@ -11,19 +14,28 @@ public static class ConnectionTester
     {
         await using var transport = TransportFactory.Create(profile);
         await using var client = new EngineClient(EngineHttp.CreateHandler(transport));
+        var result = await TestAsync(client, ct).ConfigureAwait(false);
+        return (result.Ok, result.Message);
+    }
+
+    /// <summary>As <see cref="TestAsync(ConnectionProfile, CancellationToken)"/>, with an SSH connection's secret read from <paramref name="secrets"/>.</summary>
+    public static async Task<ConnectionTestResult> TestAsync(ConnectionProfile profile, ISecretStore secrets, CancellationToken ct)
+    {
+        await using var transport = TransportFactory.Create(profile, secrets);
+        await using var client = new EngineClient(EngineHttp.CreateHandler(transport));
         return await TestAsync(client, ct).ConfigureAwait(false);
     }
 
-    internal static async Task<(bool Ok, string Message)> TestAsync(EngineClient client, CancellationToken ct)
+    internal static async Task<ConnectionTestResult> TestAsync(EngineClient client, CancellationToken ct)
     {
         try
         {
             var version = await client.ConnectAsync(ct).ConfigureAwait(false);
-            return (true, $"Docker {version.Version}, API {client.Negotiated}");
+            return new ConnectionTestResult(true, $"Docker {version.Version}, API {client.Negotiated}", null);
         }
         catch (EngineException ex)
         {
-            return (false, ex.Message);
+            return new ConnectionTestResult(false, ex.Message, ex.Ssh);
         }
     }
 }

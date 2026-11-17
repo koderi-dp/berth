@@ -21,6 +21,9 @@ public enum SshFailure
     /// </summary>
     SignInRefused,
 
+    /// <summary>The private key file could not be read (missing, not a key Berth can use).</summary>
+    KeyFileUnreadable,
+
     /// <summary>The remote has no <c>docker</c> command.</summary>
     NoDockerCli,
 
@@ -84,6 +87,7 @@ public sealed record SshProblem
         SshFailure.SignInRefused when Secret == SecretKind.Password =>
             "The host refused the user name or password. Berth will not try it again: enter the password.",
         SshFailure.SignInRefused => With("The host refused the key file. Berth will not try it again until you retry.", Detail),
+        SshFailure.KeyFileUnreadable => With("The private key file could not be read.", Detail),
         SshFailure.NoDockerCli => With("The remote host has no docker command. Install the docker CLI there.", Detail),
         SshFailure.DialFailed => With("docker system dial-stdio failed on the remote host.", Detail),
         SshFailure.DockerNotPermitted => With("The remote user may not use docker.", Detail),

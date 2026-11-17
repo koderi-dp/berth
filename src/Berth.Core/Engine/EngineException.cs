@@ -1,3 +1,5 @@
+using Berth.Connections;
+
 namespace Berth.Engine;
 
 /// <summary>
@@ -10,4 +12,7 @@ public sealed class EngineException(int statusCode, string message) : Exception(
 
     /// <summary>The engine was reached but did not answer within the call's deadline (<see cref="StatusCode"/> is 0).</summary>
     public bool TimedOut { get; init; }
+
+    /// <summary>Why an SSH connection failed, when it did (<see cref="StatusCode"/> is 0); null for every other failure.</summary>
+    public SshProblem? Ssh { get; init; }
 }

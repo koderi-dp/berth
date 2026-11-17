@@ -779,7 +779,20 @@ public sealed partial class EngineClient : IEngineApi
     private static EngineException Unreachable(Exception ex, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        return new EngineException(0, ex is HttpRequestException http ? TransportMessage(http) : ex.Message);
+        var ssh = SshCause(ex);
+        return new EngineException(0, ssh?.Message ?? (ex is HttpRequestException http ? TransportMessage(http) : ex.Message)) { Ssh = ssh?.Problem };
+    }
+
+    /// <summary>The SSH transport's failure behind <paramref name="ex"/>, or null.</summary>
+    private static SshTransportException? SshCause(Exception ex)
+    {
+        for (Exception? cause = ex; cause is not null; cause = cause.InnerException)
+        {
+            if (cause is SshTransportException ssh)
+                return ssh;
+        }
+
+        return null;
     }
 
     /// <summary>The message of the transport failure behind <paramref name="ex"/>, or of its innermost cause when none is one.</summary>

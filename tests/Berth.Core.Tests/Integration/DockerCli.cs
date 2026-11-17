@@ -74,7 +74,21 @@ internal sealed class DockerCli(string engineAddress)
         return output;
     }
 
-    private async Task<(int ExitCode, string Output, string Error)> ExecuteAsync(string[] arguments)
+    /// <summary>Builds an image from a folder, with up to five minutes for its packages to download.</summary>
+    public async Task BuildAsync(string tag, string context, params string[] buildArguments)
+    {
+        string[] arguments = ["build", "-q", "-t", tag, .. buildArguments.SelectMany(a => new[] { "--build-arg", a }), context];
+        var (exitCode, _, error) = await ExecuteAsync(arguments, TimeSpan.FromMinutes(5));
+        if (exitCode != 0)
+            throw new InvalidOperationException($"docker build {tag} failed ({exitCode}): {error}");
+    }
+
+    /// <summary>Runs the CLI and returns its exit code and output without failing on a non-zero exit.</summary>
+    public Task<(int ExitCode, string Output, string Error)> TryRunAsync(params string[] arguments) => ExecuteAsync(arguments);
+
+    private Task<(int ExitCode, string Output, string Error)> ExecuteAsync(string[] arguments) => ExecuteAsync(arguments, Limit);
+
+    private async Task<(int ExitCode, string Output, string Error)> ExecuteAsync(string[] arguments, TimeSpan limit)
     {
         var start = new ProcessStartInfo("docker")
         {
@@ -102,7 +116,7 @@ internal sealed class DockerCli(string engineAddress)
         {
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(Limit);
+            using var timeout = new CancellationTokenSource(limit);
             try
             {
                 await process.WaitForExitAsync(timeout.Token);
@@ -110,7 +124,7 @@ internal sealed class DockerCli(string engineAddress)
             catch (OperationCanceledException)
             {
                 process.Kill(entireProcessTree: true);
-                throw new TimeoutException($"docker {string.Join(' ', arguments)} did not finish within {Limit.TotalSeconds} seconds.");
+                throw new TimeoutException($"docker {string.Join(' ', arguments)} did not finish within {limit.TotalSeconds} seconds.");
             }
 
             return (process.ExitCode, (await output).Trim(), (await error).Trim());

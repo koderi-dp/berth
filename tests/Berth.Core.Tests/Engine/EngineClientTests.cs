@@ -359,7 +359,9 @@ public sealed class EngineClientTests
         var stub = new StubHandler().WithVersion("1.60");
         await using var client = new EngineClient(stub);
 
-        var (ok, message) = await ConnectionTester.TestAsync(client, CancellationToken.None);
+        var (ok, message, ssh) = await ConnectionTester.TestAsync(client, CancellationToken.None);
+
+        Assert.Null(ssh);
 
         Assert.True(ok);
         Assert.Equal("Docker 29.9.3, API 1.56", message);

@@ -100,6 +100,7 @@ public sealed class SshConnectionTests
             new SshProblem(SshFailure.DialFailed, "unknown flag"),
             new SshProblem(SshFailure.DockerNotPermitted, "permission denied while trying to connect"),
             new SshProblem(SshFailure.Dropped, ""),
+            new SshProblem(SshFailure.KeyFileUnreadable, ""),
         }.Select(p => p.Message).ToList();
 
         Assert.Equal(messages.Count, messages.Distinct().Count());
