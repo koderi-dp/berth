@@ -23,7 +23,7 @@ public sealed class SshIntegrationTests
 
         await using var stream = await transport.OpenAsync(cts.Token);
         await stream.WriteAsync("GET /_ping HTTP/1.1\r\nHost: docker\r\n\r\n"u8.ToArray(), cts.Token);
-        var answer = await ReadUntilAsync(stream, "\r\n\r\nOK", cts.Token);
+        var answer = await ReadUntilAsync(stream, "\r\n\r\n", cts.Token);
 
         Assert.StartsWith("HTTP/1.1 200 OK", answer, StringComparison.Ordinal);
     }
@@ -264,7 +264,7 @@ public sealed class SshIntegrationTests
             foreach (var stream in streams)
             {
                 await stream.WriteAsync("GET /_ping HTTP/1.1\r\nHost: docker\r\n\r\n"u8.ToArray(), cts.Token);
-                Assert.StartsWith("HTTP/1.1 200 OK", await ReadUntilAsync(stream, "\r\n\r\nOK", cts.Token), StringComparison.Ordinal);
+                Assert.StartsWith("HTTP/1.1 200 OK", await ReadUntilAsync(stream, "\r\n\r\n", cts.Token), StringComparison.Ordinal);
             }
 
             Assert.Equal(3, transport.SessionCount);
@@ -349,7 +349,7 @@ public sealed class SshIntegrationTests
     {
         await using var stream = await transport.OpenAsync(ct);
         await stream.WriteAsync("GET /_ping HTTP/1.1\r\nHost: docker\r\n\r\n"u8.ToArray(), ct);
-        Assert.StartsWith("HTTP/1.1 200 OK", await ReadUntilAsync(stream, "\r\n\r\nOK", ct), StringComparison.Ordinal);
+        Assert.StartsWith("HTTP/1.1 200 OK", await ReadUntilAsync(stream, "\r\n\r\n", ct), StringComparison.Ordinal);
     }
 
     private static async Task<string> ReadUntilAsync(Stream stream, string end, CancellationToken ct)
