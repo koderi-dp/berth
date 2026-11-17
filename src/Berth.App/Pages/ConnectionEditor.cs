@@ -120,10 +120,12 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
             }
         }
 
-        // Keyed, so a part that appears or goes never moves another into its slot (which would mount that one's box again). The
+        // A stack, not a flex column: in a dialog a flex column squeezed the hints and the "Accept key" button to nothing once the SSH
+        // parts were there. Keyed, so a part that appears or goes never moves another into its slot (which would mount that one's box again). The
         // address is keyed on TLS too: turning TLS on or off can change the address (the default port), which only a box mounted
         // again shows, since an uncontrolled box is never written over.
-        var content = (FlexColumn(
+        var content = DialogParts.Stack(
+                12,
                 Widgets.TextField(draft.Name, value => Edit(d => d with { Name = value }), header: "Name").WithKey("name"),
                 AddressField(draft.Address, addressError, value => Edit(d => d with { Address = value })).WithKey(draft.UseTls ? "address-tls" : "address"),
                 draft.IsNamedPipe || draft.IsSsh
@@ -161,10 +163,6 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
                             })
                         .WithKey("engine-commands")
                     : null)
-            with
-            {
-                RowGap = 12,
-            })
             .MinWidth(400);
 
         return ContentDialog(editing is null ? "Add connection" : "Edit connection", content, "Save") with
