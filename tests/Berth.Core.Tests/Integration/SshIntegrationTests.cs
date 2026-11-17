@@ -107,8 +107,7 @@ public sealed class SshIntegrationTests
 
         // A public key with a passphrase kept is a wrong file, not a wrong passphrase.
         var publicKey = host.PlainKeyPath + ".pub";
-        await File.WriteAllTextAsync(publicKey, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI berth-it
-", cts.Token);
+        await File.WriteAllTextAsync(publicKey, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI berth-it" + Environment.NewLine, cts.Token);
         await using (var notAKey = await AcceptedAsync(host, host.Profile(signIn: SshSignIn.KeyFile, keyPath: publicKey), null, cts.Token, passphrase: host.Passphrase))
         {
             var ex = await Assert.ThrowsAsync<SshTransportException>(async () => await notAKey.OpenAsync(cts.Token));
