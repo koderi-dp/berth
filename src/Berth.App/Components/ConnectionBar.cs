@@ -26,6 +26,9 @@ internal static class ConnectionBar
             {
                 IsOpen = true,
                 Content = (FlexRow(
+                        view.Prompt is not null && state.Attention is { } problem
+                            ? Component<SshPromptButton, SshPromptProps>(new(problem)).WithKey("ssh-prompt")
+                            : null,
                         view.OfferStart
                             ? Button("Start engine", StartEngine).AccentButton().AutomationId("start-engine-bar")
                             : null,

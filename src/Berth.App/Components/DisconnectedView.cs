@@ -12,7 +12,8 @@ namespace Berth.Components;
 /// <summary>
 /// Shown in place of the page while there is no connection and nothing to show from an earlier one: why the engine could not be
 /// reached, in the words the engine or the socket used, and a way to try again; with engine control, "Start engine", its progress,
-/// and a failed command's output as it wrote it (<see cref="EngineStatus.Disconnected"/>).
+/// and a failed command's output as it wrote it (<see cref="EngineStatus.Disconnected"/>); over SSH, the host key question, the
+/// changed-key warning or the password prompt.
 /// </summary>
 internal static class DisconnectedView
 {
@@ -27,7 +28,7 @@ internal static class DisconnectedView
                     ? Body(message).IsTextSelectionEnabled().TextWrapping().TextAlignment(TextAlignment.Center).Foreground(Theme.SecondaryText)
                     : null,
                 view.Failure is { } failure ? FailureText(failure) : null,
-                Buttons(view, onRetry))
+                Buttons(view, state, onRetry))
             with
             {
                 AlignItems = FlexAlign.Center,
@@ -38,9 +39,15 @@ internal static class DisconnectedView
             .Flex(grow: 1, basis: 0);
     }
 
-    /// <summary>"Start engine" (the main action when offered) and Retry; while something is under way, Retry only, disabled.</summary>
-    private static Element Buttons(DisconnectedText view, Action onRetry) =>
+    /// <summary>
+    /// "Start engine" (the main action when offered) and Retry; while something is under way, Retry only, disabled. An SSH connection that
+    /// needs the user has its dialog's button first (<see cref="SshPromptButton"/>).
+    /// </summary>
+    private static Element Buttons(DisconnectedText view, EngineState state, Action onRetry) =>
         (FlexRow(
+                view.Prompt is not null && state.Attention is { } problem
+                    ? Component<SshPromptButton, SshPromptProps>(new(problem)).WithKey("ssh-prompt")
+                    : null,
                 view.OfferStart
                     ? Button("Start engine", StartEngine).AccentButton().AutomationId("start-engine")
                     : null,
