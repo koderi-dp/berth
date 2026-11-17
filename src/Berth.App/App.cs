@@ -12,12 +12,14 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace Berth;
 
-/// <summary>Where the app is: one of the lists (containers, images, volumes, networks), the settings, or one container's detail page.</summary>
+/// <summary>Where the app is: one of the lists (containers, images, volumes, networks), the Logs page, the settings, or one container's detail page.</summary>
 internal abstract record AppRoute
 {
     public static readonly AppRoute Containers = new Page("containers");
 
     public static readonly AppRoute Images = new Page("images");
+
+    public static readonly AppRoute Logs = new Page("logs");
 
     public static readonly AppRoute Volumes = new Page("volumes");
 
@@ -51,12 +53,13 @@ internal abstract record AppRoute
 
     /// <summary>
     /// Where a container's page goes back to, from the page it was opened from (<paramref name="before"/>, the route under it in the
-    /// history): a volume's page or the Networks list; otherwise the Containers list.
+    /// history): a volume's page, the Networks list or the Logs page; otherwise the Containers list.
     /// </summary>
     public static BackTarget BackTargetOf(AppRoute? before) => before switch
     {
         VolumeDetail volume => BackTarget.Volume(volume.Name),
         _ when before == Networks => BackTarget.Networks,
+        _ when before == Logs => BackTarget.Logs,
         _ => BackTarget.Containers,
     };
 
@@ -69,13 +72,14 @@ internal sealed class App : EngineStateComponent
     private const string ContainersTag = "containers";
 
     /// <summary>
-    /// The sidebar: the four lists, each with its route's tag; Settings is the NavigationView's own item at the bottom. Built once:
+    /// The sidebar: the four lists and the Logs page, each with its route's tag; Settings is the NavigationView's own item at the bottom. Built once:
     /// the App renders on every change of the engine state, and a new item array each time is a new collection for the control.
     /// </summary>
     private static readonly NavigationViewItemData[] NavItems =
     [
         NavItem("Containers", icon: "Library", tag: ContainersTag),
         NavItem("Images", tag: "images") with { IconElement = Widgets.MenuGlyph(Glyphs.Layers) },
+        NavItem("Logs", tag: "logs") with { IconElement = Widgets.MenuGlyph(Glyphs.Logs) },
         NavItem("Volumes", tag: "volumes") with { IconElement = Widgets.MenuGlyph(Glyphs.HardDrive) },
         NavItem("Networks", tag: "networks") with { IconElement = Widgets.MenuGlyph(Glyphs.Network) },
     ];
@@ -85,6 +89,7 @@ internal sealed class App : EngineStateComponent
     {
         [ContainersTag] = AppRoute.Containers,
         ["images"] = AppRoute.Images,
+        ["logs"] = AppRoute.Logs,
         ["volumes"] = AppRoute.Volumes,
         ["networks"] = AppRoute.Networks,
     };
@@ -157,6 +162,47 @@ internal sealed class App : EngineStateComponent
             statsWanted,
             AppServices.Current.SessionNumber);
 
+        // The Logs page's session follows every running container's log while the page is shown, and for a minute after it is left
+        // or the window is minimized; it stops at once when the window is hidden to the tray (a fresh tail when it shows again), and
+        // on a switch of connection (AppServices). One cut off from a lost connection is opened again once connected.
+        var logsShown = nav.CurrentRoute == AppRoute.Logs;
+        UseEffect(() => RenderGate.LogsPage.IsOpen = logsShown, logsShown);
+        UseEffect(
+            () =>
+            {
+                var services = AppServices.Current;
+                var step = LogsLifecycle.Next(
+                    shown: logsShown && !minimized,
+                    hidden: Shell.MainWindow.IsHidden,
+                    connected: state.Status == ConnectionStatus.Connected,
+                    open: services.Logs is not null,
+                    cutOff: services.Logs?.IsCutOff == true);
+                switch (step)
+                {
+                    case LogsSessionStep.Open:
+                        services.OpenLogs();
+                        break;
+                    case LogsSessionStep.Close:
+                        services.CloseLogs();
+                        break;
+                    case LogsSessionStep.CloseLater:
+                    {
+                        var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+                        timer.Interval = LogsLifecycle.LeftLimit;
+                        timer.IsRepeating = false;
+                        timer.Tick += (_, _) => AppServices.Current.CloseLogs();
+                        timer.Start();
+                        return timer.Stop;
+                    }
+                }
+
+                return () => { };
+            },
+            logsShown,
+            minimized,
+            state.Status,
+            AppServices.Current.SessionNumber);
+
         // The images, volumes and networks lists are read when their page is first shown, not at connect: each time one of them
         // becomes the page shown, and again for the new session after a switch of connection, the session hears that it is wanted
         // (it reads the list once per connection and ignores the rest).
@@ -222,12 +268,12 @@ internal sealed class App : EngineStateComponent
             (NavigationHost(nav, route => Component<RoutePage, RoutePageProps>(new(route, LeaveDetail))) with
                 {
                     // A page left stays mounted, so a list keeps its search, sort and scroll while another page shows. The cache holds
-                    // the pages not shown and drops the one used longest ago. There are five fixed pages (four lists and Settings) and
-                    // a page per container opened: six hold every list and Settings while a container's page shows, and one more
+                    // the pages not shown and drops the one used longest ago. There are six fixed pages (four lists, Logs and Settings)
+                    // and a page per container opened: seven hold every list, Logs and Settings while a container's page shows, and one more
                     // container's page besides. A list left before more container pages were opened is mounted again and starts from
                     // its search, filter and sort kept by route (ListPageComponent.UseListView); only its scroll and checked rows go.
                     CacheMode = NavigationCacheMode.Enabled,
-                    CacheSize = 6,
+                    CacheSize = 7,
                 })
                 .Flex(grow: 1, basis: 0)
                 .WithKey("pages"));
@@ -404,6 +450,8 @@ internal sealed class App : EngineStateComponent
         }
         if (route == AppRoute.Settings)
             return Component<SettingsPage>();
+        if (route == AppRoute.Logs)
+            return KeptMounted(Component<Pages.LogsPage>(), state, state.Status != ConnectionStatus.Connected && AppServices.Current.Logs is null);
 
         var listIsEmpty =
             route == AppRoute.Images ? state.Images.Items.IsEmpty

@@ -51,6 +51,12 @@ internal static class Glyphs
     public const string Special = "\uE9CE"; // Unknown: a device, FIFO or socket
     public const string Up = "\uE74A";
     public const string Upload = "\uE898";
+    public const string Logs = "\uE8FD"; // BulletedList: lines of text
+    public const string Filter = "\uE71C";
+    public const string Save = "\uE74E";
+    public const string Columns = "\uE8A9"; // ViewAll: which columns show
+    public const string Container = "\uE7B8"; // Package: a container
+    public const string Project = "\uE8F1"; // Library: a compose project's containers together
 }
 
 /// <summary>Small pieces shared by the shell and the pages.</summary>

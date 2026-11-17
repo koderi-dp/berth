@@ -18,6 +18,7 @@ internal sealed class AppServices
     private AppSettings _settings;
     private EngineSession _session;
     private ContainerDetailSession? _detail;
+    private LogsSession? _logs;
     private int _requests;
 
     private AppServices(SettingsStore store)
@@ -73,6 +74,35 @@ internal sealed class AppServices
     public ContainerDetailSession? Detail => Volatile.Read(ref _detail);
 
     public event Action? DetailChanged;
+
+    /// <summary>
+    /// The Logs page's session on the current connection; null while none is. Replaced, and <see cref="LogsChanged"/> raised, by
+    /// <see cref="OpenLogs"/> and <see cref="CloseLogs"/>; closed when the connection is switched.
+    /// </summary>
+    public LogsSession? Logs => Volatile.Read(ref _logs);
+
+    public event Action? LogsChanged;
+
+    /// <summary>Opens the Logs page's session on the current connection in place of the one open; while not connected, none opens.</summary>
+    public void OpenLogs()
+    {
+        var next = Session.OpenLogs();
+        if (next is not null || Logs is not null)
+            ReplaceLogs(next);
+    }
+
+    /// <summary>Closes the Logs page's session: the page was left for long, the window was hidden, or the connection switched.</summary>
+    public void CloseLogs() => ReplaceLogs(null);
+
+    private void ReplaceLogs(LogsSession? next)
+    {
+        var old = Interlocked.Exchange(ref _logs, next);
+        if (old is null && next is null)
+            return;
+        LogsChanged?.Invoke();
+        if (old is not null)
+            _ = Task.Run(() => DisposeAsync(old));
+    }
 
     /// <summary>A number for a dialog's request to the session (a volume create, a run), unique for this run of the app.</summary>
     public int NextRequestId() => Interlocked.Increment(ref _requests);
@@ -254,6 +284,7 @@ internal sealed class AppServices
 
         // The detail session runs on the old connection; the page goes back to the list (App follows SessionChanged).
         CloseDetail();
+        CloseLogs();
         var next = CreateSession(connection);
         var old = Interlocked.Exchange(ref _session, next);
         SessionNumber++;
@@ -281,7 +312,14 @@ internal sealed class AppServices
         }
         catch (Exception ex)
         {
-            AppLog.Error(session is ContainerDetailSession ? "closing a detail session failed" : "closing the previous session failed", ex);
+            AppLog.Error(
+                session switch
+                {
+                    ContainerDetailSession => "closing a detail session failed",
+                    LogsSession => "closing the logs session failed",
+                    _ => "closing the previous session failed",
+                },
+                ex);
         }
     }
 }

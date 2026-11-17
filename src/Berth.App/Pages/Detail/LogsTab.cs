@@ -82,27 +82,9 @@ internal sealed class LogsTab : Component<LogsTabProps>
     private static readonly GridSize[] OneRow = [GridSize.Star()];
     private static readonly GridSize[] MainColumns = [GridSize.Star()];
 
-    // The search, the failure, the notes, the log.
-    private static readonly GridSize[] MainRows = [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star()];
+    // The search, the failure, the notes, the log, the footer.
+    private static readonly GridSize[] MainRows = [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto];
 
-    // Past this many cached colour brushes (a log drawing 24-bit gradients) the cache starts over.
-    private const int MaxColorBrushes = 1024;
-
-    private static readonly Dictionary<(string Key, bool Dark), Brush?> ThemeBrushes = [];
-
-    /// <summary>One brush per colour a styled line uses, shared by every line.</summary>
-    private static readonly Dictionary<Windows.UI.Color, SolidColorBrush> ColorBrushes = [];
-
-    /// <summary>The look each row not yet in the window still has to apply when it loads; at most one per row, the latest render's.</summary>
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBlock, RoutedEventHandler> PendingMarks = new();
-
-    /// <summary>The styled line each row shows in coloured runs, so a render that shows it again changes nothing.</summary>
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBlock, Painted> PaintedRows = new();
-
-    private static FontFamily? _mono;
-
-    /// <summary>Cascadia Mono, or Consolas where it is not installed; one instance for every line.</summary>
-    private static FontFamily Mono => _mono ??= new FontFamily("Cascadia Mono, Consolas");
 
     public override Element Render()
     {
@@ -270,7 +252,8 @@ internal sealed class LogsTab : Component<LogsTabProps>
                 notes.Count == 0
                     ? null
                     : Caption(string.Join("  ", notes)).Foreground(Theme.SecondaryText).AutomationId("log-notes").Margin(0, 0, 0, 8).Grid(row: 2),
-                Grid(MainColumns, OneRow, log, latest).Grid(row: 3))
+                Grid(MainColumns, OneRow, log, latest).Grid(row: 3),
+                Footer(following, scroller).Grid(row: 4))
             .Grid(column: 0);
 
         // The toolbar's Search follows the value its toggle reports, so a repeated report never flips the search the wrong way.
@@ -319,201 +302,36 @@ internal sealed class LogsTab : Component<LogsTabProps>
         var (first, count) = LogView.MatchesOnLine(matches, index);
         var offset = count == 0 ? 0 : LogView.TextOffset(line, options.Timestamps);
         var currentOnLine = current >= first && current < first + count ? current : -1;
-        var look = new LineLook(line, options.Timestamps, colors && !line.Spans.IsEmpty);
+        var look = new LogText.LineLook(line, options.Timestamps, colors && !line.Spans.IsEmpty);
 
         return (TextBlock(LogView.LineText(line, options.Timestamps)) with { LineHeight = LineHeight })
-            .FontFamily(Mono)
+            .FontFamily(LogText.Mono)
             .FontSize(LineFontSize)
             .TextWrapping(options.Wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)
             .IsTextSelectionEnabled()
             .Foreground(line.Stream == LogStream.Stderr ? Theme.SystemCaution : Theme.PrimaryText)
             .Padding(12, 0, 12, 0)
-            .Set(block => Mark(block, look, matches, first, count, offset, currentOnLine, dark));
+            .Set(block => LogText.Mark(block, look, matches, first, count, offset, currentOnLine, dark));
     }
+
 
     /// <summary>
-    /// Draws <paramref name="look"/> on <paramref name="block"/> and marks matches <paramref name="first"/> to <paramref name="first"/> +
-    /// <paramref name="count"/>, in the colours of the block's own theme; a block not in the window yet is drawn in
-    /// <paramref name="appDark"/>'s and again once it is.
+    /// Under the log: the "Stick to bottom" switch, on while the view follows new lines. Scrolling up turns it off; turning it on, the
+    /// jump button or scrolling to the end turns it back on.
     /// </summary>
-    private static void Mark(TextBlock block, LineLook look, IReadOnlyList<LogMatch> matches, int first, int count, int offset, int current, bool appDark)
-    {
-        // Only this render's line and matches may mark the block: drop a mark still waiting from an earlier render.
-        if (PendingMarks.TryGetValue(block, out var pending))
-        {
-            block.Loaded -= pending;
-            PendingMarks.Remove(block);
-        }
-
-        if (!block.IsLoaded && (count > 0 || look.Styled))
-        {
-            void OnLoaded(object sender, RoutedEventArgs e) => Mark(block, look, matches, first, count, offset, current, appDark);
-
-            block.Loaded += OnLoaded;
-            PendingMarks.Add(block, OnLoaded);
-        }
-
-        var dark = block.IsLoaded ? block.ActualTheme == ElementTheme.Dark : appDark;
-        var backgrounds = Paint(block, look, dark);
-
-        block.TextHighlighters.Clear();
-        foreach (var background in backgrounds)
-            block.TextHighlighters.Add(background);
-        if (count == 0)
-            return;
-
-        var others = new TextHighlighter
-        {
-            Background = ThemeBrush("SystemFillColorCautionBackgroundBrush", dark),
-            Foreground = ThemeBrush("TextFillColorPrimaryBrush", dark),
-        };
-        var chosen = new TextHighlighter
-        {
-            Background = ThemeBrush("AccentFillColorDefaultBrush", dark),
-            Foreground = ThemeBrush("TextOnAccentFillColorPrimaryBrush", dark),
-        };
-
-        for (var i = first; i < first + count; i++)
-        {
-            var range = new TextRange { StartIndex = offset + matches[i].Start, Length = matches[i].Length };
-            (i == current ? chosen : others).Ranges.Add(range);
-        }
-
-        if (others.Ranges.Count > 0)
-            block.TextHighlighters.Add(others);
-        if (chosen.Ranges.Count > 0)
-            block.TextHighlighters.Add(chosen);
-    }
-
-    /// <summary>
-    /// Shows a styled line (<see cref="LineLook.Styled"/>) in runs: plain text as the block's own, each span in its colour, bold, dim
-    /// (its colour at 60 %), italic or underlined, its background drawn by a highlighter under the search's marks. Returns those
-    /// highlighters. Done once per line, timestamps and theme: a render that shows the same again reuses the runs and highlighters.
-    /// A row that showed a styled line and now shows a plain one gets one plain run back (Reactor sets the text only when it changes).
-    /// </summary>
-    private static TextHighlighter[] Paint(TextBlock block, LineLook look, bool dark)
-    {
-        PaintedRows.TryGetValue(block, out var painted);
-        if (!look.Styled)
-        {
-            if (painted is not null)
+    internal static Element Footer(bool following, LogScroller scroller) =>
+        ToggleSwitch(following, on =>
             {
-                PaintedRows.Remove(block);
-                block.Inlines.Clear();
-                block.Inlines.Add(new Run { Text = LogView.LineText(look.Line, look.Timestamps) });
-            }
-
-            return [];
-        }
-
-        if (painted is not null && ReferenceEquals(painted.Line, look.Line) && painted.Timestamps == look.Timestamps && painted.Dark == dark)
-            return painted.Backgrounds;
-
-        var line = look.Line;
-        var text = line.Text;
-        var offset = LogView.TextOffset(line, look.Timestamps);
-        var plainFore = ThemeColor(line.Stream == LogStream.Stderr ? "SystemFillColorCaution" : "TextFillColorPrimary", dark);
-        Dictionary<(Windows.UI.Color Back, Windows.UI.Color Fore), TextHighlighter>? backgrounds = null;
-
-        var inlines = block.Inlines;
-        inlines.Clear();
-        if (offset > 0)
-            inlines.Add(new Run { Text = LogView.LineText(line, look.Timestamps)[..offset] });
-
-        var at = 0;
-        foreach (var span in line.Spans)
-        {
-            if (span.Start > at)
-                inlines.Add(new Run { Text = text[at..span.Start] });
-
-            var style = span.Style;
-            var run = new Run { Text = text.Substring(span.Start, span.Length) };
-            Windows.UI.Color? fore = LogColors.Rgb(style.Foreground, dark) is { } rgb ? Opaque(rgb) : null;
-            if (style.Effects.HasFlag(TextEffects.Dim))
-            {
-                var color = fore ?? plainFore;
-                fore = Windows.UI.Color.FromArgb((byte)(color.A * 0.6), color.R, color.G, color.B);
-            }
-
-            if (fore is { } f)
-                run.Foreground = ColorBrush(f);
-            if (style.Effects.HasFlag(TextEffects.Bold))
-                run.FontWeight = FontWeights.Bold;
-            if (style.Effects.HasFlag(TextEffects.Italic))
-                run.FontStyle = Windows.UI.Text.FontStyle.Italic;
-            if (style.Effects.HasFlag(TextEffects.Underline))
-                run.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
-            inlines.Add(run);
-
-            if (LogColors.Rgb(style.Background, dark) is { } backRgb)
-            {
-                backgrounds ??= [];
-                var key = (Back: Opaque(backRgb), Fore: fore ?? plainFore);
-                if (!backgrounds.TryGetValue(key, out var highlighter))
-                {
-                    highlighter = new TextHighlighter { Background = ColorBrush(key.Back), Foreground = ColorBrush(key.Fore) };
-                    backgrounds[key] = highlighter;
-                }
-
-                highlighter.Ranges.Add(new TextRange { StartIndex = offset + span.Start, Length = span.Length });
-            }
-
-            at = span.Start + span.Length;
-        }
-
-        if (at < text.Length)
-            inlines.Add(new Run { Text = text[at..] });
-
-        TextHighlighter[] result = backgrounds is null ? [] : [.. backgrounds.Values];
-        PaintedRows.AddOrUpdate(block, new Painted(line, look.Timestamps, dark, result));
-        return result;
-    }
-
-    private static Windows.UI.Color Opaque(int rgb) => Windows.UI.Color.FromArgb(0xff, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
-
-    private static SolidColorBrush ColorBrush(Windows.UI.Color color)
-    {
-        if (ColorBrushes.TryGetValue(color, out var brush))
-            return brush;
-        if (ColorBrushes.Count >= MaxColorBrushes)
-            ColorBrushes.Clear();
-        brush = new SolidColorBrush(color);
-        ColorBrushes[color] = brush;
-        return brush;
-    }
-
-    /// <summary>The theme colour <paramref name="key"/> of the light or dark theme, from <see cref="ThemeBrush"/>.</summary>
-    private static Windows.UI.Color ThemeColor(string key, bool dark) =>
-        ThemeBrush(key + "Brush", dark) is SolidColorBrush brush ? brush.Color : Windows.UI.Color.FromArgb(0xff, 0x80, 0x80, 0x80);
-
-    /// <summary>
-    /// The theme brush <paramref name="key"/> ("…Brush") of the light or dark theme. Built from the theme's colour of the same name
-    /// without "Brush": a theme brush read in code takes its colour from the app's theme, not from the theme it was asked for.
-    /// </summary>
-    private static Brush? ThemeBrush(string key, bool dark)
-    {
-        if (ThemeBrushes.TryGetValue((key, dark), out var cached))
-            return cached;
-
-        var colorKey = key.EndsWith("Brush", StringComparison.Ordinal) ? key[..^"Brush".Length] : key;
-        var theme = dark ? "Default" : "Light";
-        Brush? brush = null;
-        foreach (var dictionary in Application.Current.Resources.MergedDictionaries.Prepend(Application.Current.Resources))
-        {
-            if (dictionary.ThemeDictionaries.TryGetValue(theme, out var themed)
-                && themed is ResourceDictionary resources
-                && resources.TryGetValue(colorKey, out var value)
-                && value is Windows.UI.Color color)
-            {
-                brush = new SolidColorBrush(color);
-                break;
-            }
-        }
-
-        // Not found (a key with no colour of its name): the highlighter's own default colours apply.
-        ThemeBrushes[(key, dark)] = brush;
-        return brush;
-    }
+                if (on)
+                    scroller.Follow();
+                else
+                    scroller.StopFollowing();
+            }, onContent: "Stick to bottom", offContent: "Stick to bottom")
+            .AutomationId("log-stick")
+            .AutomationName("Stick to bottom")
+            .ToolTip("Keep the newest line in view as lines arrive")
+            .HAlign(HorizontalAlignment.Right)
+            .Margin(0, 4, 0, 0);
 
     /// <summary>The search: its box, "3 of 17", previous and next (Shift+Enter and Enter), and close (Esc).</summary>
     private static Element SearchBar(
@@ -603,11 +421,6 @@ internal sealed class LogsTab : Component<LogsTabProps>
     private static void SetColors(bool value) =>
         AppServices.Current.UpdateSettings(settings => settings with { Logs = settings.Logs with { Colors = value } });
 
-    /// <summary>A row's line and how it is drawn: with its timestamp or not, and in its colours (<see cref="Styled"/>) or plain.</summary>
-    private sealed record LineLook(LogLine Line, bool Timestamps, bool Styled);
-
-    /// <summary>What <see cref="Paint"/> drew on a row: the line, in which theme, and the highlighters of its backgrounds.</summary>
-    private sealed record Painted(LogLine Line, bool Timestamps, bool Dark, TextHighlighter[] Backgrounds);
 
     /// <summary>
     /// A line and its position in the buffer, which keys its row. Not its line number: once the buffer is full every batch drops as
@@ -634,78 +447,4 @@ internal sealed class LogsTab : Component<LogsTabProps>
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
-    /// <summary>
-    /// The list's scroll viewer: whether the view follows the newest line, kept from its own scrolling (see <see cref="LogView.Follows"/>),
-    /// scrolling to the bottom while it does, and bringing a line into view. One per tab, kept across renders.
-    /// </summary>
-    private sealed class LogScroller
-    {
-        private ScrollViewer? _view;
-        private double _offset;
-
-        public bool Following { get; private set; } = true;
-
-        public Action<bool>? OnFollowingChanged { get; set; }
-
-        public ItemsRepeater? Repeater { get; set; }
-
-        /// <summary>Wrapped lines fit the width; unwrapped ones scroll sideways. Content is not anchored: following decides where the view goes.</summary>
-        public static void Configure(ScrollViewer view, bool wrap)
-        {
-            view.HorizontalScrollMode = wrap ? ScrollMode.Disabled : ScrollMode.Enabled;
-            view.HorizontalScrollBarVisibility = wrap ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
-            view.VerticalAnchorRatio = double.NaN;
-        }
-
-        public void Attach(ScrollViewer view)
-        {
-            if (ReferenceEquals(view, _view))
-                return;
-            _view?.ViewChanged -= OnViewChanged;
-            _view = view;
-            _offset = view.VerticalOffset;
-            view.ViewChanged += OnViewChanged;
-        }
-
-        /// <summary>Follows again, from the newest line.</summary>
-        public void Follow()
-        {
-            SetFollowing(true);
-            KeepAtBottom();
-        }
-
-        public void KeepAtBottom()
-        {
-            if (!Following || _view is not { } view)
-                return;
-            view.UpdateLayout();
-            view.ChangeView(null, view.ScrollableHeight, null, disableAnimation: true);
-        }
-
-        /// <summary>Scrolls the 0-based <paramref name="line"/> into the middle of the view.</summary>
-        public void BringIntoView(int line)
-        {
-            if (Repeater?.GetOrCreateElement(line) is not { } element)
-                return;
-            element.UpdateLayout();
-            element.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0.5, AnimationDesired = false });
-        }
-
-        private void OnViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
-        {
-            if (_view is not { } view)
-                return;
-            var follows = LogView.Follows(Following, _offset, view.VerticalOffset, view.ScrollableHeight);
-            _offset = view.VerticalOffset;
-            SetFollowing(follows);
-        }
-
-        private void SetFollowing(bool value)
-        {
-            if (value == Following)
-                return;
-            Following = value;
-            OnFollowingChanged?.Invoke(value);
-        }
-    }
 }

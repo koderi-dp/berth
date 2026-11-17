@@ -14,13 +14,14 @@ namespace Berth.Hooks;
 internal sealed class UiThreadSubscription<TSource, TState>
     where TSource : class
 {
-    private readonly Lock _gate = new();
+    private readonly Lock _lock = new();
     private readonly Action _onChange;
     private readonly DispatcherQueue _ui;
     private readonly Func<TSource?> _current;
     private readonly Action<Action> _removeReplaced;
     private readonly Action<TSource, Action<TState>> _addChanged;
     private readonly Action<TSource, Action<TState>> _removeChanged;
+    private readonly RenderGate? _gate;
     private TSource? _source;
     private int _pending;
     private bool _disposed;
@@ -37,9 +38,11 @@ internal sealed class UiThreadSubscription<TSource, TState>
         Action<Action> addReplaced,
         Action<Action> removeReplaced,
         Action<TSource, Action<TState>> addChanged,
-        Action<TSource, Action<TState>> removeChanged)
+        Action<TSource, Action<TState>> removeChanged,
+        RenderGate? gate)
     {
         _onChange = onChange;
+        _gate = gate;
         _ui = ReactorApp.UIDispatcher ?? throw new InvalidOperationException("The UI thread is not running.");
         _current = current;
         _removeReplaced = removeReplaced;
@@ -47,25 +50,33 @@ internal sealed class UiThreadSubscription<TSource, TState>
         _removeChanged = removeChanged;
         addReplaced(OnReplaced);
         Shell.MainWindow.HiddenChanged += OnHiddenChanged;
+        if (gate is not null)
+            gate.Changed += OnHiddenChanged;
         OnReplaced();
     }
 
-    /// <summary>Starts following; returns the action that stops it (for <c>UseExternalStore</c>'s subscribe).</summary>
-    /// <inheritdoc cref="UiThreadSubscription{TSource, TState}(Action, Func{TSource}, Action{Action}, Action{Action}, Action{TSource, Action{TState}}, Action{TSource, Action{TState}})"/>
+    /// <summary>
+    /// Starts following; returns the action that stops it (for <c>UseExternalStore</c>'s subscribe). With a <paramref name="gate"/>,
+    /// changes are also held back while it is closed (the page that shows them is not the one shown).
+    /// </summary>
+    /// <inheritdoc cref="UiThreadSubscription{TSource, TState}(Action, Func{TSource}, Action{Action}, Action{Action}, Action{TSource, Action{TState}}, Action{TSource, Action{TState}}, RenderGate)"/>
     public static Action Start(
         Action onChange,
         Func<TSource?> current,
         Action<Action> addReplaced,
         Action<Action> removeReplaced,
         Action<TSource, Action<TState>> addChanged,
-        Action<TSource, Action<TState>> removeChanged) =>
-        new UiThreadSubscription<TSource, TState>(onChange, current, addReplaced, removeReplaced, addChanged, removeChanged).Dispose;
+        Action<TSource, Action<TState>> removeChanged,
+        RenderGate? gate = null) =>
+        new UiThreadSubscription<TSource, TState>(onChange, current, addReplaced, removeReplaced, addChanged, removeChanged, gate).Dispose;
 
     private void Dispose()
     {
         _removeReplaced(OnReplaced);
         Shell.MainWindow.HiddenChanged -= OnHiddenChanged;
-        lock (_gate)
+        if (_gate is not null)
+            _gate.Changed -= OnHiddenChanged;
+        lock (_lock)
         {
             _disposed = true;
             if (_source is not null)
@@ -77,7 +88,7 @@ internal sealed class UiThreadSubscription<TSource, TState>
     /// <summary>Moves to the current source (or none) and reports a change: its state replaces the old one's.</summary>
     private void OnReplaced()
     {
-        lock (_gate)
+        lock (_lock)
         {
             if (_disposed)
                 return;
@@ -108,7 +119,7 @@ internal sealed class UiThreadSubscription<TSource, TState>
             return;
 
         // A window hidden to the tray does no rendering work: the change is held back, and the latest state is read when it shows.
-        if (Shell.MainWindow.IsHidden)
+        if (Shell.MainWindow.IsHidden || _gate is { IsOpen: false })
         {
             _heldBack = true;
             return;
@@ -117,10 +128,10 @@ internal sealed class UiThreadSubscription<TSource, TState>
         _onChange();
     }
 
-    /// <summary>On the UI thread: the window was shown again, so a change held back while it was hidden is delivered now.</summary>
+    /// <summary>On the UI thread: the window was shown again (or the gate opened), so a change held back meanwhile is delivered now.</summary>
     private void OnHiddenChanged()
     {
-        if (!Shell.MainWindow.IsHidden && _heldBack)
+        if (!Shell.MainWindow.IsHidden && _gate is not { IsOpen: false } && _heldBack)
         {
             _heldBack = false;
             Post();
