@@ -47,6 +47,9 @@ internal sealed class AppServices
 
     public AppSettings Settings => Volatile.Read(ref _settings);
 
+    /// <summary>SSH passwords and passphrases: Credential Manager, and a secret entered without "Remember" for one attempt.</summary>
+    public AppSecrets Secrets { get; } = new();
+
     /// <summary>The connection the session runs on (the first one when the settings name none).</summary>
     public ConnectionProfile ActiveConnectionProfile => ActiveConnection(Settings);
 
@@ -136,6 +139,60 @@ internal sealed class AppServices
         return saved;
     }
 
+    /// <summary>Deletes the connection <paramref name="id"/> and its SSH password and passphrase, if it has any kept.</summary>
+    public bool DeleteConnection(string id)
+    {
+        var saved = UpdateSettings(current => ConnectionEdits.Remove(current, id));
+        // The last connection is never removed; its secrets stay with it.
+        if (Settings.Connections.All(connection => connection.Id != id))
+            Connections.Secrets.DeleteAll(Secrets, id);
+        return saved;
+    }
+
+    /// <summary>
+    /// The user accepted the key the active SSH connection's host offered: it is saved on the connection, and the session, replaced
+    /// for the changed connection, connects. A changed key is never saved this way (<see cref="ConnectionEdits.AcceptHostKey"/>).
+    /// </summary>
+    public bool AcceptHostKey(string id, HostKey key) => UpdateSettings(current => ConnectionEdits.AcceptHostKey(current, id, key));
+
+    /// <summary>
+    /// The user entered the password or passphrase of the active connection <paramref name="id"/>: kept in Credential Manager when
+    /// <paramref name="remember"/>, otherwise held for the next attempt only; then the session connects again. False when Credential
+    /// Manager refused it (logged in fixed words); the secret is then still used for this attempt.
+    /// </summary>
+    public bool EnterSecret(string id, SecretKind kind, string secret, bool remember)
+    {
+        var kept = true;
+        if (remember)
+        {
+            try
+            {
+                Secrets.Set(id, kind, secret);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("saving a secret in Credential Manager failed", ex);
+                kept = false;
+            }
+        }
+
+        if (!remember || !kept)
+            Secrets.Offer(id, kind, secret);
+        if (id == ActiveConnectionProfile.Id)
+            Session.Dispatch(new ConnectRequested());
+        return kept;
+    }
+
+    /// <summary>
+    /// After the editor saved a secret for <paramref name="id"/>: when that is the active connection and it waits for the user (a refused
+    /// or missing secret), it connects again with the new one.
+    /// </summary>
+    public void SecretChanged(string id)
+    {
+        if (id == ActiveConnectionProfile.Id && Session.State.Attention is { Failure: SshFailure.SecretMissing or SshFailure.SignInRefused })
+            Session.Dispatch(new ConnectRequested());
+    }
+
     /// <summary>Makes the connection <paramref name="id"/> the active one. An unknown id, or the one already active, changes nothing.</summary>
     public void SwitchConnection(string id)
     {
@@ -158,7 +215,7 @@ internal sealed class AppServices
     private EngineSession CreateSession(ConnectionProfile connection)
     {
         var engineControl = connection.EngineControl is { } control ? new EngineCommands(control) : null;
-        var session = new EngineSession(() => EngineConnection.Open(connection), TimeProvider.System, AppLog.Error, engineControl);
+        var session = new EngineSession(() => EngineConnection.Open(connection, Secrets), TimeProvider.System, AppLog.Error, engineControl);
         session.CopyRequested += text => CopyFromSession(session, text);
         return session;
     }

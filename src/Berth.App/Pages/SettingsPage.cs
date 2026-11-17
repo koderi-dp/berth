@@ -64,7 +64,7 @@ internal sealed class SettingsPage : Component
                     "Diagnostics",
                     Button("Open log folder", OpenLogFolder).HAlign(HorizontalAlignment.Left)),
                 editorElement,
-                DeleteDialog(deleting, id => Apply(current => ConnectionEdits.Remove(current, id)), () => setDeleting(null)))
+                DeleteDialog(deleting, id => { if (!AppServices.Current.DeleteConnection(id)) setSaveFailed(true); }, () => setDeleting(null)))
             with
             {
                 RowGap = 24,

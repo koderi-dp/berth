@@ -22,9 +22,10 @@ internal sealed class EngineConnection : IEngineApi
     }
 
     /// <summary>A client for <paramref name="profile"/>. Nothing is opened until the first call.</summary>
-    public static IEngineApi Open(ConnectionProfile profile)
+    /// <param name="secrets">Where an SSH connection reads its password or passphrase when it signs in.</param>
+    public static IEngineApi Open(ConnectionProfile profile, ISecretStore secrets)
     {
-        var transport = TransportFactory.Create(profile);
+        var transport = TransportFactory.Create(profile, secrets);
         return new EngineConnection(transport, new EngineClient(EngineHttp.CreateHandler(transport), transport));
     }
 
