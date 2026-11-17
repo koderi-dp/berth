@@ -7,7 +7,11 @@ namespace Berth.Session;
 public abstract record SessionEffect;
 
 /// <summary>Negotiate the API version and read <c>/info</c>; answers with ConnectSucceeded or ConnectFailed.</summary>
-public sealed record ConnectEffect : SessionEffect;
+/// <param name="Retry">
+/// The session's own retry timer asked for it, not the user (a Connect, a Retry, a new secret). A retry never signs in with a secret an
+/// SSH host refused on this session: it fails at once with that refusal.
+/// </param>
+public sealed record ConnectEffect(bool Retry = false) : SessionEffect;
 
 /// <summary>List containers and read <c>/info</c>; answers with ContainersLoaded or LoadFailed carrying the same generation.</summary>
 public sealed record LoadContainersEffect(int Generation) : SessionEffect;

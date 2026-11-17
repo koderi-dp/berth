@@ -107,7 +107,7 @@ public sealed partial class SessionReducerTests
         Assert.Equal(ConnectionStatus.Connecting, state.Status);
         Assert.Equal(1, state.RetryAttempt);
         Assert.Equal("connection refused", state.ConnectionError);
-        Assert.Equal([new ConnectEffect()], effects);
+        Assert.Equal([new ConnectEffect(Retry: true)], effects);
     }
 
     [Fact]

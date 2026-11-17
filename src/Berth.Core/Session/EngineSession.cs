@@ -39,6 +39,9 @@ public sealed partial class EngineSession : IAsyncDisposable
     private EngineState _state = EngineState.Initial;
     private int _disposed;
 
+    // The first answer that needs the user (an SSH refusal) since the user last asked to connect; written from any thread.
+    private SshProblem? _refused;
+
     // Touched only by the loop, and by DisposeAsync once the loop has ended.
     private Connection? _connection;
     private ITimer? _retryTimer;
@@ -205,6 +208,9 @@ public sealed partial class EngineSession : IAsyncDisposable
     /// <summary>Tells the error sink, if any. A throwing sink is ignored: reporting must not break what it reports on.</summary>
     private void Report(string what, Exception ex)
     {
+        // Every failure passes here: one that needs the user is remembered for the session's own retries (see StartConnect).
+        if (ex is EngineException { Ssh: { StopsRetry: true } problem })
+            Interlocked.CompareExchange(ref _refused, problem, null);
         try
         {
             _onError?.Invoke(what, ex);
@@ -219,10 +225,13 @@ public sealed partial class EngineSession : IAsyncDisposable
     {
         switch (effect)
         {
-            case ConnectEffect:
+            case ConnectEffect connect:
                 Retire();
                 _connection = new Connection();
-                StartConnect(_connection);
+                // The user asked (Connect, Retry, a new secret): whatever was refused before may be tried again, once.
+                if (!connect.Retry)
+                    Volatile.Write(ref _refused, null);
+                StartConnect(_connection, Volatile.Read(ref _refused));
                 break;
 
             case StopStreamsEffect:
@@ -299,9 +308,19 @@ public sealed partial class EngineSession : IAsyncDisposable
         _connection = null;
     }
 
-    private void StartConnect(Connection connection) => connection.Run(async ct =>
+    /// <param name="refused">
+    /// An SSH refusal (or another answer that needs the user) this session met and the user has not answered: the attempt fails at once
+    /// with it, without a new transport, so a retry never sends the refused secret again whichever failure path the reducer saw first.
+    /// </param>
+    private void StartConnect(Connection connection, SshProblem? refused) => connection.Run(async ct =>
     {
         SessionEvent result;
+        if (refused is not null)
+        {
+            Post(new ConnectFailed(refused.Message, refused), connection);
+            return;
+        }
+
         try
         {
             var api = _createApi();

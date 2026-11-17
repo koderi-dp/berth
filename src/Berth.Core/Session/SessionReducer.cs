@@ -67,7 +67,7 @@ public static partial class SessionReducer
                                && state.Attention is null
                                && !state.EngineControl.StoppedByBerth
                                && state.EngineControl.Running != EngineCommand.Stop:
-                return (state with { Status = ConnectionStatus.Connecting }, [new ConnectEffect()]);
+                return (state with { Status = ConnectionStatus.Connecting }, [new ConnectEffect(Retry: true)]);
 
             case ConnectSucceeded success when connecting:
             {
