@@ -17,8 +17,8 @@ public sealed partial class LayerTests
         { "Text", ["Connections", "Engine"] },
         { "State", ["Engine"] },
         { "Files", ["Engine"] },
-        { "Session", ["Engine", "State", "Text", "Files"] },
-        { "Presentation", ["Engine", "State", "Session", "Text", "Files"] },
+        { "Session", ["Connections", "Engine", "State", "Text", "Files"] },
+        { "Presentation", ["Connections", "Engine", "State", "Session", "Text", "Files"] },
         { "Settings", ["Connections", "State", "Storage"] },
         { "Logging", [] },
         { "Storage", [] },
@@ -43,6 +43,40 @@ public sealed partial class LayerTests
 
         Assert.Empty(offenders);
     }
+
+    /// <summary>SSH.NET stays behind <c>IEngineTransport</c>: only the SSH transport's own files (<c>Transport/Ssh*.cs</c>) name it.</summary>
+    [Fact]
+    public void Only_the_ssh_transport_uses_ssh_net()
+    {
+        var sshNet = SshNetReference();
+        var sources = Directory.EnumerateFiles(CoreRoot, "*.cs", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(Path.Combine(RepositoryRoot(), "src", "Berth.App"), "*.cs", SearchOption.AllDirectories))
+            .Where(file => !IsBuildOutput(file));
+        var offenders = sources
+            .Where(file => !IsSshTransport(file) && sshNet.IsMatch(File.ReadAllText(file)))
+            .Select(file => Path.GetRelativePath(RepositoryRoot(), file));
+
+        Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void Ssh_net_is_referenced_by_core_alone()
+    {
+        var app = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Berth.App", "Berth.App.csproj"));
+        var core = File.ReadAllText(Path.Combine(CoreRoot, "Berth.Core.csproj"));
+
+        Assert.DoesNotContain("SSH.NET", app, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Include=\"SSH.NET\"", core, StringComparison.Ordinal);
+    }
+
+    private static bool IsSshTransport(string file) =>
+        Path.GetDirectoryName(file) == Path.Combine(CoreRoot, "Transport") && Path.GetFileName(file).StartsWith("Ssh", StringComparison.Ordinal);
+
+    private static bool IsBuildOutput(string file) =>
+        file.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj");
+
+    [GeneratedRegex(@"\bRenci\.SshNet\b")]
+    private static partial Regex SshNetReference();
 
     [Fact]
     public void Every_folder_of_core_is_in_the_table()
