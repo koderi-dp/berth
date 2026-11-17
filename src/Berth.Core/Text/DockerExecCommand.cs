@@ -9,8 +9,15 @@ namespace Berth.Text;
 /// </summary>
 public static class DockerExecCommand
 {
-    /// <summary>Why there is no command for a connection docker cannot be pointed at by Berth (SSH until phase 7).</summary>
+    /// <summary>Why there is no command for a connection docker cannot be pointed at by Berth (a kind it does not know).</summary>
     public const string NotAvailableText = "Not available for this connection.";
+
+    /// <summary>
+    /// Said beside the external terminal's actions on an SSH connection: the docker CLI then makes its own SSH connection, with the
+    /// user's ssh, agent and known_hosts, and none of what Berth keeps.
+    /// </summary>
+    public const string SshNote =
+        "The docker CLI connects with your own ssh, its agent, keys and known_hosts, not with what Berth keeps. It may ask for the password itself.";
 
     /// <summary>Why there is no command for a TLS connection with half a client certificate: docker would be told something else.</summary>
     public const string HalfCertificateText = "The connection has a client certificate without its key, or a key without its certificate.";
@@ -18,12 +25,15 @@ public static class DockerExecCommand
     /// <summary>Null when docker can be pointed at <paramref name="connection"/>; otherwise why not, in a sentence the UI can show.</summary>
     public static string? Unavailable(ConnectionProfile connection)
     {
-        if (connection.Kind is not (TransportKind.Tcp or TransportKind.NamedPipe))
+        if (connection.Kind is not (TransportKind.Tcp or TransportKind.NamedPipe or TransportKind.Ssh))
             return NotAvailableText;
         if (connection is { Kind: TransportKind.Tcp, Tls: { } tls } && string.IsNullOrEmpty(tls.CertPath) != string.IsNullOrEmpty(tls.KeyPath))
             return HalfCertificateText;
         return null;
     }
+
+    /// <summary>What to say beside the command for <paramref name="connection"/>: <see cref="SshNote"/> over SSH, otherwise null.</summary>
+    public static string? Note(ConnectionProfile connection) => connection.Kind == TransportKind.Ssh ? SshNote : null;
 
     /// <summary>
     /// What follows "docker": the connection's flags (<c>--tlsverify --tlscacert</c>, and <c>--tlscert --tlskey</c> with a client

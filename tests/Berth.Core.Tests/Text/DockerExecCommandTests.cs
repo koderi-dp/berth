@@ -78,12 +78,27 @@ public sealed class DockerExecCommandTests
     [Fact]
     public void A_connection_docker_cannot_be_pointed_at_is_not_available_and_says_so()
     {
-        // SSH is not built yet (phase 7); any kind without a case here is refused the same way.
-        var ssh = Tcp() with { Kind = (TransportKind)99 };
+        // Any kind without a case here is refused.
+        var unknown = Tcp() with { Kind = (TransportKind)99 };
 
-        Assert.Equal("Not available for this connection.", DockerExecCommand.Unavailable(ssh));
-        Assert.Throws<ArgumentException>(() => DockerExecCommand.Arguments(ssh, Id, Sh));
-        Assert.Throws<ArgumentException>(() => DockerExecCommand.Text(ssh, Id, Sh, ShellKind.PowerShell));
+        Assert.Equal("Not available for this connection.", DockerExecCommand.Unavailable(unknown));
+        Assert.Throws<ArgumentException>(() => DockerExecCommand.Arguments(unknown, Id, Sh));
+        Assert.Throws<ArgumentException>(() => DockerExecCommand.Text(unknown, Id, Sh, ShellKind.PowerShell));
+    }
+
+    [Fact]
+    public void Over_ssh_docker_is_pointed_at_the_ssh_address_and_signs_in_by_itself()
+    {
+        var ssh = new ConnectionProfile("s", "Remote", TransportKind.Ssh, "build-host", 2222, "", null)
+        {
+            Ssh = new SshOptions("deploy", SshSignIn.KeyFile, @"C:\keys\id", []),
+        };
+
+        Assert.Null(DockerExecCommand.Unavailable(ssh));
+        Assert.Equal<string>(["-H", "ssh://deploy@build-host:2222", "exec", "-it", Id, "sh"], DockerExecCommand.Arguments(ssh, Id, Sh));
+        Assert.Equal($"docker -H ssh://deploy@build-host:2222 exec -it {Id} sh", DockerExecCommand.Text(ssh, Id, Sh, ShellKind.PowerShell));
+        Assert.Equal(DockerExecCommand.SshNote, DockerExecCommand.Note(ssh));
+        Assert.Null(DockerExecCommand.Note(Tcp()));
     }
 
     [Theory]

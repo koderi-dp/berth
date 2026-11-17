@@ -81,7 +81,7 @@ public sealed record TrayMenu(
     private static TrayIconKind IconOf(EnginePhase phase) => phase switch
     {
         EnginePhase.Running => TrayIconKind.Running,
-        EnginePhase.NotReachable => TrayIconKind.Down,
+        EnginePhase.NotReachable or EnginePhase.NeedsAttention => TrayIconKind.Down,
         EnginePhase.Stopped => TrayIconKind.Stopped,
         _ => TrayIconKind.Working,
     };

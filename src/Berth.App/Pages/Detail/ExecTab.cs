@@ -383,6 +383,7 @@ internal sealed class ExecTab : Component<ExecTabProps>
             : null;
 
         var why = external.Refusal;
+        var said = why ?? external.Note;
         var outside = HStack(
                 4,
                 ExternalButton(wide, why is null && external.Plan?.First is not null, link.OpenExternal),
@@ -392,13 +393,13 @@ internal sealed class ExecTab : Component<ExecTabProps>
             .VAlign(VerticalAlignment.Center)
             .Margin(8, 0, 0, 0)
             .Grid(row: 0, column: 4);
-        var refusal = why is null
+        var refusal = said is null
             ? null
-            : Caption(why)
+            : Caption(said)
                 .Foreground(Theme.SecondaryText)
                 .TextWrapping(TextWrapping.Wrap)
                 .HAlign(HorizontalAlignment.Right)
-                .AutomationId("exec-external-refusal")
+                .AutomationId(why is null ? "exec-external-note" : "exec-external-refusal")
                 .Margin(0, 4, 0, 0)
                 .Grid(row: 2, column: 0, columnSpan: 5);
 

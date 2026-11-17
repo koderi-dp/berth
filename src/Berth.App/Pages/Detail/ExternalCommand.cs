@@ -19,10 +19,13 @@ internal sealed record ExternalTools(bool Docker, bool WindowsTerminal)
 
 /// <summary>
 /// The external terminal's command for one shell: the text "Copy command" copies (null when there is none for the connection), what
-/// "Open in external terminal" starts (null until the tools were looked up), and why it is not offered.
+/// "Open in external terminal" starts (null until the tools were looked up), why it is not offered, and what to know about it (over SSH,
+/// that docker signs in by itself).
 /// </summary>
 internal sealed record ExternalCommand(string? CopyText, ExternalLaunchPlan? Plan, string? Refusal)
 {
+    public string? Note { get; init; }
+
     public static ExternalCommand For(ConnectionProfile connection, string containerId, string name, ImmutableArray<string> command, ExternalTools? tools)
     {
         if (DockerExecCommand.Unavailable(connection) is { } why)
@@ -31,6 +34,6 @@ internal sealed record ExternalCommand(string? CopyText, ExternalLaunchPlan? Pla
         var arguments = DockerExecCommand.Arguments(connection, containerId, command);
         var text = DockerExecCommand.Text(connection, containerId, command, ShellKind.PowerShell);
         var plan = tools is null ? null : ExternalTerminal.Plan(name.Length > 0 ? name : containerId, arguments, tools.Docker, tools.WindowsTerminal);
-        return new(text, plan, plan?.Refusal);
+        return new(text, plan, plan?.Refusal) { Note = DockerExecCommand.Note(connection) };
     }
 }

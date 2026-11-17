@@ -3,7 +3,7 @@ using Berth.Session;
 namespace Berth.Presentation;
 
 /// <summary>Where the engine is, as the status bar, the disconnected view and the tray tell it.</summary>
-public enum EnginePhase { Running, Connecting, NotReachable, Starting, Stopping, WaitingForStart, Stopped }
+public enum EnginePhase { Running, Connecting, NotReachable, Starting, Stopping, WaitingForStart, Stopped, NeedsAttention }
 
 /// <summary>The colour family of a status: the theme's success, caution or critical fill, or neutral.</summary>
 public enum StatusTone { Success, Caution, Critical, Neutral }
@@ -15,7 +15,11 @@ public enum StatusTone { Success, Caution, Critical, Neutral }
 /// <param name="Busy">Something is under way (a progress ring); no button acts meanwhile.</param>
 /// <param name="CanRetry">Retry is offered.</param>
 /// <param name="OfferStart">"Start engine" is offered (the connection has engine control and no command is running).</param>
-public sealed record DisconnectedText(string Title, string? Message, string? Failure, bool Busy, bool CanRetry, bool OfferStart);
+public sealed record DisconnectedText(string Title, string? Message, string? Failure, bool Busy, bool CanRetry, bool OfferStart)
+{
+    /// <summary>The dialog an SSH connection that stopped for the user offers (a host key to check, a secret to enter); null otherwise.</summary>
+    public SshPrompt? Prompt { get; init; }
+}
 
 /// <summary>The engine command a menu offers (the status bar's, the tray's): stop while the engine runs, start otherwise.</summary>
 /// <param name="Enabled">False while a command runs.</param>
@@ -41,6 +45,8 @@ public static class EngineStatus
             return EnginePhase.Stopped;
         if (control.StartWaitsLeft > 0)
             return EnginePhase.WaitingForStart;
+        if (state.Status == ConnectionStatus.Disconnected && state.Attention is not null)
+            return EnginePhase.NeedsAttention;
         return state.Status == ConnectionStatus.Connecting ? EnginePhase.Connecting : EnginePhase.NotReachable;
     }
 
@@ -53,6 +59,7 @@ public static class EngineStatus
         EnginePhase.Stopping => "Stopping the engine…",
         EnginePhase.WaitingForStart => "Waiting for the engine to start…",
         EnginePhase.Stopped => "Engine stopped",
+        EnginePhase.NeedsAttention => "Needs attention",
         _ => "Engine not reachable",
     };
 
@@ -84,8 +91,20 @@ public static class EngineStatus
                 CanRetry: false,
                 OfferStart: canStart && state.ConnectionError is not null),
             EnginePhase.Stopped => new DisconnectedText("The engine was stopped.", null, failure, Busy: false, CanRetry: true, OfferStart: canStart),
+            EnginePhase.NeedsAttention => Attention(state),
             _ => new DisconnectedText("Not connected to the engine", state.ConnectionError, failure, Busy: false, CanRetry: true, OfferStart: canStart),
         };
+    }
+
+    /// <summary>
+    /// An SSH connection that stopped for the user: the dialog's button in place of Retry, except after a changed key (Retry checks again,
+    /// it never accepts) and a key file the host refused (nothing to enter; Retry tries the key again, once per click).
+    /// </summary>
+    private static DisconnectedText Attention(EngineState state)
+    {
+        var prompt = SshPrompts.For(state.Attention);
+        var canRetry = prompt is null or { Kind: SshPromptKind.ChangedHostKey };
+        return new DisconnectedText(prompt?.Title ?? "Sign-in refused", state.ConnectionError, null, Busy: false, canRetry, OfferStart: false) { Prompt = prompt };
     }
 
     /// <summary>The engine command offered, or null when the connection has no engine control.</summary>
