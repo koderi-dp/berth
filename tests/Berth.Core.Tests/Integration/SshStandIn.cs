@@ -122,6 +122,10 @@ internal sealed class SshStandIn : IAsyncDisposable
 
     public Task StopAsync() => _cli.RunAsync("stop", "-t", "1", Container);
 
+    /// <summary>Gives <c>berth</c> a new random password made inside the container: the one Berth holds is now wrong.</summary>
+    public Task ChangePasswordAsync() =>
+        _cli.RunAsync("exec", Container, "sh", "-c", "echo \"berth:$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')\" | chpasswd");
+
     /// <summary>A profile for this host as <paramref name="user"/>, with no saved host key.</summary>
     public ConnectionProfile Profile(string user = "berth", SshSignIn signIn = SshSignIn.Password, string? keyPath = null) =>
         new("it-" + Container, "Stand-in", TransportKind.Ssh, "127.0.0.1", Port, "", null) { Ssh = new SshOptions(user, signIn, keyPath, []) };

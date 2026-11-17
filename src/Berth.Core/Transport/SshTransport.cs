@@ -58,6 +58,7 @@ public sealed class SshTransport : IEngineTransport
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<Session> _sessions = [];
     private readonly int _channelsPerSession;
+    private readonly SshSignInGate _signIn = new();
     private string? _password;
     private PrivateKeyFile? _key;
     private bool _disposed;
@@ -172,6 +173,26 @@ public sealed class SshTransport : IEngineTransport
 
     /// <summary>Opens and signs in one more session; the first one checks the host key and reads the secret.</summary>
     private async Task<Session> ConnectAsync(CancellationToken ct)
+    {
+        _signIn.ThrowIfClosed();
+        try
+        {
+            return await SignInAsync(ct).ConfigureAwait(false);
+        }
+        catch (SshTransportException ex) when (_signIn.Close(ex.Problem))
+        {
+            // The first refusal: no session signs in again with this secret, and the open ones end with the refusal, so the
+            // event stream carries it to the session, which stops and asks.
+            Session[] open;
+            lock (_sessions)
+                open = [.. _sessions];
+            foreach (var session in open)
+                session.Break(ex.Problem);
+            throw;
+        }
+    }
+
+    private async Task<Session> SignInAsync(CancellationToken ct)
     {
         lock (_sessions)
         {
@@ -349,8 +370,10 @@ public sealed class SshTransport : IEngineTransport
             return stream;
         }
 
-        /// <summary>The session failed: every stream on it ends, and it takes no more.</summary>
-        public void Break()
+        /// <summary>
+        /// The session failed: every stream on it ends (with <paramref name="problem"/>, or as dropped), and it takes no more.
+        /// </summary>
+        public void Break(SshProblem? problem = null)
         {
             SshChannelStream[] streams;
             lock (_streams)
@@ -360,7 +383,7 @@ public sealed class SshTransport : IEngineTransport
             }
 
             foreach (var stream in streams)
-                stream.Drop();
+                stream.Drop(problem);
         }
 
         public void Close()

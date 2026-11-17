@@ -22,6 +22,7 @@ internal sealed class SshChannelStream : Stream, IHalfClosable
     private readonly Action<SshChannelStream> _closed;
     private int _disposed;
     private volatile bool _dropped;
+    private SshProblem? _dropReason;
 
     private SshChannelStream(SshCommand command, Task run, Stream input, Action<SshChannelStream> closed)
     {
@@ -67,9 +68,16 @@ internal sealed class SshChannelStream : Stream, IHalfClosable
         set => throw new NotSupportedException();
     }
 
-    /// <summary>The session under this stream ended: the next read that sees the end throws <see cref="SshFailure.Dropped"/>.</summary>
-    public void Drop()
+    /// <summary>
+    /// The session under this stream ended: the next read that sees the end throws <paramref name="reason"/>, or
+    /// <see cref="SshFailure.Dropped"/> when none is given.
+    /// </summary>
+    public void Drop(SshProblem? reason = null)
     {
+        // The first reason stays: a session ended by a refusal is closed later as plainly broken.
+        if (_dropped)
+            return;
+        Volatile.Write(ref _dropReason, reason);
         _dropped = true;
         // Ends a read waiting for output.
         _command.OutputStream.Dispose();
@@ -150,6 +158,8 @@ internal sealed class SshChannelStream : Stream, IHalfClosable
         base.Dispose(disposing);
     }
 
+    private SshProblem DropProblem() => _dropped && Volatile.Read(ref _dropReason) is { } reason ? reason : new SshProblem(SshFailure.Dropped, "");
+
     /// <summary>
     /// The output ended: a normal end when the command exited with 0; otherwise the remote's failure, or the session's when it dropped
     /// or the command never reported how it ended.
@@ -164,11 +174,11 @@ internal sealed class SshChannelStream : Stream, IHalfClosable
         }
         catch (Exception ex)
         {
-            throw new SshTransportException(new SshProblem(SshFailure.Dropped, ""), ex);
+            throw new SshTransportException(DropProblem(), ex);
         }
 
         if (_dropped)
-            throw new SshTransportException(new SshProblem(SshFailure.Dropped, ""));
+            throw new SshTransportException(DropProblem());
         if (_command.ExitStatus is 0)
             return;
         throw new SshTransportException(SshDialFailure.Classify(_command.ExitStatus, _command.Error ?? ""));

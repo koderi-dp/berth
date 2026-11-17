@@ -270,6 +270,26 @@ public sealed class SshIntegrationTests
     }
 
     [EngineFact]
+    public async Task A_password_refused_on_a_second_session_is_tried_once_and_ends_the_connection()
+    {
+        await using var host = await SshStandIn.StartAsync(Cli(), maxSessions: 1);
+        using var cts = new CancellationTokenSource(Patience);
+        await using var transport = await AcceptedAsync(host, host.Profile(), host.Password, cts.Token);
+        await using var first = await transport.OpenAsync(cts.Token);
+        await host.ChangePasswordAsync();
+
+        for (var i = 0; i < 6; i++)
+        {
+            var ex = await Assert.ThrowsAsync<SshTransportException>(async () => await transport.OpenAsync(cts.Token));
+            Assert.Equal((SshFailure.SignInRefused, SecretKind.Password), (ex.Problem.Failure, ex.Problem.Secret!.Value));
+        }
+
+        var ended = await Assert.ThrowsAsync<SshTransportException>(async () => await first.ReadAsync(new byte[16], cts.Token));
+        Assert.Equal(SshFailure.SignInRefused, ended.Problem.Failure);
+        Assert.Equal(1, Count(await host.LogAsync(), "Failed password for berth"));
+    }
+
+    [EngineFact]
     public async Task A_stopped_host_ends_the_streams_on_it()
     {
         await using var host = await SshStandIn.StartAsync(Cli());
