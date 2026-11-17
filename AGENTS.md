@@ -591,7 +591,10 @@ volume and network made by the CLI, and exec (output and exit code, two-way inpu
 starting size and a resize, `TERM`, a missing shell, the 409 of a stopped or paused
 container, a megabyte through raw `cat`, Ctrl+P and Ctrl+P Ctrl+Q, a detail session's shell,
 closing the write side, the clean-up sparing `nohup` and another shell, and what a closed
-shell leaves, written to the test output). `[DesktopEngineFact]` tests run only against Docker
+shell leaves, written to the test output), and SSH (`SshIntegrationTests` on a throwaway host they build, `SshStandIn`:
+dial-stdio answering `/_ping`, the host key question with no sign-in tried, the list over SSH, a wrong password tried once, key
+files with and without a passphrase, a changed key blocked before sign-in, a user docker refuses, a host without the CLI, an exec
+with its write side closed, streams past a lowered `MaxSessions`, a stopped host). `[DesktopEngineFact]` tests run only against Docker
 Desktop's pipe: removing unused volumes (narrowed to the test's own volumes).
 
 Run them against the daily engine and, when it is there, against the second engine on the
