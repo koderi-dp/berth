@@ -73,7 +73,9 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
         var commandRuns = AppServices.Current.EngineCommandRunsFor(editing?.Id);
 
         var id = editing?.Id ?? "";
-        var canBuild = draft.TryBuild(id, out _, out var buildError);
+        var canBuild = draft.TryBuild(id, out var built, out var buildError);
+        // Kept secrets and host keys belong to the old address: said before Save, dropped on Save, never used by Test.
+        var addressChanged = canBuild && SshEdit.AddressChanged(editing, built);
         var addressError = draft.AddressError;
         // Only the TLS errors go under the TLS files: the name's is not repeated (Save is disabled), the address and the commands have their own.
         var tlsError = !canBuild && buildError is ConnectionDraft.CaMissing or ConnectionDraft.ClientPairIncomplete ? buildError : null;
@@ -88,7 +90,7 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
         void TestDraft(ConnectionDraft tested)
         {
             if (tested.TryBuild(id, out var profile, out _))
-                _ = TestAsync(profile, new EditorSecrets(id, secretKind, typedSecret.Current), running, setTest);
+                _ = TestAsync(profile, new EditorSecrets(SshEdit.MayUseSavedSecret(editing, profile) ? id : "", secretKind, typedSecret.Current), running, setTest);
         }
 
         void StartTest() => TestDraft(draft);
@@ -133,6 +135,9 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
                         .WithKey("ssh-" + draft.SignIn)
                     : null,
                 draft.IsSsh ? SavedKeys(draft, key => Edit(d => d.WithoutHostKey(key))).WithKey("ssh-keys") : null,
+                addressChanged
+                    ? Caption(SshEdit.AddressChangedNote).TextWrapping().Foreground(Theme.SystemCaution).AutomationId("ssh-address-changed").WithKey("address-changed")
+                    : null,
                 TestRow(test, canBuild, StartTest, AcceptTestedKey).WithKey("test"),
                 commandRuns ? ErrorText(EngineCommandRuns).WithKey("command-runs") : null,
                 draft.EngineControlAvailable
@@ -175,8 +180,11 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
                 typedSecret.Current = "";
                 if (result == ContentDialogResult.Primary && !AppServices.Current.EngineCommandRunsFor(editing?.Id) && draft.TryBuild(editing?.Id ?? NewId(), out var profile, out _))
                 {
+                    var save = SshEdit.Save(editing, profile);
+                    foreach (var kind in save.DeleteSecrets)
+                        AppServices.Current.Secrets.Delete(profile.Id, kind);
                     var secretKept = profile.Kind == TransportKind.Ssh && secret.Length > 0 && SaveSecret(profile.Id, secretKind, secret);
-                    Props.OnSave(profile);
+                    Props.OnSave(save.Profile);
                     if (secretKept)
                         AppServices.Current.SecretChanged(profile.Id);
                 }
@@ -456,7 +464,8 @@ internal sealed class ConnectionEditor : EngineStateComponent<ConnectionEditorPr
 
     /// <summary>
     /// The secrets a test of the edited connection reads: the one typed in the editor for this test only, otherwise the one kept in
-    /// Credential Manager for the connection being edited. Nothing is written.
+    /// Credential Manager for the connection being edited (<paramref name="id"/> empty when its address changed: none then). Nothing
+    /// is written.
     /// </summary>
     private sealed class EditorSecrets(string id, SecretKind typedKind, string typed) : ISecretStore
     {
