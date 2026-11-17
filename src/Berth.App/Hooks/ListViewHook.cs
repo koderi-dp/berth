@@ -119,7 +119,8 @@ internal abstract class ListPageComponent : EngineStateComponent
                 setAsk(new RemoveDialog.DeleteAsk(named, opened, AppServices.Current.SessionNumber));
         }
 
-        var dialog = RemoveDialog.For(ask, (now, keys) => plan.Current(now, keys), () => setAsk(null));
+        var handlers = UseMemo(() => new RemoveTableHandlers(), Array.Empty<object>());
+        var dialog = RemoveDialog.For(ask, state.DiskUsage.Usage, (now, keys) => plan.Current(now, keys), () => setAsk(null), handlers);
         return new RemoveDialogs(dialog, AskDelete, unused => setAsk(new RemoveDialog.UnusedAsk(unused, AppServices.Current.SessionNumber)));
     }
 

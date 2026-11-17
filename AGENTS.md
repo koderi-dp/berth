@@ -95,7 +95,8 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             list: ISelectableRow, what a bulk action and a confirmed one send), ListSort (the images, volumes
                             and networks tables' sort); ImageRows, VolumeRows, NetworkRows (rows, filters, sort, empty texts),
                             Confirmations (what a delete or "Remove unused" sends, item by item, and its dialog text; "Remove
-                            unused" waits for the container list and its own list: UnusedNotKnown), BackTarget (where a container's page
+                            unused" waits for the container list and its own list: UnusedNotKnown), RemoveTable (the
+                            remove dialog's table: rows, sizes, the checked rows' summary line and button), BackTarget (where a container's page
                             goes back to and its button's label), RunOutcome (the run dialog's line), PullFigure (a pull's progress
                             line), PullReference (the pull dialog's field check), RunDraft (the run dialog's fields, checks
                             and create request); detail page: LogView, LogSearch,
@@ -148,7 +149,7 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             acting for the page shown through the PageKeys it registers), RemovalPanel (a list's batch of removes:
                             progress, then what was removed, refused or skipped), RemoveDialog (the confirmation of a delete
                             or "Remove unused …" of images, volumes or networks, planned again at confirm, and what a
-                            confirmed one sends), DialogParts (a primary button that keeps
+                            confirmed one sends; several items are RemoveTableDialog, a table to untick rows of), DialogParts (a primary button that keeps
                             its dialog open, a wider dialog, stacks, field errors and hints), DeleteDialog, DetailHeader
                             (breadcrumb, name, ID, image, ports, status, actions), StatsStrip (total CPU and memory
                             above the list)
@@ -733,7 +734,8 @@ The images, volumes and networks pages: `pull-image`, `create-volume`, `remove-u
 `toolbar-more`), `delete-selected`, `image-usage`, `volume-usage`, `network-summary`; per row `run-<tag>`,
 `delete-<name>` (an image by its tag), `open-<volume>` (its page), `containers-<network>` (a menu of the attached
 containers). Dialogs: `pull-reference`, `pull-dialog-status`; `run-name`, `run-outcome`;
-`volume-name`, `volume-create-error`; a remove confirmation's text is `confirm-text`.
+`volume-name`, `volume-create-error`; a remove confirmation's text is `confirm-text`, and with several items its table is
+`remove-table`, with `remove-summary` and `remove-notes` under it.
 
 Engine control and the window: the disconnected view's `disconnected-title`, `start-engine`, `retry-disconnected` and
 `engine-command-failure`; the bar above a kept list's `start-engine-bar`; the status bar's `engine-status` (a menu with
