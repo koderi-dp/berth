@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Threading.Channels;
+using Berth.Connections;
 using Berth.Engine;
 using Berth.Engine.Models;
 
@@ -316,7 +317,7 @@ public sealed partial class EngineSession : IAsyncDisposable
         catch (Exception ex)
         {
             Report(ConnectFailedReport, ex);
-            result = new ConnectFailed(ex.Message);
+            result = new ConnectFailed(ex.Message, (ex as EngineException)?.Ssh);
         }
 
         Post(result, connection);
@@ -339,7 +340,7 @@ public sealed partial class EngineSession : IAsyncDisposable
         catch (Exception ex)
         {
             Report(LoadFailedReport, ex);
-            result = new LoadFailed(generation, ex.Message, IsUnreachable(ex));
+            result = new LoadFailed(generation, ex.Message, IsUnreachable(ex)) { Ssh = (ex as EngineException)?.Ssh };
         }
 
         Post(result, connection);
@@ -348,6 +349,7 @@ public sealed partial class EngineSession : IAsyncDisposable
     private async Task FollowEventsAsync(Connection connection, CancellationToken ct)
     {
         string message;
+        SshProblem? ssh = null;
         try
         {
             await foreach (var received in connection.Api!.StreamEventsAsync(ct).ConfigureAwait(false))
@@ -364,9 +366,10 @@ public sealed partial class EngineSession : IAsyncDisposable
         {
             Report(StreamFailedReport, ex);
             message = ex.Message;
+            ssh = (ex as EngineException)?.Ssh;
         }
 
-        Post(new ConnectionLost(message), connection);
+        Post(new ConnectionLost(message, ssh), connection);
     }
 
     private async Task RunActionAsync(Connection connection, RunActionEffect action, CancellationToken ct)

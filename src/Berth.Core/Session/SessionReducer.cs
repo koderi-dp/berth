@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Berth.Connections;
 using Berth.Engine.Models;
 using Berth.State;
 using Berth.Text;
@@ -38,6 +39,7 @@ public static partial class SessionReducer
                         RetryAttempt = 0,
                         ListLoaded = false,
                         EngineControl = state.EngineControl with { StoppedByBerth = false },
+                        Attention = null,
                     },
                     [new ConnectEffect()]);
 
@@ -54,12 +56,15 @@ public static partial class SessionReducer
                         ListLoaded = false,
                         Stats = state.Stats.Clear(),
                         EngineControl = state.EngineControl with { StoppedByBerth = false },
+                        Attention = null,
                     },
                     [new StopStreamsEffect(), new ConnectEffect()]);
 
             // Not while the engine is stopped on purpose, nor while a stop runs: a connect could start a socket-activated engine
             // again (between its two units, for one). A stop that fails connects again at once.
+            // Nor while the user is asked about an SSH host key or secret: a refused password is never tried again on its own.
             case RetryDue when state.Status == ConnectionStatus.Disconnected
+                               && state.Attention is null
                                && !state.EngineControl.StoppedByBerth
                                && state.EngineControl.Running != EngineCommand.Stop:
                 return (state with { Status = ConnectionStatus.Connecting }, [new ConnectEffect()]);
@@ -84,6 +89,10 @@ public static partial class SessionReducer
                     .Then(LoadWanted);
             }
 
+            // An SSH connection that needs the user: no retry (three refused passwords can lock an account; a key needs a yes).
+            case ConnectFailed failure when connecting && failure.Ssh is { StopsRetry: true } problem:
+                return (state with { Status = ConnectionStatus.Disconnected, ConnectionError = failure.Message, Attention = problem }, None);
+
             // Just after a start the engine needs a few seconds: retry each second instead of backing off.
             case ConnectFailed failure when connecting && state.EngineControl.StartWaitsLeft > 0:
                 return (
@@ -106,7 +115,7 @@ public static partial class SessionReducer
                     [new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
 
             case ConnectionLost lost when connected:
-                return Lose(state, lost.Message);
+                return Lose(state, lost.Message, lost.Ssh);
 
             case ContainersLoaded loaded when connected && loaded.Generation == state.LoadGeneration:
             {
@@ -125,7 +134,7 @@ public static partial class SessionReducer
 
             case LoadFailed failure when connected && failure.Generation == state.LoadGeneration:
                 return failure.EngineUnreachable
-                    ? Lose(state, failure.Message)
+                    ? Lose(state, failure.Message, failure.Ssh)
                     : (state with { ActionError = failure.Message, ContainersLoadError = failure.Message }, None);
 
             case EngineEventReceived received when connected:
@@ -207,10 +216,12 @@ public static partial class SessionReducer
 
     /// <summary>
     /// The connection is gone: keep the last list on screen, forget pending actions and any scheduled reload (its timer
-    /// may be cancelled), ignore any load still in flight, and retry with back-off.
+    /// may be cancelled), ignore any load still in flight, and retry with back-off; except when an SSH problem needs the user
+    /// (<paramref name="ssh"/>), which is kept as <see cref="EngineState.Attention"/> with no retry.
     /// </summary>
-    private static (EngineState, ImmutableArray<SessionEffect>) Lose(EngineState state, string message) => (
-        ForgetUnderWay(state, startingOver: false) with
+    private static (EngineState, ImmutableArray<SessionEffect>) Lose(EngineState state, string message, SshProblem? ssh = null)
+    {
+        var lost = ForgetUnderWay(state, startingOver: false) with
         {
             Status = ConnectionStatus.Disconnected,
             ConnectionError = message,
@@ -219,8 +230,11 @@ public static partial class SessionReducer
             LoadGeneration = state.LoadGeneration + 1,
             ReloadScheduled = false,
             Stats = state.Stats.Clear(),
-        },
-        [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
+        };
+        return ssh is { StopsRetry: true }
+            ? (lost with { Attention = ssh }, [new StopStreamsEffect()])
+            : (lost, [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
+    }
 
     /// <summary>Watches the stats of the running containers and forgets those of containers no longer running.</summary>
     private static (EngineState, ImmutableArray<SessionEffect>) Watch(EngineState state)

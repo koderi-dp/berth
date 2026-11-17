@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Berth.Connections;
 using Berth.Engine.Models;
 using Berth.State;
 
@@ -66,6 +67,13 @@ public sealed record EngineState(
 
     /// <summary>The downloads and uploads of the Files tab, by their ID (a <see cref="Ticket"/>), until dismissed.</summary>
     public ImmutableDictionary<int, FileTransfer> Transfers { get; init; } = ImmutableDictionary<int, FileTransfer>.Empty;
+
+    /// <summary>
+    /// An SSH connection stopped for the user (<see cref="SshProblem.StopsRetry"/>): a host key to accept, a changed key, a password or
+    /// passphrase to enter. Nothing connects again on its own until the user answers (a <see cref="ConnectRequested"/>, or a new session
+    /// after the settings changed). Null otherwise.
+    /// </summary>
+    public SshProblem? Attention { get; init; }
 
     public static readonly EngineState Initial = new(
         ConnectionStatus.Disconnected,

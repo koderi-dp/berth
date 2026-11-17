@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using Berth.Connections;
 using Berth.Engine.Models;
 using Berth.Text;
 
@@ -11,16 +12,22 @@ public sealed record ConnectRequested : SessionEvent;
 
 public sealed record ConnectSucceeded(EngineVersion Version, EngineInfo Info) : SessionEvent;
 
-public sealed record ConnectFailed(string Message) : SessionEvent;
+/// <param name="Ssh">Why an SSH connection failed; null for other connections and failures.</param>
+public sealed record ConnectFailed(string Message, SshProblem? Ssh = null) : SessionEvent;
 
-public sealed record ConnectionLost(string Message) : SessionEvent;
+/// <param name="Ssh">Why an SSH connection failed; null for other connections and failures.</param>
+public sealed record ConnectionLost(string Message, SshProblem? Ssh = null) : SessionEvent;
 
 public sealed record RetryDue : SessionEvent;
 
 public sealed record ContainersLoaded(int Generation, ImmutableArray<ContainerSummary> Containers, EngineInfo Info) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record LoadFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record LoadFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the read; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 public sealed record EngineEventReceived(EngineEventMessage Message) : SessionEvent;
 
