@@ -21,6 +21,7 @@ file, secrets in Windows Credential Manager, the host key question and the chang
 
 ```
 Berth.slnx                  the solution: /src/ (Berth.App, Berth.Core), /tests/
+build/                      package.ps1 (builds, packs and signs the MSIX; see "Releasing"), Install.ps1 (shipped beside it)
 src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; pure logic, unit-tested (root namespace Berth)
   Connections/              ConnectionProfile, EngineAddress (tcp://, npipe:// and ssh://user@host:port parsing), ConnectionDraft (editor logic),
                             SshOptions (user, sign-in, key file, accepted HostKeys; Check/Accept/Remove: a changed key is never
@@ -601,6 +602,32 @@ dotnet build Berth.slnx                  # must finish with 0 warnings, 0 errors
 dotnet test                              # all green; integration tests are skipped
 dotnet run --project src/Berth.App       # launches with package identity
 ```
+
+## Releasing
+
+`build/package.ps1` builds the trimmed Release MSIX for x64 and arm64 (.NET and the Windows App SDK
+self-contained: no runtime to install, about 45 MB each), signs it with `signtool` from the newest Windows SDK
+and a DigiCert timestamp, and writes `Berth_<version>_<arch>.msix`, `Berth.cer` (the public certificate) and
+`Install.ps1` (a copy of `build/Install.ps1`) to `artifacts/` (git-ignored):
+
+```powershell
+.\build\package.ps1                                 # certificate CN=Koderi from Cert:\CurrentUser\My
+.\build\package.ps1 -Certificate <thumbprint> -Platforms x64
+```
+
+The certificate is picked from `Cert:\CurrentUser\My` by thumbprint or subject; it must be a code-signing
+certificate with its private key there, and its subject must equal the manifest's Publisher (`CN=Koderi`). The
+script never takes or writes a key or password, and no `.pfx` is ever exported. The package's properties are
+passed on the command line, so the git-ignored publish profiles are not needed. To release: raise `Version` in
+`Package.appxmanifest`, run the script, tag `v<version>` on `main`, and create the GitHub release (a pre-release
+while the certificate is self-signed) with the `.msix` files, `Berth.cer` and `Install.ps1`.
+
+The installed package has the same identity as the `dotnet run` debug registration, and Windows refuses one over
+the other. To install it on a machine that runs from source, first
+`Remove-AppxPackage Koderi.Berth_<version>_x64__<id> -PreserveApplicationData` (keeps `LocalState`: settings and
+log). To go back to running from source, copy `LocalState` somewhere first (removing an installed package deletes
+its data), `Remove-AppxPackage` the installed package, `dotnet run --project src/Berth.App` (it registers the debug
+identity again, with the same `LocalState` folder), quit Berth and copy the saved files back.
 
 ## Integration tests
 

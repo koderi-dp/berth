@@ -10,6 +10,19 @@ running when its window is closed.
 The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`, pinned) on WinUI 3. There is no XAML.
 
+## Install
+
+Download three files from the [latest release](https://github.com/koderi-dp/berth/releases) into one folder:
+`Berth_<version>_x64.msix` (or `_arm64`), `Berth.cer` and `Install.ps1`. Right-click `Install.ps1` >
+**Run with PowerShell**. It trusts `Berth.cer` (once per computer; Windows asks for administrator approval for that
+one step), then installs Berth for you. Start Berth from the Start menu. Nothing needs to be installed first: .NET and
+the Windows App SDK are inside the package.
+
+Berth is signed with a self-signed certificate (publisher `CN=Koderi`), which is why Windows has to be told to trust
+it. The same by hand: double-click `Berth.cer` > Install Certificate > Local Machine > "Trusted People", then
+double-click the `.msix` (or `Add-AppxPackage .\Berth_<version>_x64.msix`). Updates install the same way over the old
+version and keep your connections. To build the package yourself, see "Releasing" in `AGENTS.md`.
+
 ## What works in this version
 
 - **Connections.** Engines are reached over TCP (`tcp://host:port`), TCP with TLS (a CA
