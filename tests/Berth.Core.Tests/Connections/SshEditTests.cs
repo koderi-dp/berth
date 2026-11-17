@@ -31,6 +31,20 @@ public sealed class SshEditTests
     }
 
     [Fact]
+    public void A_key_accepted_for_the_new_address_in_the_same_edit_is_kept()
+    {
+        var accepted = new HostKey("other-host", 22, "ssh-ed25519", "SHA256:new");
+        var oldForNewAddress = new HostKey("other-host", 22, "ssh-ed25519", "SHA256:old");
+        var before = Saved with { Ssh = Saved.Ssh! with { KnownHosts = [Key, oldForNewAddress] } };
+        var edited = before with { Host = "other-host", Ssh = before.Ssh! with { KnownHosts = [Key, accepted] } };
+
+        var save = SshEdit.Save(before, edited);
+
+        Assert.Equal<HostKey>([accepted], save.Profile.Ssh!.KnownHosts);
+        Assert.Equal<SecretKind>([SecretKind.Password, SecretKind.Passphrase], save.DeleteSecrets);
+    }
+
+    [Fact]
     public void The_same_address_keeps_everything_even_with_the_host_name_in_other_case()
     {
         var edited = Saved with { Name = "Renamed", Host = "HOST" };

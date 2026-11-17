@@ -28,7 +28,7 @@ public static class SshEdit
         editing is { Kind: TransportKind.Ssh } && edited.Kind == TransportKind.Ssh && !AddressChanged(editing, edited);
 
     /// <summary>
-    /// A new address drops the kept secrets and every accepted host key; an SSH connection made into another kind drops its secrets; a
+    /// A new address drops the kept secrets and every host key saved before (a key accepted for the new address during the edit stays); an SSH connection made into another kind drops its secrets; a
     /// switch between password and key file drops the secret of the one no longer used. Anything else keeps everything.
     /// </summary>
     public static SshSave Save(ConnectionProfile? editing, ConnectionProfile edited)
@@ -38,7 +38,11 @@ public static class SshEdit
         if (edited is not { Kind: TransportKind.Ssh, Ssh: { } after })
             return new SshSave(edited, Both);
         if (AddressChanged(editing, edited))
-            return new SshSave(edited with { Ssh = after with { KnownHosts = [] } }, Both);
+        {
+            // Only a key accepted during this edit for the new host and port stays: every key saved before is the old address's.
+            ImmutableArray<HostKey> accepted = [.. after.KnownHosts.Where(key => key.IsFor(edited.Host, edited.Port) && !before.KnownHosts.Contains(key))];
+            return new SshSave(edited with { Ssh = after with { KnownHosts = accepted } }, Both);
+        }
         if (before.SignIn != after.SignIn)
             return new SshSave(edited, [after.SignIn == SshSignIn.Password ? SecretKind.Passphrase : SecretKind.Password]);
         return new SshSave(edited, []);
