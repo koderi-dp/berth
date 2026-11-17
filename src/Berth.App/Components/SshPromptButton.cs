@@ -19,6 +19,12 @@ internal sealed record SshPromptProps(SshProblem Problem);
 /// </summary>
 internal sealed class SshPromptButton : Component<SshPromptProps>
 {
+    /// <summary>
+    /// The key the views mount it under: the session number and the connection, so a new session (a switch, an edit, an accepted key)
+    /// always mounts a new one, dropping an open dialog and a typed secret meant for the old attempt.
+    /// </summary>
+    public static string Key() => $"ssh-prompt-{AppServices.Current.SessionNumber}-{AppServices.Current.ActiveConnectionProfile.Id}";
+
     public override Element Render()
     {
         var problem = Props.Problem;

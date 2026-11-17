@@ -46,7 +46,7 @@ internal static class DisconnectedView
     private static Element Buttons(DisconnectedText view, EngineState state, Action onRetry) =>
         (FlexRow(
                 view.Prompt is not null && state.Attention is { } problem
-                    ? Component<SshPromptButton, SshPromptProps>(new(problem)).WithKey("ssh-prompt")
+                    ? Component<SshPromptButton, SshPromptProps>(new(problem)).WithKey(SshPromptButton.Key())
                     : null,
                 view.OfferStart
                     ? Button("Start engine", StartEngine).AccentButton().AutomationId("start-engine")
