@@ -22,6 +22,12 @@ public sealed record RemovalPlan(ResourceKind Kind, ImmutableArray<RemovalItem> 
 
     /// <summary>The event that sends <see cref="Items"/>.</summary>
     public SessionEvent ToEvent() => new RemoveRequested(Kind, Items);
+
+    /// <summary>
+    /// The table the dialog shows when the delete names several items (the user can untick some), or null for one item, which the dialog
+    /// names in <see cref="Text"/>. What is sent is planned again at confirm from the keys still checked (<see cref="RemoveTable.Keys"/>).
+    /// </summary>
+    public RemoveTable? Table { get; init; }
 }
 
 /// <summary>
@@ -39,6 +45,15 @@ public sealed record PrunePlan(ResourceKind Kind, bool DanglingImagesOnly, Immut
 
     /// <summary>The event that removes the items, one by one.</summary>
     public SessionEvent ToEvent() => new RemoveRequested(Kind, [.. Items.Select(i => i.Item)]);
+
+    /// <summary>The table the dialog shows, a row per item, each checked to start with; null when there is nothing to remove.</summary>
+    public RemoveTable? Table { get; init; }
+
+    /// <summary>
+    /// The plan narrowed to the items whose IDs are in <paramref name="ids"/> (the rows the user left checked), for
+    /// <see cref="Confirmations.ConfirmPrune"/> to plan again against the state at confirm.
+    /// </summary>
+    public PrunePlan Keeping(IReadOnlySet<string> ids) => this with { Items = [.. Items.Where(i => ids.Contains(i.Id))] };
 }
 
 /// <summary>
@@ -106,11 +121,25 @@ public static class Confirmations
         }
 
         text = WithInUse(text, confirmed.Count == 1, deletedInUse.Select(r => (r.DisplayName, r.UsedBy)));
-        return new RemovalPlan(ResourceKind.Images, items.ToImmutable(), title, WithFreed(text, freed, several: deleted.Count > 1, shared));
+        var table = items.Count < 2 ? null : new RemoveTable(
+            ResourceKind.Images,
+            "These images will be deleted from this engine. Untick any you want to keep.",
+            [
+                .. confirmed.GroupBy(r => r.ImageId, StringComparer.Ordinal).Select(g =>
+                {
+                    var rows = g.ToList();
+                    var untag = !deleted.Contains(g.Key);
+                    return ImageTableRow(rows, [.. rows.Select(r => r.Key)], untag ? null : InUseText(rows[0]), untag);
+                }),
+            ]).WithUsage(usage);
+        return new RemovalPlan(ResourceKind.Images, items.ToImmutable(), title, WithFreed(text, freed, several: deleted.Count > 1, shared)) { Table = table };
     }
 
-    /// <summary>Deleting the volumes <paramref name="keys"/> among <paramref name="shown"/>; says the data in them is lost and, when known, the space freed.</summary>
-    public static RemovalPlan RemoveVolumes(IReadOnlyList<VolumeRow> shown, IEnumerable<string> keys, bool connected)
+    /// <summary>
+    /// Deleting the volumes <paramref name="keys"/> among <paramref name="shown"/>; says the data in them is lost and, when known, the space
+    /// freed. <paramref name="usage"/>, when read, gives the table's sizes.
+    /// </summary>
+    public static RemovalPlan RemoveVolumes(IReadOnlyList<VolumeRow> shown, IEnumerable<string> keys, bool connected, DiskUsage? usage = null)
     {
         var confirmed = RowSelection.Confirmed(shown, keys, connected);
         var title = confirmed.Count == 1 ? "Remove volume?" : $"Remove {confirmed.Count} volumes?";
@@ -119,7 +148,11 @@ public static class Confirmations
             : Listed($"{confirmed.Count} volumes will be removed:", confirmed.Select(r => r.Name)) + "\n" + VolumeDataLostMany;
         text = WithInUse(text, confirmed.Count == 1, confirmed.Where(r => r.InUse).Select(r => (r.Name, r.UsedBy)));
         var freed = Freed(confirmed, r => r.Size);
-        return new RemovalPlan(ResourceKind.Volumes, [.. confirmed.Select(r => new RemovalItem(r.Name))], title, WithFreed(text, freed));
+        var table = confirmed.Count < 2 ? null : new RemoveTable(
+            ResourceKind.Volumes,
+            "These volumes will be removed, and the data in them is lost for good. Untick any you want to keep.",
+            [.. confirmed.Select(r => VolumeTableRow(r, InUseText(r)))]).WithUsage(usage);
+        return new RemovalPlan(ResourceKind.Volumes, [.. confirmed.Select(r => new RemovalItem(r.Name))], title, WithFreed(text, freed)) { Table = table };
     }
 
     /// <summary>
@@ -147,7 +180,11 @@ public static class Confirmations
             text += "\n" + Listed(heading, attached);
         }
 
-        return new RemovalPlan(ResourceKind.Networks, [.. confirmed.Select(r => new RemovalItem(r.Id))], title, text);
+        var table = confirmed.Count < 2 ? null : new RemoveTable(
+            ResourceKind.Networks,
+            "These networks will be removed. Untick any you want to keep.",
+            [.. confirmed.Select(r => NetworkTableRow(r, r.Containers))]) { ContainersKnown = containersKnown };
+        return new RemovalPlan(ResourceKind.Networks, [.. confirmed.Select(r => new RemovalItem(r.Id))], title, text) { Table = table };
     }
 
     /// <summary>
@@ -220,16 +257,18 @@ public static class Confirmations
     {
         var unknown = UnusedNotKnown(state, ResourceKind.Images);
         var canPlan = state.Status == ConnectionStatus.Connected && unknown is null;
-        var items = ImageRows.From(state)
+        var groups = ImageRows.From(state)
             .GroupBy(r => r.ImageId, StringComparer.Ordinal)
             .Where(g => canPlan && (only?.Has(g.Key) ?? true))
             .Select(g => g.ToList())
             .Where(rows => !rows[0].InUse && !rows[0].IsPending && (!danglingOnly || rows[0].IsDangling))
+            .OrderBy(rows => only?.IndexOf(rows[0].ImageId) ?? 0)
+            .ToList();
+        var items = groups
             .Select(rows => new PlannedRemoval(
                 rows[0].ImageId,
                 string.Join(", ", rows.Select(r => r.DisplayName)),
                 Unused(rows[0].ImageId, rows.Count > 1 ? [.. rows.Select(r => r.Key)] : [rows[0].ImageId], [.. rows.Where(r => r.IsTagged).Select(r => r.Key)])))
-            .OrderBy(i => only?.IndexOf(i.Id) ?? 0)
             .ToImmutableArray();
         var usage = state.DiskUsage.Usage;
         // The engine's reclaimable figure covers every unused image; a sum of unique sizes is a floor (layers shared only among them).
@@ -238,9 +277,16 @@ public static class Confirmations
             : summed ? Freed(items, i => usage.Images.FirstOrDefault(u => u.Id == i.Id)?.UniqueSize)
             : usage.ImageTotals.Reclaimable;
         var several = summed && items.Length > 1;
+        var table = new RemoveTable(
+            ResourceKind.Images,
+            (danglingOnly ? "Untagged images no container uses." : "Images no container uses.") + " Untick any you want to keep.",
+            [.. groups.Select(rows => ImageTableRow(rows, [rows[0].ImageId], inUseBy: null, untagOnly: false))])
+        {
+            EngineTotalWhenAll = !summed,
+        }.WithUsage(usage);
         return danglingOnly
-            ? Prune(ResourceKind.Images, true, items, freed, several, "Remove dangling images?", "untagged image", unknown ?? "No image is dangling.", listNarrowed, warning: false)
-            : Prune(ResourceKind.Images, false, items, freed, several, "Remove unused images?", "image", unknown ?? "No image is unused.", listNarrowed, warning: false);
+            ? Prune(ResourceKind.Images, true, items, freed, several, "Remove dangling images?", "untagged image", unknown ?? "No image is dangling.", listNarrowed, warning: false, table)
+            : Prune(ResourceKind.Images, false, items, freed, several, "Remove unused images?", "image", unknown ?? "No image is unused.", listNarrowed, warning: false, table);
     }
 
     private static PrunePlan PruneVolumes(EngineState state, Only? only, bool listNarrowed)
@@ -254,19 +300,30 @@ public static class Confirmations
         var items = rows.Select(r => new PlannedRemoval(r.Name, r.ShownName, Unused(r.Name, [r.Name]))).ToImmutableArray();
         var usage = state.DiskUsage.Usage;
         var freed = usage is null ? null : only is null ? usage.VolumeTotals.Reclaimable : Freed(rows, r => r.Size);
-        return Prune(ResourceKind.Volumes, false, items, freed, several: false, "Remove unused volumes?", "volume", unknown ?? "No volume is unused.", listNarrowed, warning: true);
+        var table = new RemoveTable(
+            ResourceKind.Volumes,
+            "Volumes no container mounts. The data in them is lost for good. Untick any you want to keep.",
+            [.. rows.Select(r => VolumeTableRow(r, inUseBy: null))])
+        {
+            EngineTotalWhenAll = only is null,
+        }.WithUsage(usage);
+        return Prune(ResourceKind.Volumes, false, items, freed, several: false, "Remove unused volumes?", "volume", unknown ?? "No volume is unused.", listNarrowed, warning: true, table);
     }
 
     private static PrunePlan PruneNetworks(EngineState state, Only? only, bool listNarrowed)
     {
         var unknown = UnusedNotKnown(state, ResourceKind.Networks);
         var canPlan = state.Status == ConnectionStatus.Connected && unknown is null;
-        var items = NetworkRows.From(state)
+        var rows = NetworkRows.From(state)
             .Where(r => canPlan && !r.InUse && !r.IsBuiltIn && !r.IsPending && (only?.Has(r.Id) ?? true))
             .OrderBy(r => only?.IndexOf(r.Id) ?? 0)
-            .Select(r => new PlannedRemoval(r.Id, r.Name, Unused(r.Id, [r.Id])))
-            .ToImmutableArray();
-        return Prune(ResourceKind.Networks, false, items, null, several: false, "Remove unused networks?", "network", unknown ?? "No network is unused.", listNarrowed, warning: false);
+            .ToList();
+        var items = rows.Select(r => new PlannedRemoval(r.Id, r.Name, Unused(r.Id, [r.Id]))).ToImmutableArray();
+        var table = new RemoveTable(
+            ResourceKind.Networks,
+            "Networks no container is attached to. Untick any you want to keep.",
+            [.. rows.Select(r => NetworkTableRow(r, attached: null))]);
+        return Prune(ResourceKind.Networks, false, items, null, several: false, "Remove unused networks?", "network", unknown ?? "No network is unused.", listNarrowed, warning: false, table);
     }
 
     /// <param name="several">The freed figure is a sum over several items' own sizes, so a floor.</param>
@@ -282,10 +339,14 @@ public static class Confirmations
         string noun,
         string empty,
         bool listNarrowed,
-        bool warning)
+        bool warning,
+        RemoveTable table)
     {
         if (items.IsEmpty)
             return new PrunePlan(kind, danglingOnly, items, null, title, empty);
+
+        if (listNarrowed)
+            table = table with { Lead = $"{table.Lead} This is every unused {(danglingOnly ? "untagged image" : noun)} on the engine, not only the rows shown." };
 
         // Every name, however many: this dialog is the only place that names them.
         var heading = items.Length == 1 ? $"1 {noun} that no container uses will be removed:" : $"{items.Length} {noun}s that no container uses will be removed:";
@@ -294,8 +355,39 @@ public static class Confirmations
             text += $"\nThis is every unused {(danglingOnly ? "untagged image" : noun)} on the engine, not only the rows shown.";
         if (warning)
             text += "\n" + (items.Length == 1 ? VolumeDataLostOne : VolumeDataLostMany);
-        return new PrunePlan(kind, danglingOnly, items, freed, title, WithFreed(text, freed, several, shared: null));
+        return new PrunePlan(kind, danglingOnly, items, freed, title, WithFreed(text, freed, several, shared: null)) { Table = table };
     }
+
+    /// <summary>
+    /// The remove table's row of one image: <paramref name="rows"/> are its list rows named (its tags joined on one row; an untagged
+    /// image reads "Untagged", its short ID in the next column), sending <paramref name="sendKeys"/>.
+    /// </summary>
+    private static RemoveTableRow ImageTableRow(IReadOnlyList<ImageRow> rows, ImmutableArray<string> sendKeys, string? inUseBy, bool untagOnly)
+    {
+        var first = rows[0];
+        var tagged = rows.Where(r => r.IsTagged).Select(r => r.Key).ToList();
+        var name = tagged.Count > 0 ? string.Join(", ", tagged) : "Untagged";
+        var full = tagged.Count > 0
+            ? string.Join("\n", tagged)
+            : first.Name == ImageRows.None ? $"Untagged image {first.ImageId}" : $"Untagged image of {first.Name}, {first.ImageId}";
+        return new RemoveTableRow(first.ImageId, sendKeys, name, full, first.ShortId, null, first.Created, inUseBy, untagOnly);
+    }
+
+    private static RemoveTableRow VolumeTableRow(VolumeRow row, string? inUseBy) =>
+        new(row.Name, [row.Name], row.ShownName, row.Name, row.Driver, null, row.Created, inUseBy);
+
+    private static RemoveTableRow NetworkTableRow(NetworkRow row, IReadOnlyList<string>? attached) =>
+        new(row.Id, [row.Id], row.Name, row.Name, row.Driver, row.Scope, row.Created, Attached: attached);
+
+    /// <summary>Who uses an image in use ("used by web-1"), or null when none does.</summary>
+    private static string? InUseText(ImageRow row) => row.InUse ? UsedByText(row.UsedBy) : null;
+
+    /// <summary>Who mounts a volume in use, or null when none does.</summary>
+    private static string? InUseText(VolumeRow row) => row.InUse ? UsedByText(row.UsedBy) : null;
+
+    // The engine can count an image's containers when the container list names none of them.
+    private static string UsedByText(IReadOnlyList<string> names) =>
+        names.Count == 0 ? "in use by a container" : $"used by {string.Join(", ", names)}";
 
     /// <summary>The IDs a dialog named, in its order: at confirm, only these are kept, in this order.</summary>
     private sealed class Only(IEnumerable<string> ids)
