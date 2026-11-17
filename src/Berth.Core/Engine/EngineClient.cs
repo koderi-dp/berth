@@ -151,7 +151,8 @@ public sealed partial class EngineClient : IEngineApi
     {
         var tail = request.Tail < 0 ? "all" : request.Tail.ToString(CultureInfo.InvariantCulture);
         var follow = request.Follow ? "true" : "false";
-        var path = ContainerPath(id, $"/logs?stdout=true&stderr=true&timestamps=true&tail={tail}&follow={follow}");
+        var since = request.Since is { } from ? "&since=" + SinceText(from) : "";
+        var path = ContainerPath(id, $"/logs?stdout=true&stderr=true&timestamps=true&tail={tail}&follow={follow}{since}");
 
         using var response = await OpenStreamAsync(HttpMethod.Get, path, ct).ConfigureAwait(false);
         var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
@@ -161,6 +162,14 @@ public sealed partial class EngineClient : IEngineApi
         {
             yield return lines.Current;
         }
+    }
+
+    /// <summary>A time as the engine's <c>since</c> takes it: Unix seconds and nanoseconds, "1763370081.123456700".</summary>
+    private static string SinceText(DateTimeOffset time)
+    {
+        var ticks = time.UtcTicks - DateTimeOffset.UnixEpoch.UtcTicks;
+        var seconds = Math.DivRem(ticks, TimeSpan.TicksPerSecond, out var rest);
+        return string.Create(CultureInfo.InvariantCulture, $"{seconds}.{rest * 100:D9}");
     }
 
     /// <summary>

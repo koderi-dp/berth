@@ -26,6 +26,7 @@ internal sealed class FakeEngineApi : IEngineApi
     private readonly ConcurrentDictionary<string, ImageInspection> _images = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<PullProgress>> _pullsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ScriptedStream<StatsSample>> _statsOf = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, ScriptedStream<LogLine>> _logsOf = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource> _cancelledWaiters = new(StringComparer.Ordinal);
     private readonly Channel<EngineEventMessage> _events = Channel.CreateUnbounded<EngineEventMessage>();
     private readonly Channel<FakeShell> _shells = Channel.CreateUnbounded<FakeShell>();
@@ -67,6 +68,12 @@ internal sealed class FakeEngineApi : IEngineApi
     /// container read from it instead of <see cref="Stats"/>.
     /// </summary>
     public ScriptedStream<StatsSample> StatsOf(string id) => _statsOf.GetOrAdd(id, _ => new ScriptedStream<StatsSample>());
+
+    /// <summary>
+    /// The log stream of container <paramref name="id"/> alone. Once asked for (before the stream opens), logs of that container read
+    /// from it instead of <see cref="Logs"/>.
+    /// </summary>
+    public ScriptedStream<LogLine> LogsOf(string id) => _logsOf.GetOrAdd(id, _ => new ScriptedStream<LogLine>());
 
     /// <summary>Completes once a held call or stream recorded as <paramref name="entry"/> has been cancelled.</summary>
     public Task WhenCancelled(string entry) => CancelledWaiter(entry).Task;
@@ -166,9 +173,11 @@ internal sealed class FakeEngineApi : IEngineApi
     public async IAsyncEnumerable<LogLine> StreamLogsAsync(
         string id, bool tty, LogRequest request, [EnumeratorCancellation] CancellationToken ct)
     {
-        var entry = $"Logs {id} tail={request.Tail} follow={request.Follow} tty={tty}";
+        var since = request.Since is { } from ? $" since={from:O}" : "";
+        var entry = $"Logs {id} tail={request.Tail} follow={request.Follow} tty={tty}{since}";
         await EnterAsync("Logs", entry, ct);
-        await foreach (var line in ReadAsync(Logs, entry, ct))
+        var source = _logsOf.TryGetValue(id, out var own) ? own : Logs;
+        await foreach (var line in ReadAsync(source, entry, ct))
             yield return line;
     }
 

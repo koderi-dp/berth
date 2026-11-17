@@ -14,7 +14,7 @@ namespace Berth.Session;
 /// on purpose never reaches the page. Log lines are collected and applied at most every <see cref="LogTick"/>, so a flood is
 /// one state change per tick. The session uses the engine client it is given and never disposes it.
 /// </remarks>
-public sealed partial class ContainerDetailSession : IAsyncDisposable
+public sealed partial class ContainerDetailSession : IAsyncDisposable, IConnectionBound
 {
     /// <summary>How long log lines are collected before they are applied together.</summary>
     public static readonly TimeSpan LogTick = TimeSpan.FromMilliseconds(100);
@@ -115,6 +115,10 @@ public sealed partial class ContainerDetailSession : IAsyncDisposable
     /// session first, so the connection stops tracking it.
     /// </summary>
     internal void ReleaseOnDispose(Action release) => _release = release;
+
+    void IConnectionBound.ReleaseOnDispose(Action release) => ReleaseOnDispose(release);
+
+    Task IConnectionBound.CutOffAsync() => CutOffAsync();
 
     /// <summary>
     /// The connection this session runs on is being retired: stops every call, waits for them to finish (so the engine client

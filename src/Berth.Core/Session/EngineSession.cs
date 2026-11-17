@@ -113,6 +113,26 @@ public sealed partial class EngineSession : IAsyncDisposable
         return Volatile.Read(ref _connected)?.Attach(api => new ContainerDetailSession(api, containerId, _time, _onError));
     }
 
+    /// <summary>
+    /// The Logs page's session on the current connection, following the logs of every running container as this session's container
+    /// list changes, or null while not connected. It shares this session's engine client, clock and error sink, and is cut off (its
+    /// streams stopped, <see cref="LogsState.ConnectionLost"/> set) when that connection is retired. The caller disposes it. Safe from
+    /// any thread.
+    /// </summary>
+    public LogsSession? OpenLogs()
+    {
+        var logs = Volatile.Read(ref _connected)?.Attach(api => new LogsSession(api, _time, _onError));
+        if (logs is null)
+            return null;
+
+        void OnStateChanged(EngineState state) => logs.ContainersChanged(state.Containers, state.ListLoaded);
+        StateChanged += OnStateChanged;
+        logs.AlsoOnDispose(() => StateChanged -= OnStateChanged);
+        var now = State;
+        logs.ContainersChanged(now.Containers, now.ListLoaded);
+        return logs;
+    }
+
     /// <summary>Queues <paramref name="e"/> for the loop. Safe from any thread; never throws; ignored after disposal.</summary>
     public void Dispatch(SessionEvent e) => Post(e, source: null);
 

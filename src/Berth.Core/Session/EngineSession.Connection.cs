@@ -13,7 +13,7 @@ public sealed partial class EngineSession
         private readonly CancellationTokenSource _stop = new();
         private readonly List<Task> _calls = [];
         private readonly Lock _detailsLock = new();
-        private readonly HashSet<ContainerDetailSession> _details = [];
+        private readonly HashSet<IConnectionBound> _details = [];
         private bool _retired;
 
         /// <summary>Set by the connect call before it reports success, so every later call can use it.</summary>
@@ -33,10 +33,11 @@ public sealed partial class EngineSession
         }
 
         /// <summary>
-        /// Creates a detail session on this connection's engine client and tracks it until the page disposes it, or returns
-        /// null when the client is not set or the connection is retired. Safe from any thread.
+        /// Creates a session on this connection's engine client (a detail page's, the Logs page's) and tracks it until the page
+        /// disposes it, or returns null when the client is not set or the connection is retired. Safe from any thread.
         /// </summary>
-        public ContainerDetailSession? Attach(Func<IEngineApi, ContainerDetailSession> create)
+        public T? Attach<T>(Func<IEngineApi, T> create)
+            where T : class, IConnectionBound
         {
             lock (_detailsLock)
             {
@@ -60,7 +61,7 @@ public sealed partial class EngineSession
         /// </summary>
         public async Task RetireAsync()
         {
-            ContainerDetailSession[] details;
+            IConnectionBound[] details;
             lock (_detailsLock)
             {
                 _retired = true;

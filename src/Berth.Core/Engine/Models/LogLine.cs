@@ -24,7 +24,11 @@ public sealed record LogLine(LogStream Stream, DateTimeOffset? Timestamp, string
 }
 
 /// <summary>Which log lines to read:<see cref="Tail"/> lines from the end (-1 for all), then new ones as they come when <see cref="Follow"/>.</summary>
-public sealed record LogRequest(int Tail, bool Follow);
+public sealed record LogRequest(int Tail, bool Follow)
+{
+    /// <summary>Only lines written at or after this time; null for no limit.</summary>
+    public DateTimeOffset? Since { get; init; }
+}
 
 /// <summary><see cref="Length"/> characters of a text from <see cref="Start"/>, drawn in <see cref="Style"/>.</summary>
 public readonly record struct TextSpan(int Start, int Length, TextStyle Style);
