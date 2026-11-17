@@ -1,11 +1,11 @@
 # Berth
 
 Berth is a Windows desktop GUI for a Docker engine, used as a daily driver on a machine
-that runs docker-ce inside WSL. It is meant to cover containers, images, volumes and
-networks, and to manage engines on other machines too. This version covers connections,
-the containers list and each container's detail page with a terminal in the container, and
-the images, volumes and networks pages, starting and stopping a local engine, and a tray
-icon that keeps Berth running when its window is closed.
+that runs docker-ce inside WSL. It covers containers, images, volumes and networks, on this
+machine and on others: connections (TCP, TLS, a named pipe, SSH), the containers list and
+each container's detail page with a terminal in the container, and the images, volumes and
+networks pages, starting and stopping a local engine, and a tray icon that keeps Berth
+running when its window is closed.
 
 The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`, pinned) on WinUI 3. There is no XAML.
@@ -13,7 +13,8 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
 ## What works in this version
 
 - **Connections.** Engines are reached over TCP (`tcp://host:port`), TCP with TLS (a CA
-  file and an optional client certificate and key) or a named pipe (`npipe:////./pipe/name`).
+  file and an optional client certificate and key), a named pipe (`npipe:////./pipe/name`)
+  or SSH (`ssh://user@host:port`, below).
   The first run creates one connection from `DOCKER_HOST`, or the default named pipe. The
   Settings page adds, edits, tests and deletes connections; the title bar switches between
   them. Berth speaks the lower of the engine's API version and 1.56, and refuses engines
@@ -209,11 +210,48 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   the log holds no addresses, engine messages, secrets, environment values, container log
   lines or inspect data. Settings, "Open log folder" opens its folder.
 
+## SSH connections
+
+An SSH connection (`ssh://user@host:port`, port 22 when left out) reaches the engine of
+another machine through its docker CLI, as `docker -H ssh://…` does: Berth opens one SSH
+session and runs `docker system dial-stdio` on it for each stream (the list, the events,
+logs, stats, a terminal, a transfer), speaking to the engine over the command's input and
+output. Everything else in Berth works the same over it.
+
+- **What the remote needs.** An SSH server that allows the user to sign in by password or by
+  key, the docker CLI on the user's `PATH`, and the user allowed to use the engine (in the
+  `docker` group, or a rootless engine of their own). Berth runs exactly
+  `docker system dial-stdio`, nothing typed by the user. A host without the docker CLI, or a
+  user the engine refuses, shows the remote's own message.
+- **Signing in.** By password (the default) or by a private key file, with its passphrase if
+  it has one. The password and the passphrase are kept in Windows Credential Manager, as
+  generic credentials named `Koderi.Berth/<connection id>/password` and
+  `…/passphrase` for this user on this computer; never in `settings.json` or the log.
+  Without one kept, Berth asks when it connects ("Remember" is on by default; turned off, the
+  secret is used for that one attempt). A refused password is never tried again on its own:
+  Berth stops and asks, because a few refusals can lock an account. Deleting a connection
+  deletes its secrets.
+- **Host keys.** The first connection to a host shows its key's type and SHA-256 fingerprint
+  (as `ssh-keygen -lf` prints it) and asks; nothing but the key exchange reaches the host
+  before you accept (not your user name, not your password). Accepted keys are saved in
+  `settings.json` with the connection, per host and port. A host that offers a different key
+  later is blocked with a warning naming both keys, and the new key cannot be accepted there:
+  if you know why it changed (the host was reinstalled), open Settings, edit the connection,
+  remove the saved key, then connect and check the new one.
+- **Many streams.** sshd allows 10 channels per session by default (`MaxSessions`). Berth
+  puts up to 10 streams on one session and opens another session (signed in the same way)
+  when the host refuses a channel or the session is full, up to 8 sessions; a second session
+  closes when its last stream does.
+- **Keep-alives.** Each session sends one every 15 seconds, so a host that went away is
+  noticed and Berth reconnects with the accepted key and the kept secret, without asking (a
+  secret entered without "Remember" is asked for again).
+- **Engine control is off for SSH connections:** its commands would run on this computer,
+  not on the remote host.
+- **External terminal.** "Copy command" and "Open in external terminal" use
+  `docker -H ssh://user@host:port exec -it …`: the docker CLI then makes its own connection
+  with your ssh, its agent, keys and `known_hosts`, and may ask for the password itself.
+
 ## Not built yet
-
-In the order they are planned:
-
-1. SSH connections: password and key sign-in, host key prompt, Credential Manager.
 
 For a later polish pass:
 
@@ -221,6 +259,10 @@ For a later polish pass:
 - Charts above the containers list.
 
 ## Third-party software
+
+SSH connections use [SSH.NET](https://github.com/sshnet/SSH.NET) 2026.0.1 (MIT), with
+BouncyCastle.Cryptography 2.7.0 (MIT) and Microsoft.Extensions.Logging.Abstractions (MIT),
+listed in `THIRD-PARTY-NOTICES.txt`.
 
 The terminal is [xterm.js](https://github.com/xtermjs/xterm.js) (`@xterm/xterm` 6.0.0) with
 its fit addon (`@xterm/addon-fit` 0.11.0), MIT licensed, copied into
@@ -248,7 +290,9 @@ dotnet run --project src/Berth.App       # launches with package identity
 
 Integration tests run against a real engine when `BERTH_ENGINE` is set, and need the
 docker CLI on PATH and the `alpine:latest` image on the engine (`alpine:3.19` is pulled
-when missing and kept). They create and remove only their own containers, volumes,
+when missing and kept). The SSH tests build a throwaway SSH host image from `alpine:3.20`
+(named `berth-it-ssh-<guid>`, with openssh-server and the docker CLI) and run it with the
+engine's socket mounted and its port on 127.0.0.1 only; they remove it afterwards. They create and remove only their own containers, volumes,
 networks and image tags named `berth-it-<guid>`, and never prune. The test of "Remove
 unused volumes" runs only against Docker Desktop's pipe. Without the variable they are
 reported as skipped.

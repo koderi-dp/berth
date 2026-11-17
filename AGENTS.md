@@ -5,7 +5,7 @@ and remote engines). UI is pure C# with
 [Microsoft.UI.Reactor](https://github.com/microsoft/microsoft-ui-reactor)
 (`0.1.0-preview.18`) on WinUI 3, .NET 11. There is no XAML: do not add `.xaml` files.
 
-Phases 1 to 4 are built: the shell, connections (TCP, TLS, named pipe), the engine client,
+All seven phases are built: the shell, connections (TCP, TLS, named pipe), the engine client,
 the session, the Containers and Settings pages (phase 1), a container's detail page with
 Logs, Inspect, Bind mounts and Stats tabs plus live CPU and memory on the list (phase 2),
 the Images, Volumes and Networks pages with pulls, the run dialog, image inspect, volume
@@ -14,14 +14,18 @@ WebView2) on a shell in the container, the shell picker, "Open terminal" on a ro
 external terminal" and "Copy command" (phase 4), engine control (start and stop commands a
 connection stores), the tray icon and its menu, closing to the tray, one instance and start with
 Windows (phase 5), and the Files tab: browse a container's files, download and upload through the engine's archive (tar)
-calls (phase 6). SSH is not built yet.
+calls (phase 6), and SSH connections: each stream a `docker system dial-stdio` on an SSH session, sign-in by password or key
+file, secrets in Windows Credential Manager, the host key question and the changed-key block (phase 7; see "SSH").
 
 ## Layout
 
 ```
 Berth.slnx                  the solution: /src/ (Berth.App, Berth.Core), /tests/
 src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; pure logic, unit-tested (root namespace Berth)
-  Connections/              ConnectionProfile, EngineAddress (tcp:// and npipe:// parsing), ConnectionDraft (editor logic),
+  Connections/              ConnectionProfile, EngineAddress (tcp://, npipe:// and ssh://user@host:port parsing), ConnectionDraft (editor logic),
+                            SshOptions (user, sign-in, key file, accepted HostKeys; Check/Accept/Remove: a changed key is never
+                            accepted in place), SshProblem (why an SSH connection failed, SshFailure, its message; StopsRetry),
+                            Secrets (ISecretStore, SecretKind: the password and passphrase by connection id),
                             EngineControl (a connection's start and stop commands, the WSL default), CommandLine (a
                             command line split as the Windows C runtime splits it; here, not in Text, because the draft
                             checks it, and the Exec tab's ExecCommand splits for a Linux shell, where "\" escapes)
@@ -31,7 +35,9 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
   Settings/                 AppSettings, SettingsStore (atomic save, damaged-file handling, first-run save), FirstRun (the
                             settings when there are none), SettingsFile (the tolerant read shape and its checks),
                             SettingsJson, ConnectionEdits
-  Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory
+  Transport/                IEngineTransport, TcpTransport (plain and TLS), NamedPipeTransport, TransportFactory, IHalfClosable;
+                            SshTransport, SshChannelStream, SshTransportException, SshDialFailure (see "SSH"; the only files that
+                            may use SSH.NET)
   Engine/                   EngineClient (IEngineApi): version negotiation, info, list (with each container's mounts and
                             network names), actions, create, event stream, inspect, logs (StreamLogsAsync), stats
                             (StreamStatsAsync); the archive calls and the non-TTY exec that returns its output (EngineClient.Archive:
@@ -109,6 +115,9 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
   DebugStart.cs             Debug only: BERTH_OPEN_EXEC and BERTH_EXEC_COMMAND (see "The exec terminal")
   AppLog.cs                 berth.log: fixed wording and exception type names only (FileLog.Describe)
   LocalData.cs              the folder for settings and the log (package LocalState, or %LOCALAPPDATA%\Berth unpackaged)
+  CredentialStore.cs        ISecretStore over Windows Credential Manager (CredRead/CredWrite/CredDelete, generic credentials
+                            `Koderi.Berth/<id>/password|passphrase`, persisted for this user on this computer)
+  AppSecrets.cs             the app's secret store: Credential Manager, and a secret entered without "Remember" for one attempt
   AppServices.cs            settings, the session for the active connection (replaced on a switch) and the detail session of
                             the open container page (OpenDetail, CloseDetail, DetailChanged); sends session failures and a
                             set-aside settings file to the log
@@ -130,7 +139,8 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
                             ListViewStore, so a page the navigation cache dropped starts again from them; UseListSearch;
                             UseCheckedKeys; UseRemoveDialogs, the page's delete and "Remove unused …" confirmations)
   Components/               ConnectionSwitcher, StatusBar, DisconnectedView (no list yet), ConnectionBar (disconnected
-                            above a kept list), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
+                            above a kept list), SshPromptButton (the SSH host key question, changed-key warning and secret prompt
+                            from those two), ErrorBar, Widgets (glyphs, text styles, TextField and SearchBox, OneLine,
                             RetryBar), ContainerParts (action buttons, menus, state mark and port list shared by a list
                             row and the detail header), ListPage and ListTable (the list scaffold, below), shared by
                             the four lists;
@@ -180,8 +190,8 @@ the table or a file's namespace is not its folder's.
 | `Text` | `Connections` (the connection a `docker` command names with `-H` and its TLS files), `Engine` (the model records it formats) |
 | `State` | `Engine` |
 | `Files` | `Engine` |
-| `Session` | `Engine`, `State`, `Text`, `Files` |
-| `Presentation` | `Engine`, `State`, `Session`, `Text`, `Files` |
+| `Session` | `Connections` (an SSH connection's `SshProblem`), `Engine`, `State`, `Text`, `Files` |
+| `Presentation` | `Connections` (host keys and SSH problems it words), `Engine`, `State`, `Session`, `Text`, `Files` |
 | `Settings` | `Connections`, `State`, `Storage` |
 | `Logging` | nothing |
 | `Storage` | nothing |
@@ -315,6 +325,55 @@ launches the forwarder and returns, and whose stop command ends it. A failing co
 "Write-Output 'no'; exit 3"`) and a slow one (`... Start-Sleep -Seconds 120`) check the failure and the timeout. Remove the
 stand-in connection and end the forwarder afterwards. Reading the WSL side is allowed (`wsl.exe -l -v`, `systemctl
 is-active|is-enabled|cat`); nothing that changes it.
+
+## SSH
+
+**Where it lives.** SSH.NET (`2026.0.1`, MIT) is referenced by `Berth.Core` and used only by `Transport/Ssh*.cs` (`LayerTests` fails on
+any other file, in Core or the app, that names `Renci.SshNet`, and on the package in the app's project). Everything else sees
+`IEngineTransport` streams and `SshProblem`. The trimmed Release publish needs no trimming roots for it (checked by running a fully
+trimmed build against the stand-in host).
+
+**The transport** (`SshTransport`): one SSH session opened on the first stream and kept; each stream is one `docker system dial-stdio`
+exec channel (`SshTransport.DialCommand`, fixed text: no user text ever goes into the remote command), its stdin and stdout as the
+stream, stderr kept apart and read only when the command fails (`SshDialFailure`: no docker CLI, docker refused, dial-stdio's own
+error, the remote's words as-is, bounded to 2000 characters). Its EOF is the exec stream's close-write (`IHalfClosable`). A cancelled
+read ends the stream (SSH.NET's reads ignore the token). Up to 10 streams per session (`ChannelsPerSession`, sshd's default
+`MaxSessions`); a channel the server refuses marks the session full at what it holds; either way the next stream opens another
+session, up to 8; a second session closes with its last stream. Keep-alive every 15 s; a session that fails ends its streams with
+`SshFailure.Dropped`, and the session reconnects as for any lost connection (a new transport, the same accepted key and kept secret).
+
+**Host keys.** A host and port with no accepted key is only probed: the key exchange runs, the key is refused, and
+`HostKeyUnknown` carries it (nothing else reaches the host: SSH.NET sends the user name only in its sign-in requests). With a key
+accepted, a different one (type or fingerprint) is refused before sign-in (`HostKeyChanged`, both keys). Accepted keys live in
+`settings.json` on the connection (`SshOptions.KnownHosts`, per host and port). `SshOptions.Accept` and
+`ConnectionEdits.AcceptHostKey` never put a changed key in place of the saved one; the user removes the saved key in the editor
+first. No "trust all" anywhere.
+
+**Secrets.** A password or passphrase lives only in Windows Credential Manager (`CredentialStore`) and in memory while a connection
+needs it (the transport keeps it until disposed, for a second session). Never in `settings.json`, the log, an exception message
+Berth writes, a command line, a screenshot. The transport reads it only once the host key is known; none kept is `SecretMissing`
+(no connection made). A refusal is `SignInRefused` and is never retried on its own: the reducer keeps it as `EngineState.Attention`
+(no `ScheduleRetryEffect`, `RetryDue` ignored) until the user enters a secret or a new session starts; the disconnected view offers
+the prompt instead of Retry. Deleting a connection deletes both its secrets (`AppServices.DeleteConnection`).
+
+**Session and UI.** `ConnectFailed`, `ConnectionLost` and `LoadFailed` carry the `SshProblem` from `EngineException.Ssh`; one that
+`StopsRetry` (unknown or changed key, missing or refused secret) sets `EngineState.Attention`, phase `NeedsAttention` ("Needs
+attention" in the status bar and the tray, which never asks). `SshPromptButton` (disconnected view and bar, `ssh-prompt`) opens the
+question (Accept saves the key through `AppServices.AcceptHostKey`, which replaces the session, which connects), the changed-key
+warning (Close only), or the secret prompt (`ssh-secret`, `ssh-remember`; Connect calls `AppServices.EnterSecret`). Engine control is
+off for SSH (the editor says so; `SettingsFile` drops it). The editor: `ssh-sign-in`, `ssh-key-path`, `ssh-key-browse`, `ssh-secret`,
+`ssh-keys` with `remove-host-key-<n>`, `test-connection`, `test-accept-key`, `engine-control-ssh`. The Exec tab's external command
+is `docker -H ssh://user@host:port exec -it …` with the note `exec-external-note`.
+
+**The stand-in host for checks.** There is no real remote machine and no engine may be stopped or reconfigured, so checks use a
+throwaway SSH server container on the daily engine: name `berth-check-ssh`, image `berth-check/ssh:test` (alpine 3.20 with
+openssh-server and docker-cli; `berth-check/ssh:nocli` without the CLI), users `berth` (in the socket's group, in the container's own
+`/etc/group`; the host's socket is never changed) and `nodocker`, a throwaway password and two throwaway ed25519 key pairs (one with
+a passphrase) made for the check, new host keys each time the container is created (`ssh-keygen -A` in the entrypoint; recreate it
+to show a changed key), `MaxSessions` from `-e MAX_SESSIONS=n`, `-v /var/run/docker.sock:/var/run/docker.sock`, port
+`-p 127.0.0.1:2222:22` only. Build context and keys under `%TEMP%\berth-check\ssh\`, removed afterwards with the container, the
+images, the test connections and their credentials (`cmdkey /list | findstr Koderi.Berth`). The owner's own hosts, keys, passwords
+and `%USERPROFILE%\.ssh` are never used. The integration tests build their own copy (`SshStandIn`, `berth-it-*` names).
 
 ## The tray and the window
 

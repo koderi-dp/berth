@@ -1,4 +1,6 @@
-Berth includes the following third-party software, unchanged, in src/Berth.App/Assets/Terminal/.
+Berth includes the following third-party software.
+
+The terminal page, unchanged, in src/Berth.App/Assets/Terminal/:
 
 -------------------------------------------------------------------------------
 @xterm/xterm 6.0.0 (MIT)
@@ -40,3 +42,18 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+-------------------------------------------------------------------------------
+NuGet packages shipped with Berth for SSH connections (MIT License, text above):
+
+SSH.NET 2026.0.1 (MIT)
+https://github.com/sshnet/SSH.NET
+Copyright (c) Renci 2010-2026
+
+BouncyCastle.Cryptography 2.7.0 (MIT), used by SSH.NET
+https://www.bouncycastle.org/stable/nuget/csharp/website
+Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org)
+
+Microsoft.Extensions.Logging.Abstractions (MIT), used by SSH.NET
+https://github.com/dotnet/runtime
+Copyright (c) .NET Foundation and Contributors
