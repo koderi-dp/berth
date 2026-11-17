@@ -284,7 +284,7 @@ public sealed class SshIntegrationTests
             Assert.Equal((SshFailure.SignInRefused, SecretKind.Password), (ex.Problem.Failure, ex.Problem.Secret!.Value));
         }
 
-        var ended = await Assert.ThrowsAsync<SshTransportException>(async () => await first.ReadAsync(new byte[16], cts.Token));
+        var ended = await Assert.ThrowsAsync<SshTransportException>(async () => await first.ReadExactlyAsync(new byte[1], cts.Token));
         Assert.Equal(SshFailure.SignInRefused, ended.Problem.Failure);
         Assert.Equal(1, Count(await host.LogAsync(), "Failed password for berth"));
     }
