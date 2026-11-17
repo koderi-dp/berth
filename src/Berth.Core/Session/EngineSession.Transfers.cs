@@ -150,7 +150,7 @@ public sealed partial class EngineSession
             {
                 session.Report(request is DownloadRequest ? DownloadFailedReport : UploadFailedReport, ex);
                 // A call that ran out of its time failed; the engine is still there (as for a slow image remove).
-                end = new TransferFailed(transfer.Id, ex.Message, IsUnreachable(ex) && ex is not EngineException { TimedOut: true });
+                end = new TransferFailed(transfer.Id, ex.Message, IsUnreachable(ex) && ex is not EngineException { TimedOut: true }) { Ssh = SshOf(ex) };
             }
 
             lock (_lock)

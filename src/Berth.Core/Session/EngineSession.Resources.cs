@@ -1,3 +1,4 @@
+using Berth.Connections;
 using Berth.Engine;
 using Berth.State;
 
@@ -49,7 +50,7 @@ public sealed partial class EngineSession
                         await api.CreateVolumeAsync(create.Name, token).ConfigureAwait(false);
                         return new VolumeCreated(create.Name);
                     },
-                    ex => new VolumeCreateFailed(create.Name, ex.Message, IsUnreachable(ex)),
+                    ex => new VolumeCreateFailed(create.Name, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) },
                     ct));
                 break;
 
@@ -58,7 +59,7 @@ public sealed partial class EngineSession
                     connection,
                     DiskUsageFailedReport,
                     async (api, token) => new DiskUsageLoaded(load.Generation, await api.GetDiskUsageAsync(token).ConfigureAwait(false)),
-                    ex => new DiskUsageFailed(load.Generation, ex.Message, IsUnreachable(ex)),
+                    ex => new DiskUsageFailed(load.Generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) },
                     ct));
                 break;
 
@@ -76,7 +77,7 @@ public sealed partial class EngineSession
                     connection,
                     ImageInspectFailedReport,
                     async (api, token) => new ImageInspected(inspect.Generation, await api.InspectImageAsync(inspect.Id, token).ConfigureAwait(false)),
-                    ex => new ImageInspectFailed(inspect.Generation, ex.Message, IsUnreachable(ex)),
+                    ex => new ImageInspectFailed(inspect.Generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) },
                     ct));
                 break;
 
@@ -102,19 +103,19 @@ public sealed partial class EngineSession
             connection,
             ImagesLoadFailedReport,
             async (api, token) => new ImagesLoaded(load.Generation, [.. await api.ListImagesAsync(token).ConfigureAwait(false)]),
-            ex => new ResourceLoadFailed(load.Kind, load.Generation, ex.Message, IsUnreachable(ex)),
+            ex => new ResourceLoadFailed(load.Kind, load.Generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) },
             ct),
         ResourceKind.Volumes => CallAsync(
             connection,
             VolumesLoadFailedReport,
             async (api, token) => new VolumesLoaded(load.Generation, [.. await api.ListVolumesAsync(token).ConfigureAwait(false)]),
-            ex => new ResourceLoadFailed(load.Kind, load.Generation, ex.Message, IsUnreachable(ex)),
+            ex => new ResourceLoadFailed(load.Kind, load.Generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) },
             ct),
         _ => CallAsync(
             connection,
             NetworksLoadFailedReport,
             async (api, token) => new NetworksLoaded(load.Generation, [.. await api.ListNetworksAsync(token).ConfigureAwait(false)]),
-            ex => new ResourceLoadFailed(load.Kind, load.Generation, ex.Message, IsUnreachable(ex)),
+            ex => new ResourceLoadFailed(load.Kind, load.Generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) },
             ct),
     };
 
@@ -130,6 +131,7 @@ public sealed partial class EngineSession
         var api = connection.Api!;
         RemovalRefusal? refusal = null;
         var unreachable = false;
+        SshProblem? ssh = null;
         foreach (var key in remove.Item.Keys)
         {
             try
@@ -151,11 +153,12 @@ public sealed partial class EngineSession
                 refusal = new RemovalRefusal(key, ex.Message);
                 // A remove that outlasts its deadline (a large image) failed; the engine is still there.
                 unreachable = IsUnreachable(ex) && ex is not EngineException { TimedOut: true };
+                ssh = SshOf(ex);
                 break;
             }
         }
 
-        Post(new RemoveItemFinished(remove.Kind, remove.Item, refusal, unreachable), connection);
+        Post(new RemoveItemFinished(remove.Kind, remove.Item, refusal, unreachable) { Ssh = ssh }, connection);
     }
 
     /// <summary>Creates the container, then starts it. A start that fails says which container was created.</summary>
@@ -178,7 +181,7 @@ public sealed partial class EngineSession
         catch (Exception ex)
         {
             Report(RunFailedReport, ex);
-            result = new RunFailed(run.RequestId, created, ex.Message, IsUnreachable(ex));
+            result = new RunFailed(run.RequestId, created, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) };
         }
 
         Post(result, connection);

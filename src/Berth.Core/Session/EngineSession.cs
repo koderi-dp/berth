@@ -340,7 +340,7 @@ public sealed partial class EngineSession : IAsyncDisposable
         catch (Exception ex)
         {
             Report(LoadFailedReport, ex);
-            result = new LoadFailed(generation, ex.Message, IsUnreachable(ex)) { Ssh = (ex as EngineException)?.Ssh };
+            result = new LoadFailed(generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) };
         }
 
         Post(result, connection);
@@ -398,7 +398,7 @@ public sealed partial class EngineSession : IAsyncDisposable
         catch (Exception ex)
         {
             Report(ActionFailedReport, ex);
-            result = new ActionFailed(action.Id, ex.Message, IsUnreachable(ex));
+            result = new ActionFailed(action.Id, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) };
         }
 
         Post(result, connection);
@@ -419,13 +419,16 @@ public sealed partial class EngineSession : IAsyncDisposable
         catch (Exception ex)
         {
             Report(RunCommandFailedReport, ex);
-            result = new RunCommandFailed(inspect.Id, ex.Message, IsUnreachable(ex));
+            result = new RunCommandFailed(inspect.Id, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) };
         }
 
         Post(result, connection);
     }
 
     private static bool IsUnreachable(Exception ex) => ex is EngineException { StatusCode: 0 };
+
+    /// <summary>Why an SSH connection failed under <paramref name="ex"/>, or null: every failure event carries it to the reducer.</summary>
+    private static SshProblem? SshOf(Exception ex) => (ex as EngineException)?.Ssh;
 
     private readonly record struct Envelope(SessionEvent Event, object? Source);
 }

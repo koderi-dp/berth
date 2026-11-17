@@ -167,7 +167,7 @@ public static partial class SessionReducer
 
             case ActionFailed failure when connected:
                 return failure.EngineUnreachable
-                    ? Lose(state, failure.Message)
+                    ? Lose(state, failure.Message, failure.Ssh)
                     : RequestReload(state with { Pending = state.Pending.Remove(failure.Id), ActionError = failure.Message });
 
             case RunCommandRequested request when connected:
@@ -178,7 +178,7 @@ public static partial class SessionReducer
 
             case RunCommandFailed failure when connected:
                 return failure.EngineUnreachable
-                    ? Lose(state, failure.Message)
+                    ? Lose(state, failure.Message, failure.Ssh)
                     : (state with { ActionError = failure.Message }, None);
 
             case ClipboardCopyFailed:
@@ -231,9 +231,10 @@ public static partial class SessionReducer
             ReloadScheduled = false,
             Stats = state.Stats.Clear(),
         };
-        return ssh is { StopsRetry: true }
-            ? (lost with { Attention = ssh }, [new StopStreamsEffect()])
-            : (lost, [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
+        // While the user is asked (now, or already), nothing reconnects on its own: a retry would sign in with the refused secret.
+        if (ssh is { StopsRetry: true } || state.Attention is not null)
+            return (lost with { Attention = state.Attention ?? ssh }, [new StopStreamsEffect()]);
+        return (lost, [new StopStreamsEffect(), new ScheduleRetryEffect(Backoff.Delay(state.RetryAttempt))]);
     }
 
     /// <summary>Watches the stats of the running containers and forgets those of containers no longer running.</summary>

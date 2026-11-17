@@ -33,7 +33,7 @@ public static partial class SessionReducer
             case TransferFailed failure when IsTransferring(state, failure.Id, out var transfer):
             {
                 var failed = state with { Transfers = state.Transfers.SetItem(transfer.Id, transfer with { Status = TransferStatus.Failed, Error = failure.Message }) };
-                return failure.EngineUnreachable ? Lose(failed, failure.Message) : (failed, None);
+                return failure.EngineUnreachable ? Lose(failed, failure.Message, failure.Ssh) : (failed, None);
             }
 
             case TransferNeedsAnswer asking when IsTransferring(state, asking.Id, out var transfer):

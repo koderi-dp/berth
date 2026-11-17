@@ -1,3 +1,4 @@
+using Berth.Connections;
 using Berth.Files;
 
 namespace Berth.Session;
@@ -11,7 +12,11 @@ public sealed record TransferProgressed(int Id, long Done, long? Total) : Sessio
 public sealed record TransferFinished(int Id, TransferSummary Summary) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine could not be reached: the connection is lost too.</param>
-public sealed record TransferFailed(int Id, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record TransferFailed(int Id, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>An upload found <see cref="Names"/> in the folder that the user has not agreed to replace; it waits for an answer.</summary>
 public sealed record TransferNeedsAnswer(int Id, System.Collections.Immutable.ImmutableArray<string> Names) : SessionEvent;

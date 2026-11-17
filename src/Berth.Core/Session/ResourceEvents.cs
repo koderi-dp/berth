@@ -1,3 +1,4 @@
+using Berth.Connections;
 using System.Collections.Immutable;
 using Berth.Engine.Models;
 using Berth.State;
@@ -20,7 +21,11 @@ public sealed record VolumesLoaded(int Generation, ImmutableArray<VolumeSummary>
 public sealed record NetworksLoaded(int Generation, ImmutableArray<NetworkSummary> Networks) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record ResourceLoadFailed(ResourceKind Kind, int Generation, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record ResourceLoadFailed(ResourceKind Kind, int Generation, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>A debounced reload of one list is due.</summary>
 public sealed record ResourceReloadDue(ResourceKind Kind) : SessionEvent;
@@ -33,7 +38,11 @@ public sealed record RemoveRequested(ResourceKind Kind, ImmutableArray<RemovalIt
 
 /// <summary>An item of a remove ended: every key removed, or stopped at the key the engine refused (<paramref name="Refusal"/>).</summary>
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record RemoveItemFinished(ResourceKind Kind, RemovalItem Item, RemovalRefusal? Refusal, bool EngineUnreachable = false) : SessionEvent;
+public sealed record RemoveItemFinished(ResourceKind Kind, RemovalItem Item, RemovalRefusal? Refusal, bool EngineUnreachable = false) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>Forget the ended batch of removes of one list and its refusals.</summary>
 public sealed record RemovalDismissed(ResourceKind Kind) : SessionEvent;
@@ -53,7 +62,11 @@ public sealed record VolumeCreateDismissed(int RequestId) : SessionEvent;
 public sealed record VolumeCreated(string Name) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record VolumeCreateFailed(string Name, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record VolumeCreateFailed(string Name, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>Read the engine's disk use of images and volumes now (the page asked, or the user refreshed it).</summary>
 public sealed record DiskUsageRequested : SessionEvent;
@@ -61,7 +74,11 @@ public sealed record DiskUsageRequested : SessionEvent;
 public sealed record DiskUsageLoaded(int Generation, DiskUsage Usage) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record DiskUsageFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record DiskUsageFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>
 /// Pull <paramref name="Reference"/> as the user typed it ("nginx" pulls nginx:latest). Ignored when it is no reference or a pull of it
@@ -81,7 +98,11 @@ public sealed record PullProgressArrived(string Reference, int Generation, Immut
 public sealed record PullFinished(string Reference, int Generation) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record PullFailed(string Reference, int Generation, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record PullFailed(string Reference, int Generation, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>
 /// Read the image <paramref name="Id"/> (its exposed ports for the run dialog, its whole answer for Inspect), in place of any image being
@@ -92,7 +113,11 @@ public sealed record ImageInspectRequested(string Id) : SessionEvent;
 public sealed record ImageInspected(int Generation, ImageInspection Inspection) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record ImageInspectFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record ImageInspectFailed(int Generation, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>The run dialog or the Inspect dialog closed: forget the image read.</summary>
 public sealed record ImageInspectDismissed : SessionEvent;
@@ -112,7 +137,11 @@ public sealed record RunSucceeded(int RequestId, string ContainerId) : SessionEv
 
 /// <param name="CreatedId">The new container's ID when the create went through and the start failed; null when the create failed.</param>
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record RunFailed(int RequestId, string? CreatedId, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record RunFailed(int RequestId, string? CreatedId, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>The run dialog is done with its request <paramref name="RequestId"/> (closed, or the app opened the new container): forget it.</summary>
 public sealed record RunDismissed(int RequestId) : SessionEvent;

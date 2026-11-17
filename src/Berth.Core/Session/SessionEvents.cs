@@ -42,7 +42,11 @@ public sealed record ActionRequested(ImmutableArray<string> Ids, ContainerAction
 public sealed record ActionSucceeded(string Id) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record ActionFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record ActionFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 public sealed record ActionErrorDismissed : SessionEvent;
 
@@ -59,7 +63,11 @@ public sealed record RunCommandRequested(string Id, ShellKind Shell) : SessionEv
 public sealed record RunCommandInspected(string Id, ShellKind Shell, ContainerDetails Details) : SessionEvent;
 
 /// <param name="EngineUnreachable">The engine was not reached (<c>EngineException.StatusCode == 0</c>).</param>
-public sealed record RunCommandFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent;
+public sealed record RunCommandFailed(string Id, string Message, bool EngineUnreachable) : SessionEvent
+{
+    /// <summary>Why an SSH connection failed under the call; null for other connections and failures.</summary>
+    public SshProblem? Ssh { get; init; }
+}
 
 /// <summary>Copying to the clipboard failed (another program held it); the error bar says so.</summary>
 public sealed record ClipboardCopyFailed : SessionEvent;

@@ -53,7 +53,7 @@ public static partial class SessionReducer
 
             case ResourceLoadFailed failure when connected && failure.Generation == StatusOf(state, failure.Kind).Generation:
                 return failure.EngineUnreachable
-                    ? Lose(state, failure.Message)
+                    ? Lose(state, failure.Message, failure.Ssh)
                     : (WithStatus(state, failure.Kind, StatusOf(state, failure.Kind) with { LoadError = failure.Message }) with { ActionError = failure.Message }, None);
 
             case ResourceReloadDue due:
@@ -86,7 +86,7 @@ public static partial class SessionReducer
             case VolumeCreateFailed failure when connected && IsCreating(state, failure.Name):
             {
                 if (failure.EngineUnreachable)
-                    return Lose(state, failure.Message);
+                    return Lose(state, failure.Message, failure.Ssh);
                 var next = WithStatus(state, ResourceKind.Volumes, state.Volumes.Status with { Pending = state.Volumes.Pending.Remove(failure.Name) });
                 // A create whose dialog is gone has no one to show its refusal: the error bar does.
                 next = DialogCreate(state, failure.Name) is { } create
@@ -110,7 +110,7 @@ public static partial class SessionReducer
 
             case DiskUsageFailed failure when connected && state.DiskUsage.Loading && failure.Generation == state.DiskUsage.Generation:
                 return failure.EngineUnreachable
-                    ? Lose(state, failure.Message)
+                    ? Lose(state, failure.Message, failure.Ssh)
                     : ReadEnded(state with { ActionError = failure.Message });
 
             case PullRequested request when connected:
@@ -132,7 +132,7 @@ public static partial class SessionReducer
             case PullFailed failure when IsRunning(state, failure.Reference, failure.Generation, out var pull):
             {
                 var failed = state with { Pulls = state.Pulls.SetItem(pull.Reference, pull with { Status = PullStatus.Failed, Error = failure.Message }) };
-                return failure.EngineUnreachable ? Lose(failed, failure.Message) : (failed, None);
+                return failure.EngineUnreachable ? Lose(failed, failure.Message, failure.Ssh) : (failed, None);
             }
 
             case PullCancelRequested cancel when state.Pulls.TryGetValue(PullKey(cancel.Reference), out var pull):
@@ -154,7 +154,7 @@ public static partial class SessionReducer
 
             case ImageInspectFailed failure when connected && state.ImageInspect is { IsLoading: true } inspect && failure.Generation == inspect.Generation:
                 return failure.EngineUnreachable
-                    ? Lose(state, failure.Message)
+                    ? Lose(state, failure.Message, failure.Ssh)
                     : (state with { ImageInspect = inspect with { Error = failure.Message } }, None);
 
             case ImageInspectDismissed:
@@ -181,7 +181,7 @@ public static partial class SessionReducer
                 {
                     Run = run with { Status = created ? RunStatus.StartFailed : RunStatus.Failed, ContainerId = failure.CreatedId, Error = failure.Message },
                 };
-                return failure.EngineUnreachable ? Lose(next, failure.Message)
+                return failure.EngineUnreachable ? Lose(next, failure.Message, failure.Ssh)
                     : created ? RequestReload(next)
                     : (next, None);
             }
@@ -344,7 +344,7 @@ public static partial class SessionReducer
     private static (EngineState, ImmutableArray<SessionEffect>) FinishRemovalItem(EngineState state, RemoveItemFinished finished)
     {
         if (finished.EngineUnreachable)
-            return Lose(state, finished.Refusal?.Message ?? "");
+            return Lose(state, finished.Refusal?.Message ?? "", finished.Ssh);
 
         var status = StatusOf(state, finished.Kind);
         var batch = status.Removal!;

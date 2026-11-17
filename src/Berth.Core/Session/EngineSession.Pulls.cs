@@ -85,7 +85,7 @@ public sealed partial class EngineSession
             catch (Exception ex)
             {
                 session.Report(PullFailedReport, ex);
-                end = new PullFailed(pull.Reference, pull.Generation, ex.Message, IsUnreachable(ex));
+                end = new PullFailed(pull.Reference, pull.Generation, ex.Message, IsUnreachable(ex)) { Ssh = SshOf(ex) };
             }
 
             lock (_lock)
