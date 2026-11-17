@@ -66,9 +66,23 @@ public static class EngineAddress
                 return false;
             }
 
+            var user = rest[..at];
+            if (user.Contains(':'))
+            {
+                // ssh://user:password@host: the password would be saved, shown in commands and sent as the user name.
+                error = "Do not put a password in the address: Berth asks for it and keeps it in Windows Credential Manager.";
+                return false;
+            }
+
+            if (user.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
+            {
+                error = "The user name cannot hold spaces or control characters.";
+                return false;
+            }
+
             if (!TryParseAuthority(rest[(at + 1)..], DefaultSshPort, SshScheme, "user@host", out var host, out var port, out error))
                 return false;
-            address = new ParsedAddress(TransportKind.Ssh, host, port, "", rest[..at]);
+            address = new ParsedAddress(TransportKind.Ssh, host, port, "", user);
             return true;
         }
 

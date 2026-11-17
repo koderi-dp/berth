@@ -26,6 +26,9 @@ public sealed class SshAddressTests
     [InlineData("ssh://user@host/var/run", "Use ssh://user@host or ssh://user@host:port.")]
     [InlineData("ssh://user@host:22?x", "The port must be between 1 and 65535.")]
     [InlineData("http://x", "Use tcp://, npipe:// or ssh://.")]
+    [InlineData("ssh://user:secret@host", "Do not put a password in the address: Berth asks for it and keeps it in Windows Credential Manager.")]
+    [InlineData("ssh://user:@host:22", "Do not put a password in the address: Berth asks for it and keeps it in Windows Credential Manager.")]
+    [InlineData("ssh://us er@host", "The user name cannot hold spaces or control characters.")]
     public void Rejects_a_wrong_ssh_address(string text, string expected)
     {
         var ok = EngineAddress.TryParse(text, out _, out var error);

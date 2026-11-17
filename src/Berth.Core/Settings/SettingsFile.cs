@@ -174,7 +174,8 @@ internal sealed class SettingsFile
         public SshOptions? ToOptions()
         {
             var signIn = SignIn ?? SshSignIn.Password;
-            if (string.IsNullOrWhiteSpace(User) || !Enum.IsDefined(signIn) || (signIn == SshSignIn.KeyFile && string.IsNullOrWhiteSpace(KeyPath)))
+            // A user name with ":" holds a password (ssh://user:password@host): never used, never written back.
+            if (string.IsNullOrWhiteSpace(User) || User.Contains(':') || !Enum.IsDefined(signIn) || (signIn == SshSignIn.KeyFile && string.IsNullOrWhiteSpace(KeyPath)))
                 return null;
 
             ImmutableArray<HostKey> keys = [.. (KnownHosts ?? []).Select(entry => entry?.ToKey()).OfType<HostKey>()];

@@ -57,6 +57,7 @@ public sealed class SettingsStoreSshTests : IDisposable
     [InlineData("")]
     [InlineData(""", "ssh": null""")]
     [InlineData(""", "ssh": { "user": " " }""")]
+    [InlineData(""", "ssh": { "user": "berth:not-a-real-secret" }""")]
     [InlineData(""", "ssh": { "user": "berth", "signIn": "KeyFile" }""")]
     public void An_ssh_connection_without_a_user_or_its_key_file_is_not_usable(string ssh) =>
         Assert.Null(LoadFrom($$"""{ "connections": [ {{Ssh}}{{ssh}} } ] }"""));
@@ -94,6 +95,17 @@ public sealed class SettingsStoreSshTests : IDisposable
         Assert.Equal("127.0.0.1", connection.Name);
         Assert.Equal(("127.0.0.1", 2222), (connection.Host, connection.Port));
         Assert.Equal(new SshOptions("berth", SshSignIn.Password, null, []), connection.Ssh);
+    }
+
+    [Fact]
+    public void Docker_host_over_ssh_with_a_password_in_it_creates_no_ssh_connection_and_keeps_nothing_of_it()
+    {
+        var settings = FirstRun.Create("ssh://berth:not-a-real-secret@host:2222");
+
+        var connection = Assert.Single(settings.Connections);
+        Assert.Equal(TransportKind.NamedPipe, connection.Kind);
+        new SettingsStore(_directory, null).Save(settings);
+        Assert.DoesNotContain("not-a-real-secret", File.ReadAllText(SettingsFile), StringComparison.Ordinal);
     }
 
     [Fact]
