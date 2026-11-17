@@ -287,7 +287,7 @@ internal static class ListTable
     }
 
     /// <summary>The list item container stretches its row over the full width and adds no padding, so rows line up with the header.</summary>
-    private static Style RowContainerStyle()
+    internal static Style RowContainerStyle()
     {
         var style = new Style(typeof(ListViewItem));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));

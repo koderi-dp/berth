@@ -53,7 +53,7 @@ internal sealed class VolumesPage : ListPageComponent
         var removalPanel = UseMemo(() => RemovalPanel.Render(removal, ResourceKind.Volumes), removal ?? NoBatch);
         // A delete plans from the rows shown (the filter and search), when asked and again at confirm.
         var remove = UseRemoveDialogs(state, (now, keys) =>
-            Confirmations.RemoveVolumes(VolumeRows.Shown(VolumeRows.From(now), view.Filter, view.Sort), keys, now.Status == ConnectionStatus.Connected));
+            Confirmations.RemoveVolumes(VolumeRows.Shown(VolumeRows.From(now), view.Filter, view.Sort), keys, now.Status == ConnectionStatus.Connected, now.DiskUsage.Usage));
 
         handlers.SetChecked = setChecked;
         handlers.SortBy = column => updateView(v => v with { Sort = v.Sort.Toggle(column) });

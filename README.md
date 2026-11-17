@@ -147,11 +147,16 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   containers attached to it (a menu of links to them). The built-in networks cannot be
   deleted.
 - **Removing images, volumes and networks.** Delete (per row, for all checked rows, or with
-  the Delete key) and "Remove unused …" ask first. "Remove unused …" names every item it will
-  remove, and says so when the search or filter hides some of them; a delete of checked rows
-  names the first ten and counts the rest (the rows checked are on screen). Both say the space
-  freed when the engine tells it, a delete names the containers that use an image or volume
-  (the engine refuses those) and the containers that lose a network. Nothing is forced: what
+  the Delete key) and "Remove unused …" ask first. "Remove unused …" and a delete of several
+  checked rows show a table of what will go: a row per image (its tags on one row, an untagged
+  image as "Untagged" with its ID), volume or network, with its ID or driver, age or scope and,
+  for images and volumes, the space it frees ("Shared" when its layers stay with other images).
+  Every row starts checked; untick what to keep (Space toggles a row, Ctrl+A checks them all).
+  Under the table a line counts what is checked and the space it frees, and the Remove button
+  says how many it removes. "Remove unused …" says so when the search or filter hides some of
+  the items; a delete names the containers that use an image or volume (the engine refuses
+  those) and the containers that lose a network. Only the checked rows are sent, planned again
+  when Remove is clicked, so anything that came into use meanwhile stays. Nothing is forced: what
   the engine refuses stays, and the bar above the list says what was removed, refused or
   skipped. "Remove unused …" waits until the container list and its own list have been read
   on this connection, since they tell what is in use; until then its confirmation says why
