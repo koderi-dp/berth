@@ -306,6 +306,20 @@ public sealed class SshTransport : IEngineTransport
     private PrivateKeyFile LoadKey()
     {
         var path = _ssh.KeyPath ?? "";
+        string text;
+        try
+        {
+            text = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new SshTransportException(new SshProblem(SshFailure.KeyFileUnreadable, ex.Message), ex);
+        }
+
+        // Before any passphrase: a public key or another file must not read as "the passphrase does not open it".
+        if (!SshKeyFile.LooksLikePrivateKey(text))
+            throw new SshTransportException(new SshProblem(SshFailure.KeyFileUnreadable, "The file holds no private key (a .pub file holds only the public half)."));
+
         var passphrase = _secrets.Get(_profile.Id, SecretKind.Passphrase);
         try
         {
