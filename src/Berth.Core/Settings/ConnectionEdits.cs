@@ -31,4 +31,18 @@ public static class ConnectionEdits
         var active = settings.ActiveConnectionId == id ? remaining[0].Id : settings.ActiveConnectionId;
         return settings with { Connections = remaining, ActiveConnectionId = active };
     }
+
+    /// <summary>
+    /// Saves <paramref name="key"/> as accepted on the SSH connection <paramref name="id"/>: only a key for that connection's own host and
+    /// port that is not known yet. A changed key is never saved in place of the accepted one (the user removes that first, in the
+    /// editor). Anything else changes nothing.
+    /// </summary>
+    public static AppSettings AcceptHostKey(AppSettings settings, string id, HostKey key)
+    {
+        if (settings.Connections.FirstOrDefault(connection => connection.Id == id) is not { Ssh: { } ssh } profile || !key.IsFor(profile.Host, profile.Port))
+            return settings;
+
+        var accepted = ssh.Accept(key);
+        return ReferenceEquals(accepted, ssh) ? settings : Replace(settings, profile with { Ssh = accepted });
+    }
 }

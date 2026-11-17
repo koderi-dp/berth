@@ -3,7 +3,10 @@ using Berth.Connections;
 
 namespace Berth.Settings;
 
-/// <summary>The settings Berth starts with when there are none: one connection, from <c>DOCKER_HOST</c> when it holds an address Berth can use, otherwise the default named pipe.</summary>
+/// <summary>
+/// The settings Berth starts with when there are none: one connection, from <c>DOCKER_HOST</c> when it holds an address Berth can use
+/// (an SSH one signs in by password), otherwise the default named pipe.
+/// </summary>
 public static class FirstRun
 {
     private const string LocalName = "Local engine";
@@ -17,12 +20,21 @@ public static class FirstRun
 
     private static ConnectionProfile? FromDockerHost(string? dockerHost)
     {
-        if (dockerHost is null || !EngineAddress.TryParse(dockerHost, out var kind, out var host, out var port, out var pipeName, out _))
+        if (dockerHost is null || !EngineAddress.TryParse(dockerHost, out ParsedAddress address, out _))
         {
             return null;
         }
 
-        return new ConnectionProfile(NewId(), NameFor(host), kind, host, port, pipeName, null);
+        if (address.Kind == TransportKind.Ssh)
+        {
+            // Named by its host even on this machine: an SSH host is another system, whatever its address.
+            return new ConnectionProfile(NewId(), address.Host, TransportKind.Ssh, address.Host, address.Port, "", null)
+            {
+                Ssh = new SshOptions(address.User, SshSignIn.Password, null, []),
+            };
+        }
+
+        return new ConnectionProfile(NewId(), NameFor(address.Host), address.Kind, address.Host, address.Port, address.PipeName, null);
     }
 
     /// <summary>

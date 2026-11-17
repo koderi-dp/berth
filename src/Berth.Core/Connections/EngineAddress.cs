@@ -2,26 +2,43 @@ using System.Globalization;
 
 namespace Berth.Connections;
 
-/// <summary>Reads and writes engine addresses in the form <c>DOCKER_HOST</c> uses: <c>tcp://host:port</c> or <c>npipe:////./pipe/name</c>.</summary>
+/// <summary>An address as <see cref="EngineAddress"/> reads it. <see cref="User"/> is set for SSH only, <see cref="PipeName"/> for a pipe only.</summary>
+public sealed record ParsedAddress(TransportKind Kind, string Host, int Port, string PipeName, string User);
+
+/// <summary>
+/// Reads and writes engine addresses in the form <c>DOCKER_HOST</c> uses: <c>tcp://host:port</c>, <c>npipe:////./pipe/name</c> or
+/// <c>ssh://user@host:port</c>.
+/// </summary>
 public static class EngineAddress
 {
     public const int DefaultPort = 2375;
     public const int DefaultTlsPort = 2376;
+    public const int DefaultSshPort = 22;
     public const string DefaultPipe = "docker_engine";
 
     private const string TcpScheme = "tcp://";
     private const string PipeScheme = "npipe://";
+    private const string SshScheme = "ssh://";
 
     /// <summary>
-    /// Parses <paramref name="text"/>. On success <paramref name="error"/> is empty; on failure it says what is wrong, in a sentence
-    /// that can be shown to the user, and the other outputs are empty. A TCP address without a port gets <see cref="DefaultPort"/>.
+    /// Parses <paramref name="text"/> like <see cref="TryParse(string, out ParsedAddress, out string)"/>, without the SSH user name. On
+    /// failure the other outputs are empty.
     /// </summary>
     public static bool TryParse(string text, out TransportKind kind, out string host, out int port, out string pipeName, out string error)
     {
-        kind = TransportKind.Tcp;
-        host = "";
-        port = 0;
-        pipeName = "";
+        var ok = TryParse(text, out var address, out error);
+        (kind, host, port, pipeName) = ok ? (address.Kind, address.Host, address.Port, address.PipeName) : (TransportKind.Tcp, "", 0, "");
+        return ok;
+    }
+
+    /// <summary>
+    /// Parses <paramref name="text"/>. On success <paramref name="error"/> is empty; on failure it says what is wrong, in a sentence
+    /// that can be shown to the user, and <paramref name="address"/> is null. A TCP address without a port gets <see cref="DefaultPort"/>,
+    /// an SSH one <see cref="DefaultSshPort"/>. An SSH address must name its user: Berth signs in itself, without an SSH config file.
+    /// </summary>
+    public static bool TryParse(string text, out ParsedAddress address, out string error)
+    {
+        address = null!;
         error = "";
 
         var trimmed = text.Trim();
@@ -33,13 +50,25 @@ public static class EngineAddress
 
         if (trimmed.StartsWith(TcpScheme, StringComparison.OrdinalIgnoreCase))
         {
-            if (!TryParseTcp(trimmed[TcpScheme.Length..], out host, out port, out error))
+            if (!TryParseAuthority(trimmed[TcpScheme.Length..], DefaultPort, TcpScheme, "host", out var host, out var port, out error))
+                return false;
+            address = new ParsedAddress(TransportKind.Tcp, host, port, "", "");
+            return true;
+        }
+
+        if (trimmed.StartsWith(SshScheme, StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = trimmed[SshScheme.Length..];
+            var at = rest.LastIndexOf('@');
+            if (at <= 0)
             {
-                host = "";
-                port = 0;
+                error = "Put the user name in the address, like ssh://user@host.";
                 return false;
             }
 
+            if (!TryParseAuthority(rest[(at + 1)..], DefaultSshPort, SshScheme, "user@host", out var host, out var port, out error))
+                return false;
+            address = new ParsedAddress(TransportKind.Ssh, host, port, "", rest[..at]);
             return true;
         }
 
@@ -53,30 +82,41 @@ public static class EngineAddress
                 return false;
             }
 
-            kind = TransportKind.NamedPipe;
-            host = parts[0];
-            pipeName = parts[2];
+            address = new ParsedAddress(TransportKind.NamedPipe, parts[0], 0, parts[2], "");
             return true;
         }
 
-        error = "Use tcp:// or npipe://.";
+        error = "Use tcp://, npipe:// or ssh://.";
         return false;
     }
 
-    /// <summary>The address of <paramref name="profile"/>: <c>tcp://host:port</c> (an IPv6 host in brackets) or <c>npipe:////server/pipe/name</c>.</summary>
+    /// <summary>
+    /// The address of <paramref name="profile"/>: <c>tcp://host:port</c> (an IPv6 host in brackets), <c>npipe:////server/pipe/name</c> or
+    /// <c>ssh://user@host:port</c>.
+    /// </summary>
     public static string Format(ConnectionProfile profile) =>
         profile.Kind switch
         {
             TransportKind.NamedPipe => "npipe:////" + (profile.Host.Length == 0 ? "." : profile.Host) + "/pipe/" + profile.PipeName,
-            _ => TcpScheme + (profile.Host.Contains(':') ? "[" + profile.Host + "]" : profile.Host) + ":" + profile.Port.ToString(CultureInfo.InvariantCulture),
+            TransportKind.Ssh => SshScheme + (profile.Ssh?.User ?? "") + "@" + Authority(profile),
+            _ => TcpScheme + Authority(profile),
         };
 
-    /// <summary>Parses the part after <c>tcp://</c>: <c>host</c>, <c>host:port</c>, <c>[ipv6]</c> or <c>[ipv6]:port</c>, with an optional trailing slash.</summary>
-    private static bool TryParseTcp(string authority, out string host, out int port, out string error)
+    private static string Authority(ConnectionProfile profile) =>
+        (profile.Host.Contains(':') ? "[" + profile.Host + "]" : profile.Host) + ":" + profile.Port.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Parses the part after the scheme (and an SSH user): <c>host</c>, <c>host:port</c>, <c>[ipv6]</c> or <c>[ipv6]:port</c>, with an
+    /// optional trailing slash. <paramref name="scheme"/> and <paramref name="hostWord"/> name the form in an error.
+    /// </summary>
+    private static bool TryParseAuthority(
+        string authority, int defaultPort, string scheme, string hostWord, out string host, out int port, out string error)
     {
         host = "";
-        port = DefaultPort;
+        port = defaultPort;
         error = "";
+        var form = $"Use {scheme}{hostWord} or {scheme}{hostWord}:port.";
+        var ipv6 = scheme + hostWord.Replace("host", "[::1]", StringComparison.Ordinal) + ":" + defaultPort.ToString(CultureInfo.InvariantCulture);
 
         if (authority.EndsWith('/'))
         {
@@ -89,7 +129,7 @@ public static class EngineAddress
             var close = authority.IndexOf(']');
             if (close < 0)
             {
-                error = "An IPv6 address needs a closing bracket, like tcp://[::1]:2375.";
+                error = $"An IPv6 address needs a closing bracket, like {ipv6}.";
                 return false;
             }
 
@@ -99,7 +139,7 @@ public static class EngineAddress
             {
                 if (rest[0] != ':')
                 {
-                    error = "Use tcp://host or tcp://host:port.";
+                    error = form;
                     return false;
                 }
 
@@ -111,7 +151,7 @@ public static class EngineAddress
             var colon = authority.IndexOf(':');
             if (colon >= 0 && authority.IndexOf(':', colon + 1) >= 0)
             {
-                error = "Put an IPv6 address in brackets, like tcp://[::1]:2375.";
+                error = $"Put an IPv6 address in brackets, like {ipv6}.";
                 return false;
             }
 
@@ -127,7 +167,7 @@ public static class EngineAddress
 
         if (host.Contains('/'))
         {
-            error = "Use tcp://host or tcp://host:port.";
+            error = form;
             return false;
         }
 

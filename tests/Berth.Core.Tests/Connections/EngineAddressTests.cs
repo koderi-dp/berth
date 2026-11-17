@@ -24,7 +24,7 @@ public sealed class EngineAddressTests
 
     [Theory]
     [InlineData("", "Enter an address.")]
-    [InlineData("http://x", "Use tcp:// or npipe://.")]
+    [InlineData("http://x", "Use tcp://, npipe:// or ssh://.")]
     [InlineData("tcp://", "The address has no host.")]
     [InlineData("tcp://host:99999", "The port must be between 1 and 65535.")]
     [InlineData("npipe://./nope/x", "A pipe address looks like npipe:////./pipe/docker_engine.")]

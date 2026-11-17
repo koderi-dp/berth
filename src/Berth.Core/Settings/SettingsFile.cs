@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Berth.Connections;
 using Berth.State;
 
@@ -74,8 +75,16 @@ internal sealed class SettingsFile
 
         public EngineControlEntry? EngineControl { get; set; }
 
-        /// <summary>The profile this entry describes, or null when it is not usable (see <see cref="SettingsFile.ToSettings"/>).</summary>
-        public ConnectionProfile? ToProfile() => ToBareProfile() is { } profile ? profile with { EngineControl = EngineControl?.ToControl() } : null;
+        public SshEntry? Ssh { get; set; }
+
+        /// <summary>
+        /// The profile this entry describes, or null when it is not usable (see <see cref="SettingsFile.ToSettings"/>). An SSH connection
+        /// never has engine control: its commands would run on this computer.
+        /// </summary>
+        public ConnectionProfile? ToProfile() =>
+            ToBareProfile() is { } profile
+                ? profile.Kind == TransportKind.Ssh ? profile : profile with { EngineControl = EngineControl?.ToControl() }
+                : null;
 
         private ConnectionProfile? ToBareProfile()
         {
@@ -104,6 +113,14 @@ internal sealed class SettingsFile
                     if (string.IsNullOrWhiteSpace(PipeName))
                         return null;
                     return new ConnectionProfile(Id, Name, TransportKind.NamedPipe, string.IsNullOrWhiteSpace(Host) ? "." : Host, Port ?? 0, PipeName, tls);
+
+                case TransportKind.Ssh:
+                {
+                    var port = Port ?? EngineAddress.DefaultSshPort;
+                    if (string.IsNullOrWhiteSpace(Host) || port is < 1 or > 65535 || Ssh?.ToOptions() is not { } ssh)
+                        return null;
+                    return new ConnectionProfile(Id, Name, TransportKind.Ssh, Host, port, "", null) { Ssh = ssh };
+                }
 
                 default:
                     // Missing, or a number that names no kind (the enum converter accepts numbers).
@@ -138,6 +155,47 @@ internal sealed class SettingsFile
                 return null;
             return new EngineControl(start, stop);
         }
+    }
+
+    /// <summary>
+    /// An SSH connection's settings: a user is needed, and a key file when it signs in with one. A saved host key that is not whole
+    /// (a host, a port in 1..65535, a type and a fingerprint) is dropped and the others kept: the host is then asked about again.
+    /// </summary>
+    internal sealed class SshEntry
+    {
+        public string? User { get; set; }
+
+        public SshSignIn? SignIn { get; set; }
+
+        public string? KeyPath { get; set; }
+
+        public List<HostKeyEntry?>? KnownHosts { get; set; }
+
+        public SshOptions? ToOptions()
+        {
+            var signIn = SignIn ?? SshSignIn.Password;
+            if (string.IsNullOrWhiteSpace(User) || !Enum.IsDefined(signIn) || (signIn == SshSignIn.KeyFile && string.IsNullOrWhiteSpace(KeyPath)))
+                return null;
+
+            ImmutableArray<HostKey> keys = [.. (KnownHosts ?? []).Select(entry => entry?.ToKey()).OfType<HostKey>()];
+            return new SshOptions(User, signIn, signIn == SshSignIn.KeyFile ? KeyPath : null, keys);
+        }
+    }
+
+    internal sealed class HostKeyEntry
+    {
+        public string? Host { get; set; }
+
+        public int? Port { get; set; }
+
+        public string? Type { get; set; }
+
+        public string? Fingerprint { get; set; }
+
+        public HostKey? ToKey() =>
+            string.IsNullOrWhiteSpace(Host) || Port is not (>= 1 and <= 65535) || string.IsNullOrWhiteSpace(Type) || string.IsNullOrWhiteSpace(Fingerprint)
+                ? null
+                : new HostKey(Host, Port.Value, Type, Fingerprint);
     }
 
     internal sealed class TrayEntry

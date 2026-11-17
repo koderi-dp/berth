@@ -109,7 +109,7 @@ public sealed class ConnectionDraftTests
     public void An_address_that_does_not_parse_is_refused_with_its_parse_error()
     {
         Assert.False((Valid with { Address = "http://x" }).TryBuild("id", out _, out var error));
-        Assert.Equal("Use tcp:// or npipe://.", error);
+        Assert.Equal("Use tcp://, npipe:// or ssh://.", error);
     }
 
     [Fact]
@@ -164,7 +164,7 @@ public sealed class ConnectionDraftTests
     [Fact]
     public void Address_error_is_the_parse_error_or_null()
     {
-        Assert.Equal("Use tcp:// or npipe://.", (Valid with { Address = "http://x" }).AddressError);
+        Assert.Equal("Use tcp://, npipe:// or ssh://.", (Valid with { Address = "http://x" }).AddressError);
         Assert.Equal("Enter an address.", (Valid with { Address = "" }).AddressError);
         Assert.Null(Valid.AddressError);
     }
