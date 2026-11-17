@@ -34,6 +34,8 @@
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- The terminal page: xterm.js and its fit addon (vendored, MIT; see THIRD-PARTY-NOTICES.txt) and Berth's page around them. -->
     <Content Include="Assets\Terminal\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- The licences of everything shipped with Berth, at the root of the package. -->
+    <Content Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 
