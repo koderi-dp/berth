@@ -10,11 +10,14 @@ public sealed record ContainerListOptions(bool RunningOnly, ContainerSort Sort)
     public static readonly ContainerListOptions Default = new(RunningOnly: false, ContainerSort.Default);
 }
 
-/// <summary>How a container's log is shown: with each line's timestamp or not, and long lines wrapped or scrolled sideways.</summary>
-public sealed record LogViewOptions(bool Timestamps, bool Wrap)
+/// <summary>
+/// How a container's log is shown: with each line's timestamp or not, long lines wrapped or scrolled sideways, and in the colours
+/// its colour codes ask for or plain.
+/// </summary>
+public sealed record LogViewOptions(bool Timestamps, bool Wrap, bool Colors = true)
 {
-    /// <summary>No timestamps, long lines wrapped.</summary>
-    public static readonly LogViewOptions Default = new(Timestamps: false, Wrap: true);
+    /// <summary>No timestamps, long lines wrapped, in colour.</summary>
+    public static readonly LogViewOptions Default = new(Timestamps: false, Wrap: true, Colors: true);
 }
 
 /// <summary>What closing the window does, and whether Berth has already said once that it is still running in the tray.</summary>

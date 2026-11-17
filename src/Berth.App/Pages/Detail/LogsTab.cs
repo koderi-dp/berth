@@ -20,6 +20,7 @@ using Microsoft.UI.Xaml.Media;
 using Windows.System;
 using Windows.UI.Core;
 using static Microsoft.UI.Reactor.Factories;
+using Run = Microsoft.UI.Xaml.Documents.Run;
 using TextHighlighter = Microsoft.UI.Xaml.Documents.TextHighlighter;
 using TextRange = Microsoft.UI.Xaml.Documents.TextRange;
 
@@ -68,7 +69,7 @@ internal sealed class LogsTabKeys
 
 /// <summary>
 /// The "Logs" tab of a container's detail page: the container's log, followed live, in a virtualized list that fills the tab, with a
-/// narrow toolbar at its right edge (search, timestamps, wrap, copy all, clear) and a button back to the latest line while scrolled
+/// narrow toolbar at its right edge (search, timestamps, wrap, colours, copy all, clear) and a button back to the latest line while scrolled
 /// up. What it shows is decided in <see cref="LogView"/>; this holds only view state (the search, whether it follows).
 /// </summary>
 internal sealed class LogsTab : Component<LogsTabProps>
@@ -84,10 +85,19 @@ internal sealed class LogsTab : Component<LogsTabProps>
     // The search, the failure, the notes, the log.
     private static readonly GridSize[] MainRows = [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star()];
 
+    // Past this many cached colour brushes (a log drawing 24-bit gradients) the cache starts over.
+    private const int MaxColorBrushes = 1024;
+
     private static readonly Dictionary<(string Key, bool Dark), Brush?> ThemeBrushes = [];
 
-    /// <summary>The mark each row not yet in the window still has to apply when it loads; at most one per row, the latest render's.</summary>
+    /// <summary>One brush per colour a styled line uses, shared by every line.</summary>
+    private static readonly Dictionary<Windows.UI.Color, SolidColorBrush> ColorBrushes = [];
+
+    /// <summary>The look each row not yet in the window still has to apply when it loads; at most one per row, the latest render's.</summary>
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBlock, RoutedEventHandler> PendingMarks = new();
+
+    /// <summary>The styled line each row shows in coloured runs, so a render that shows it again changes nothing.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextBlock, Painted> PaintedRows = new();
 
     private static FontFamily? _mono;
 
@@ -100,6 +110,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
         var logs = detail.Logs;
         var options = UseExternalStore(SettingsHook.Subscribe, SettingsHook.Snapshot).Logs;
         var dark = UseIsDarkTheme();
+        var highContrast = UseHighContrast();
         var search = Props.Search;
         var updateSearch = Props.UpdateSearch;
         var searchOpen = search.Open;
@@ -231,7 +242,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
         var emptyText = LogView.EmptyText(detail.LogStatus, logs.Lines.Count, linesSeen: logs.FirstNumber > 1, waitedGeneration == generation, waiting);
         var notes = LogView.Notes(detail.LogStatus, logs.Lines.Count, logs.Dropped, waiting);
         var log = emptyText is null
-            ? LogList(rows, options, matches, current, dark, scroller)
+            ? LogList(rows, options, colors: options.Colors && !highContrast, matches, current, dark, scroller)
             : Widgets.CenteredNote(emptyText).AutomationId("log-empty");
 
         var latest = following || emptyText is not null
@@ -276,9 +287,13 @@ internal sealed class LogsTab : Component<LogsTabProps>
         return Grid(Columns, OneRow, main, toolbar).Margin(0, 0, 0, 16).Flex(grow: 1, basis: 0);
     }
 
-    /// <summary>The log, one line per row, virtualized: only the rows in view are built, each from its line alone.</summary>
-    private static Element LogList(LogRows rows, LogViewOptions options, IReadOnlyList<LogMatch> matches, int current, bool dark, LogScroller scroller) =>
-        LazyVStack(rows, row => row.Position.ToString(CultureInfo.InvariantCulture), (row, index) => Line(row.Line, index, options, matches, current, dark))
+    /// <summary>
+    /// The log, one line per row, virtualized: only the rows in view are built, each from its line alone. In colour when
+    /// <paramref name="colors"/> (the toolbar's Colours, never under a Windows contrast theme).
+    /// </summary>
+    private static Element LogList(
+        LogRows rows, LogViewOptions options, bool colors, IReadOnlyList<LogMatch> matches, int current, bool dark, LogScroller scroller) =>
+        LazyVStack(rows, row => row.Position.ToString(CultureInfo.InvariantCulture), (row, index) => Line(row.Line, index, options, colors, matches, current, dark))
             .Set(view =>
             {
                 LogScroller.Configure(view, options.Wrap);
@@ -297,12 +312,14 @@ internal sealed class LogsTab : Component<LogsTabProps>
     /// <summary>
     /// One line: monospace, selectable, stderr in the caution colour, with this line's search matches marked (the current one in the
     /// accent colour). Every line sets its marks, also to none, so a recycled row does not keep the marks of the line it showed before.
+    /// A line with colour codes, while <paramref name="colors"/>, is drawn in coloured runs (see <see cref="Paint"/>).
     /// </summary>
-    private static Element Line(LogLine line, int index, LogViewOptions options, IReadOnlyList<LogMatch> matches, int current, bool dark)
+    private static Element Line(LogLine line, int index, LogViewOptions options, bool colors, IReadOnlyList<LogMatch> matches, int current, bool dark)
     {
         var (first, count) = LogView.MatchesOnLine(matches, index);
         var offset = count == 0 ? 0 : LogView.TextOffset(line, options.Timestamps);
         var currentOnLine = current >= first && current < first + count ? current : -1;
+        var look = new LineLook(line, options.Timestamps, colors && !line.Spans.IsEmpty);
 
         return (TextBlock(LogView.LineText(line, options.Timestamps)) with { LineHeight = LineHeight })
             .FontFamily(Mono)
@@ -311,14 +328,15 @@ internal sealed class LogsTab : Component<LogsTabProps>
             .IsTextSelectionEnabled()
             .Foreground(line.Stream == LogStream.Stderr ? Theme.SystemCaution : Theme.PrimaryText)
             .Padding(12, 0, 12, 0)
-            .Set(block => Mark(block, matches, first, count, offset, currentOnLine, dark));
+            .Set(block => Mark(block, look, matches, first, count, offset, currentOnLine, dark));
     }
 
     /// <summary>
-    /// Marks matches <paramref name="first"/> to <paramref name="first"/> + <paramref name="count"/> on <paramref name="block"/>, in the
-    /// colours of the block's own theme; a block not in the window yet is marked in <paramref name="appDark"/>'s and again once it is.
+    /// Draws <paramref name="look"/> on <paramref name="block"/> and marks matches <paramref name="first"/> to <paramref name="first"/> +
+    /// <paramref name="count"/>, in the colours of the block's own theme; a block not in the window yet is drawn in
+    /// <paramref name="appDark"/>'s and again once it is.
     /// </summary>
-    private static void Mark(TextBlock block, IReadOnlyList<LogMatch> matches, int first, int count, int offset, int current, bool appDark)
+    private static void Mark(TextBlock block, LineLook look, IReadOnlyList<LogMatch> matches, int first, int count, int offset, int current, bool appDark)
     {
         // Only this render's line and matches may mark the block: drop a mark still waiting from an earlier render.
         if (PendingMarks.TryGetValue(block, out var pending))
@@ -327,19 +345,23 @@ internal sealed class LogsTab : Component<LogsTabProps>
             PendingMarks.Remove(block);
         }
 
-        block.TextHighlighters.Clear();
-        if (count == 0)
-            return;
-
-        if (!block.IsLoaded)
+        if (!block.IsLoaded && (count > 0 || look.Styled))
         {
-            void OnLoaded(object sender, RoutedEventArgs e) => Mark(block, matches, first, count, offset, current, appDark);
+            void OnLoaded(object sender, RoutedEventArgs e) => Mark(block, look, matches, first, count, offset, current, appDark);
 
             block.Loaded += OnLoaded;
             PendingMarks.Add(block, OnLoaded);
         }
 
         var dark = block.IsLoaded ? block.ActualTheme == ElementTheme.Dark : appDark;
+        var backgrounds = Paint(block, look, dark);
+
+        block.TextHighlighters.Clear();
+        foreach (var background in backgrounds)
+            block.TextHighlighters.Add(background);
+        if (count == 0)
+            return;
+
         var others = new TextHighlighter
         {
             Background = ThemeBrush("SystemFillColorCautionBackgroundBrush", dark),
@@ -362,6 +384,107 @@ internal sealed class LogsTab : Component<LogsTabProps>
         if (chosen.Ranges.Count > 0)
             block.TextHighlighters.Add(chosen);
     }
+
+    /// <summary>
+    /// Shows a styled line (<see cref="LineLook.Styled"/>) in runs: plain text as the block's own, each span in its colour, bold, dim
+    /// (its colour at 60 %), italic or underlined, its background drawn by a highlighter under the search's marks. Returns those
+    /// highlighters. Done once per line, timestamps and theme: a render that shows the same again reuses the runs and highlighters.
+    /// A row that showed a styled line and now shows a plain one gets one plain run back (Reactor sets the text only when it changes).
+    /// </summary>
+    private static TextHighlighter[] Paint(TextBlock block, LineLook look, bool dark)
+    {
+        PaintedRows.TryGetValue(block, out var painted);
+        if (!look.Styled)
+        {
+            if (painted is not null)
+            {
+                PaintedRows.Remove(block);
+                block.Inlines.Clear();
+                block.Inlines.Add(new Run { Text = LogView.LineText(look.Line, look.Timestamps) });
+            }
+
+            return [];
+        }
+
+        if (painted is not null && ReferenceEquals(painted.Line, look.Line) && painted.Timestamps == look.Timestamps && painted.Dark == dark)
+            return painted.Backgrounds;
+
+        var line = look.Line;
+        var text = line.Text;
+        var offset = LogView.TextOffset(line, look.Timestamps);
+        var plainFore = ThemeColor(line.Stream == LogStream.Stderr ? "SystemFillColorCaution" : "TextFillColorPrimary", dark);
+        Dictionary<(Windows.UI.Color Back, Windows.UI.Color Fore), TextHighlighter>? backgrounds = null;
+
+        var inlines = block.Inlines;
+        inlines.Clear();
+        if (offset > 0)
+            inlines.Add(new Run { Text = LogView.LineText(line, look.Timestamps)[..offset] });
+
+        var at = 0;
+        foreach (var span in line.Spans)
+        {
+            if (span.Start > at)
+                inlines.Add(new Run { Text = text[at..span.Start] });
+
+            var style = span.Style;
+            var run = new Run { Text = text.Substring(span.Start, span.Length) };
+            Windows.UI.Color? fore = LogColors.Rgb(style.Foreground, dark) is { } rgb ? Opaque(rgb) : null;
+            if (style.Effects.HasFlag(TextEffects.Dim))
+            {
+                var color = fore ?? plainFore;
+                fore = Windows.UI.Color.FromArgb((byte)(color.A * 0.6), color.R, color.G, color.B);
+            }
+
+            if (fore is { } f)
+                run.Foreground = ColorBrush(f);
+            if (style.Effects.HasFlag(TextEffects.Bold))
+                run.FontWeight = FontWeights.Bold;
+            if (style.Effects.HasFlag(TextEffects.Italic))
+                run.FontStyle = Windows.UI.Text.FontStyle.Italic;
+            if (style.Effects.HasFlag(TextEffects.Underline))
+                run.TextDecorations = Windows.UI.Text.TextDecorations.Underline;
+            inlines.Add(run);
+
+            if (LogColors.Rgb(style.Background, dark) is { } backRgb)
+            {
+                backgrounds ??= [];
+                var key = (Back: Opaque(backRgb), Fore: fore ?? plainFore);
+                if (!backgrounds.TryGetValue(key, out var highlighter))
+                {
+                    highlighter = new TextHighlighter { Background = ColorBrush(key.Back), Foreground = ColorBrush(key.Fore) };
+                    backgrounds[key] = highlighter;
+                }
+
+                highlighter.Ranges.Add(new TextRange { StartIndex = offset + span.Start, Length = span.Length });
+            }
+
+            at = span.Start + span.Length;
+        }
+
+        if (at < text.Length)
+            inlines.Add(new Run { Text = text[at..] });
+
+        TextHighlighter[] result = backgrounds is null ? [] : [.. backgrounds.Values];
+        PaintedRows.AddOrUpdate(block, new Painted(line, look.Timestamps, dark, result));
+        return result;
+    }
+
+    private static Windows.UI.Color Opaque(int rgb) => Windows.UI.Color.FromArgb(0xff, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+
+    private static SolidColorBrush ColorBrush(Windows.UI.Color color)
+    {
+        if (ColorBrushes.TryGetValue(color, out var brush))
+            return brush;
+        if (ColorBrushes.Count >= MaxColorBrushes)
+            ColorBrushes.Clear();
+        brush = new SolidColorBrush(color);
+        ColorBrushes[color] = brush;
+        return brush;
+    }
+
+    /// <summary>The theme colour <paramref name="key"/> of the light or dark theme, from <see cref="ThemeBrush"/>.</summary>
+    private static Windows.UI.Color ThemeColor(string key, bool dark) =>
+        ThemeBrush(key + "Brush", dark) is SolidColorBrush brush ? brush.Color : Windows.UI.Color.FromArgb(0xff, 0x80, 0x80, 0x80);
 
     /// <summary>
     /// The theme brush <paramref name="key"/> ("…Brush") of the light or dark theme. Built from the theme's colour of the same name
@@ -437,7 +560,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
             ? null
             : Widgets.RetryBar(detail.LogError ?? "", () => AppServices.Current.OpenDetail(detail.ContainerId)).AutomationId("log-error");
 
-    /// <summary>The narrow toolbar at the right edge: Search, Timestamps and Wrap (kept in the settings), Copy all and Clear.</summary>
+    /// <summary>The narrow toolbar at the right edge: Search, Timestamps, Wrap and Colours (kept in the settings), Copy all and Clear.</summary>
     private static Element Toolbar(LogViewOptions options, LogBuffer logs, Action<bool> setSearchShown, bool searchOpen, Action clear)
     {
         var empty = logs.Lines.Count == 0;
@@ -446,6 +569,7 @@ internal sealed class LogsTab : Component<LogsTabProps>
                     ToolbarToggle(Glyphs.Search, "Search (Ctrl+F)", searchOpen, setSearchShown).AutomationId("log-search-toggle"),
                     ToolbarToggle(Glyphs.Clock, "Show timestamps", options.Timestamps, SetTimestamps).AutomationId("log-timestamps"),
                     ToolbarToggle(Glyphs.Wrap, "Wrap long lines", options.Wrap, SetWrap).AutomationId("log-wrap"),
+                    ToolbarToggle(Glyphs.Palette, "Colours", options.Colors, SetColors).AutomationId("log-colors"),
                     ToolbarButton(Glyphs.Copy, "Copy all", () => ContainerParts.CopyToClipboard(LogSearch.CopyText(logs.Lines, options.Timestamps)))
                         .AutomationId("log-copy")
                         .IsEnabled(!empty),
@@ -475,6 +599,15 @@ internal sealed class LogsTab : Component<LogsTabProps>
 
     private static void SetWrap(bool value) =>
         AppServices.Current.UpdateSettings(settings => settings with { Logs = settings.Logs with { Wrap = value } });
+
+    private static void SetColors(bool value) =>
+        AppServices.Current.UpdateSettings(settings => settings with { Logs = settings.Logs with { Colors = value } });
+
+    /// <summary>A row's line and how it is drawn: with its timestamp or not, and in its colours (<see cref="Styled"/>) or plain.</summary>
+    private sealed record LineLook(LogLine Line, bool Timestamps, bool Styled);
+
+    /// <summary>What <see cref="Paint"/> drew on a row: the line, in which theme, and the highlighters of its backgrounds.</summary>
+    private sealed record Painted(LogLine Line, bool Timestamps, bool Dark, TextHighlighter[] Backgrounds);
 
     /// <summary>
     /// A line and its position in the buffer, which keys its row. Not its line number: once the buffer is full every batch drops as

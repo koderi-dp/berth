@@ -33,6 +33,7 @@ internal static class Glyphs
     public const string Search = "";
     public const string Clock = "";
     public const string Wrap = ""; // ReturnKey: the arrow that carries a line on to the next
+    public const string Palette = "\uE790"; // Color: a log's colours
     public const string Erase = ""; // EraseTool
     public const string Close = ""; // Cancel
     public const string CommandPrompt = "";

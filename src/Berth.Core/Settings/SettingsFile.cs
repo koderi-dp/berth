@@ -48,7 +48,8 @@ internal sealed class SettingsFile
         {
             Logs = new LogViewOptions(
                 Logs?.Timestamps ?? LogViewOptions.Default.Timestamps,
-                Logs?.Wrap ?? LogViewOptions.Default.Wrap),
+                Logs?.Wrap ?? LogViewOptions.Default.Wrap,
+                Logs?.Colors ?? LogViewOptions.Default.Colors),
             Tray = new TrayOptions(
                 Tray?.KeepRunningWhenClosed ?? TrayOptions.Default.KeepRunningWhenClosed,
                 Tray?.StillRunningNoticeShown ?? TrayOptions.Default.StillRunningNoticeShown),
@@ -218,6 +219,8 @@ internal sealed class SettingsFile
         public bool? Timestamps { get; set; }
 
         public bool? Wrap { get; set; }
+
+        public bool? Colors { get; set; }
     }
 
     /// <summary>The column is read as text, so a name this Berth does not know falls back to the default instead of failing the file.</summary>

@@ -37,7 +37,9 @@ The UI is pure C# with [Microsoft.UI.Reactor](https://github.com/microsoft/micro
   - **Logs** follows the log as it is written (the last 1000 lines first, up to 10,000 kept),
     with timestamps and wrapping that can be turned off, search with next and previous
     match, copy all and clear. Logs of containers started with a terminal (`-t`) are read
-    as well; colour codes are removed.
+    as well. Colour codes are shown as colours (the sixteen terminal colours, 256 colours
+    and 24-bit colour, bold, dim, italic and underline), with a toolbar toggle to show the
+    log plain; other terminal codes are removed.
   - **Inspect** shows the container's configuration in sections (platform, command, state,
     image, ports, runtime, mounts, environment, labels, networks), each value copyable, or
     the engine's raw JSON.

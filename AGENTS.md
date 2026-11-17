@@ -51,7 +51,7 @@ src/Berth.Core/             plain net11.0 library, no WinUI/Reactor reference; p
                             other calls 30 s (stop, restart and image and volume removes 90 s).
                             EngineHttp, EngineJson (source-generated), ApiVersion, ConnectionTester, EngineTime, JsonLines
                             (line-delimited JSON streams), LogFrames (the engine's multiplexed log framing), LogLines (frames
-                            or TTY text to LogLine), AnsiText (terminal output to plain text), StatsMath (CPU and memory from
+                            or TTY text to LogLine), AnsiText (terminal output to plain text and colour spans), StatsMath (CPU and memory from
                             a raw stats line), ImageReference (a pull reference split into name and tag or digest, as the
                             docker CLI does), DiskUsageMapping (/system/df to DiskUsage: the engine's totals from API 1.52,
                             computed as the CLI does before),
@@ -161,7 +161,7 @@ src/Berth.App/              UI and wiring (packaged single-project MSIX app, ass
     Volumes/                VolumeTable (the volumes table, a component with record props), CreateVolumeDialog
     Networks/               NetworkTable (the networks table: attached containers as a menu of links, no Delete for the
                             built-in networks)
-    Detail/                 LogsTab (follow, search, timestamps, wrap, copy, clear), InspectTab (sections and raw JSON),
+    Detail/                 LogsTab (follow, search, timestamps, wrap, colours, copy, clear), InspectTab (sections and raw JSON),
                             BindMountsTab, StatsTab (four charts), StatsChart (one chart card)
     Detail/ (terminal)      ExecTab (toolbar with the shell picker, size, external terminal and copy; status line; the
                             terminal; placeholders), ExecLink (the tab's link to the detail session, the handle and the
